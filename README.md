@@ -1,7 +1,7 @@
-# ![](src/icon.png =64x64) Desk Breaker
+# ![](src/icon.png|width=64|height=64) Desk Breaker
 
 ![](src/icon.png =64x64)
-![](src/icon.png | width=64 | height=64) 
+![](src/icon.png|width=64|height=64) 
 
 ![Continuous integration](https://github.com/silbinarywolf/desk-breaker/actions/workflows/ci.yml/badge.svg)
 
