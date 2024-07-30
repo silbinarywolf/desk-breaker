@@ -6,7 +6,7 @@ on:
     branches:
       - main
     tags: 
-      - "v*"
+      - "v*.*.*"
 
 concurrency:
   # Cancels pending runs when a PR gets updated.
