@@ -125,7 +125,7 @@ pub fn main() !void {
     };
 
     // DEBUG: Test break screen
-    // state.user_settings.default_time_till_break = Duration.init(20 * time.ns_per_s);
+    // state.user_settings.default_time_till_break = Duration.init(30 * time.ns_per_s);
     // state.user_settings.default_break_time = Duration.init(5 * time.ns_per_s);
 
     var has_quit = false;

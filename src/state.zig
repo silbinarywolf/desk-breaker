@@ -353,6 +353,9 @@ pub const Window = struct {
 
         RestoreWindow_NoActivateFocus(window); // unminimize it
         sdl.SDL_SetWindowResizable(window, 0);
+        if (builtin.os.tag == .macos) {
+            _ = sdl.SDL_SetWindowBordered(window, 0);
+        }
 
         const width: c_int = 200;
         const height: c_int = 200;
@@ -360,7 +363,9 @@ pub const Window = struct {
         sdl.SDL_SetWindowPosition(window, display.x + display.w - width, display.y + display.h - height);
 
         _ = sdl.SDL_SetWindowAlwaysOnTop(window, 1);
-        _ = sdl.SDL_SetWindowBordered(window, 0); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
+        if (builtin.os.tag != .macos) {
+            _ = sdl.SDL_SetWindowBordered(window, 0); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
+        }
         return true;
     }
 
@@ -372,10 +377,13 @@ pub const Window = struct {
 
         RaiseAndActivateFocus(window); // unminimize and set input focus
         sdl.SDL_SetWindowResizable(window, 0);
+        if (builtin.os.tag == .macos) {
+            _ = sdl.SDL_SetWindowBordered(window, 0);
+        }
 
         var display: sdl.SDL_Rect = undefined;
         if (sdl.SDL_GetDisplayBounds(break_display_id, &display) == 0) {
-            log.info("change_mode: got display", .{});
+            log.info("change_mode: got display: {}", .{display});
             sdl.SDL_SetWindowPosition(window, display.x, display.y);
             sdl.SDL_SetWindowSize(window, display.w, display.h);
         } else {
@@ -385,7 +393,9 @@ pub const Window = struct {
         }
 
         _ = sdl.SDL_SetWindowAlwaysOnTop(window, 1);
-        _ = sdl.SDL_SetWindowBordered(window, 0); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
+        if (builtin.os.tag != .macos) {
+            _ = sdl.SDL_SetWindowBordered(window, 0); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
+        }
     }
 
     fn exit_break_mode(self: *Window) void {
