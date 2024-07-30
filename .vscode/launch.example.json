@@ -1,0 +1,41 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            // Taken from: https://www.reddit.com/r/Zig/comments/hqjw0n/how_i_setup_zig_on_windows/?utm_source=share&utm_medium=web2x
+            "name": "Debug Linux",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/desk-breaker",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "symbolSearchPath": "${workspaceFolder}/zig-out/bin",
+            "environment": [
+                // {"name": "PROJECT_PATH", "value": "SAMPLE"}
+            ],
+            "externalConsole": false,
+            "logging": {
+                "moduleLoad": false
+            },
+        },
+        {
+            // Taken from: https://www.reddit.com/r/Zig/comments/hqjw0n/how_i_setup_zig_on_windows/?utm_source=share&utm_medium=web2x
+            "name": "Debug Windows",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/zig-out/bin/desk-breaker",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "symbolSearchPath": "${workspaceFolder}/zig-out/bin",
+            "environment": [
+                // {"name": "PROJECT_PATH", "value": "SAMPLE"}
+            ],
+            "externalConsole": false,
+            "logging": {
+                "moduleLoad": false
+            },
+        }
+    ]
+}

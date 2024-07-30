@@ -1,0 +1,25 @@
+.{
+    .name = "imgui",
+    .version = "0.0.0",
+    .dependencies = .{
+        .imgui = .{
+            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.90.8-docking.tar.gz",
+            .hash = "122065151b97161e25abb71c9df2fd9fba42aaca8c33d689a480b883d82411c8fabe",
+        },
+        .cimgui = .{
+            .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.90.8dock.tar.gz",
+            .hash = "12207ee69164f88f4b41ee5d44edf3835ec4dab0c0cd885799da67d56668f4a3d46b",
+        },
+        // .sdl = .{
+        //     // NOTE(jae): 2024-06-30
+        //     // Using ".zip" as "tar.gz" fails on Windows for Zig 0.13.0 due to symlink issue with something in the android folders
+        //     .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.30.4.zip",
+        //     .hash = "122086865a4d5e822c068528a4170cb7da52afad38e8232afa3e74789c4d52d27791",
+        // },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
