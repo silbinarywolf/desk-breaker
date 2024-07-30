@@ -5,7 +5,8 @@ on:
   push:
     branches:
       - main
-    tags: #- "v*.*.*"
+    tags: 
+      - "v*"
 
 concurrency:
   # Cancels pending runs when a PR gets updated.
