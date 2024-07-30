@@ -35,7 +35,7 @@ jobs:
         version: ${{matrix.zig}}
 
     - name: Build
-      run: zig build -Doptimize=ReleaseSafe -binSuffix=${{matrix.os}} --verbose
+      run: zig build -Doptimize=ReleaseSafe -DbinSuffix=${{matrix.os}} --verbose
 
     - name: Test
       run: zig build test --verbose
