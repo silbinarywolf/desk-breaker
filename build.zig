@@ -26,13 +26,19 @@ pub fn build(b: *std.Build) !void {
         },
     }
 
+    var exe_name: []const u8 = "desk-breaker";
+    const maybe_exe_postfix = b.option([]const u8, "binSuffix", "update the binary built suffix, used by CI for '{app}-windows.exe'");
+    if (maybe_exe_postfix) |exe_postfix| {
+        exe_name = b.fmt("{s}-{s}", .{ exe_name, exe_postfix });
+    }
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     // const os_tag = target.result.os.tag;
 
     // Build
     var exe: *std.Build.Step.Compile = b.addExecutable(.{
-        .name = "desk-breaker",
+        .name = exe_name,
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
