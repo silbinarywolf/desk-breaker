@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) !void {
         // .use_lld = true,
     });
     switch (target.result.os.tag) {
-        .macos => exe.stack_size = 128 * 1024, // 128kb stack size, Mac OSX 10 crashes with lower than 64kb
+        .macos => exe.stack_size = 1024 * 1024,
         .windows => exe.stack_size = 2048 * 1024,
         else => {}, // use default for untested OS
     }
