@@ -35,14 +35,23 @@ jobs:
         version: ${{matrix.zig}}
 
     - name: Build
-      run: zig build --verbose
+      run: zig build -Doptimize=ReleaseSafe --verbose
 
     - name: Test
       run: zig build test --verbose
+
+    - name: Rename binary for release (Windows)
+      if: startsWith(github.ref, 'refs/tags/') and runner.os == 'Windows'
+      run: mv desk-breaker.exe ${{matrix.os}}.exe
+  
+    - name: Rename binary for release (Linux/Mac)
+      if: startsWith(github.ref, 'refs/tags/') and runner.os == 'Linux'
+      run: mv desk-breaker ${{matrix.os}}
 
     - name: Release
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/')
       with:
         files: |
-          zig-out/bin/desk-breaker
+          zig-out/bin/${{matrix.os}}.exe
+          zig-out/bin/${{matrix.os}}
