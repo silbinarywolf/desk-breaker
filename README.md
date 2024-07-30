@@ -2,6 +2,8 @@
 
 ![Continuous integration](https://github.com/silbinarywolf/desk-breaker/actions/workflows/ci.yml/badge.svg)
 
+⚠️ **WARNING:** This application is still in early alpha stages and used personally only. I don't recommend you use this.
+
 This app detects when you are using your computer and will pop-up with a window that covers your screen, forcing you to take a short 5 minute break.
 
 This was built for those who have trouble with hyperfocusing and need something to aggressively tell them when it's time to step away from the computer.
