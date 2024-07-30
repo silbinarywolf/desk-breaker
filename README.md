@@ -8,6 +8,8 @@ This app detects when you are using your computer and will pop-up with a window 
 
 This was built for those who have trouble with hyperfocusing and need something to aggressively tell them when it's time to step away from the computer.
 
+![Screenshot of the main application](screens/screen1.png)
+
 ## Requirements
 
 * [Zig 0.13.x](https://ziglang.org/download/#release-0.13.0)
