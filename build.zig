@@ -57,17 +57,11 @@ pub fn build(b: *std.Build) !void {
         // .use_llvm = false,
         // .use_lld = true,
     });
-    if (optimize == .ReleaseSafe)
-        switch (target.result.os.tag) {
-            .macos => exe.stack_size = 128 * 1024, // 128kb stack size, Mac OSX 10 crashes with lower than 64kb
-            .windows => {
-                if (optimize != .Debug)
-                    exe.stack_size = 32 * 1024 // 32kb stack size works fine for debug builds
-                else
-                    exe.stack_size = 512 * 1024; // 512kb stack size, As of 2024-07-23, Windows started crashing / running out of stack
-            },
-            else => {}, // use default for untested OS
-        };
+    switch (target.result.os.tag) {
+        .macos => exe.stack_size = 128 * 1024, // 128kb stack size, Mac OSX 10 crashes with lower than 64kb
+        .windows => exe.stack_size = 2048 * 1024,
+        else => {}, // use default for untested OS
+    }
     if (target.result.os.tag == .windows and exe.subsystem == null) {
         exe.subsystem = .Windows;
     }
