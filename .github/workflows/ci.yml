@@ -21,12 +21,13 @@ jobs:
     name: Build, Test, (If tagged) Release
     strategy:
       matrix:
-        - os: "ubuntu-20.04"
-          suffix: "linux"
-        - os: "windows-2019"
-          suffix: "windows"
-        - os: "macos-12"
-          suffix: "mac"
+        include:
+          - os: "ubuntu-20.04"
+            suffix: "linux"
+          - os: "windows-2019"
+            suffix: "windows"
+          - os: "macos-12"
+            suffix: "mac"
 
     runs-on: ${{matrix.os}}
  
