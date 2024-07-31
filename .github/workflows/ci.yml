@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    name: Build, Test, (If tagged) Release
+    name: ${{runner.os}}
     strategy:
       matrix:
         include:
