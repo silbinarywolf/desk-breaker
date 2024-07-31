@@ -30,6 +30,14 @@ Check the [releases page here](https://github.com/silbinarywolf/desk-breaker/rel
 zig build run
 ```
 
+## Unquarantining the application for Mac users
+
+To easily allow this application to run on your Mac device, you can run the following from your commandline from the folder that contains the application.
+
+```
+xattr -d com.apple.quarantine ./desk-breaker-mac
+```
+
 ## Dependencies
 
 - [Zig](https://github.com/ziglang/zig) - MIT License
