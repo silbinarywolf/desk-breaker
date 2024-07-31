@@ -54,8 +54,8 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS'
       run: |
         zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos -DbinSuffix=x86_64 --verbose
-        zig build -Doptimize=ReleaseSafe -Dtarget=arm-macos -DbinSuffix=arm --verbose
-        lipo -create -output ./zig-out/bin/desk-breaker-${{matrix.suffix}} ./zig-out/bin/desk-breaker-x86_64 ./zig-out/bin/desk-breaker-arm
+        zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos -DbinSuffix=aarch64 --verbose
+        lipo -create -output ./zig-out/bin/desk-breaker-${{matrix.suffix}} ./zig-out/bin/desk-breaker-x86_64 ./zig-out/bin/desk-breaker-aarch64
 
     - name: Release
       uses: softprops/action-gh-release@v2
