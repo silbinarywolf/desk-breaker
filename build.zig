@@ -98,19 +98,21 @@ pub fn build(b: *std.Build) !void {
 
         // NOTE(jae): 2024-07-31
         // Experiment with MacOS cross-compilation
-        if (target.result.os.tag == .macos) {
-            const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
-            if (maybe_macos_sdk) |macos_sdk| {
-                const macos_sdk_path = macos_sdk.path("root");
+        // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
+        // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+        // if (target.result.os.tag == .macos) {
+        //     const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
+        //     if (maybe_macos_sdk) |macos_sdk| {
+        //         const macos_sdk_path = macos_sdk.path("root");
 
-                sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
+        //         sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+        //         sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+        //         sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
 
-                sdl_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-            }
-        }
+        //         sdl_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+        //         sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+        //     }
+        // }
 
         break :blk sdl_module;
     };
