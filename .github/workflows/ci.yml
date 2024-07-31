@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    name: Build App
+    name: Build ${{matrix.os}}
     strategy:
       matrix:
         include:
