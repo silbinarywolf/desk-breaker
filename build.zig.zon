@@ -20,7 +20,7 @@
         // Experiment with MacOS cross-compilation
         .@"macos-sdk" = .{
             .url = "git+https://github.com/hexops-graveyard/sdk-macos-12.0#14613b4917c7059dad8f3789f55bb13a2548f83d",
-            .hash = "12206d7c24af2e77957edeeb2b6af6c7a77c211c25559590e21bd90f42f8bf3f0123",
+            .hash = "1220f4c7df213c2bee1e0d9f101a84e164f4a11474efd62775236dd54f4c30fd6378",
             .lazy = true,
         },
     },
