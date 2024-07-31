@@ -26,7 +26,7 @@ jobs:
             suffix: "linux"
           - os: "windows-2019"
             suffix: "windows"
-          - os: "macos-12"
+          - os: "macos-13-arm64"
             suffix: "mac"
 
     runs-on: ${{matrix.os}}
