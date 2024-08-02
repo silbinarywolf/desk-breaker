@@ -215,8 +215,8 @@ pub fn build(b: *std.Build) !void {
                 lib.linkFramework("CoreFoundation");
                 lib.linkFramework("Foundation");
                 lib.linkFramework("CoreGraphics");
-
-                lib.linkSystemLibrary("objc"); // _objc_release, _objc_begin_catch
+                lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate
+                lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
 
                 // lib.linkFramework("Metal");
                 // lib.linkFramework("CoreVideo");
