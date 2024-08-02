@@ -113,6 +113,7 @@ pub fn build(b: *std.Build) !void {
                 sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
 
                 exe.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                exe.linkFramework("CoreFoundation");
             }
         }
 
