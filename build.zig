@@ -101,6 +101,9 @@ pub fn build(b: *std.Build) !void {
         // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
         // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
         if (target.result.os.tag == .macos) {
+            if (b.host.result.os.tag == .windows) {
+                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
+            }
             const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
             if (maybe_macos_sdk) |macos_sdk| {
                 const macos_sdk_path = macos_sdk.path("root");
@@ -109,14 +112,12 @@ pub fn build(b: *std.Build) !void {
                 sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
                 sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
 
-                sdl_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                // sdl_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                // sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
 
-                exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-
-                // exe.linkSystemLibrary("objc");
+                // exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                // exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                // exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
             }
         }
 

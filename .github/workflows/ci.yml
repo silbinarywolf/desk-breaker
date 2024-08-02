@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{matrix.suffix}}
+    name: Build Mac, Windows and Linux
     strategy:
       matrix:
         include:
