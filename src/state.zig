@@ -346,7 +346,7 @@ pub const Window = struct {
     fn enter_incoming_break(self: *Window) bool {
         // Don't work if we can't get display dimensions
         var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayBounds(break_display_id, &display) != 0) {
+        if (sdl.SDL_GetDisplayUsableBounds(break_display_id, &display) != 0) {
             return false;
         }
         const window = self.window orelse unreachable;
@@ -382,7 +382,7 @@ pub const Window = struct {
         }
 
         var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayBounds(break_display_id, &display) == 0) {
+        if (sdl.SDL_GetDisplayUsableBounds(break_display_id, &display) == 0) {
             log.info("change_mode: got display: {}", .{display});
             sdl.SDL_SetWindowPosition(window, display.x, display.y);
             sdl.SDL_SetWindowSize(window, display.w, display.h);
