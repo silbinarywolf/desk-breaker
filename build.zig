@@ -112,8 +112,9 @@ pub fn build(b: *std.Build) !void {
                 sdl_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
                 sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
 
-                exe.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                exe.linkFramework("CoreFoundation");
+                exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
             }
         }
 

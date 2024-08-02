@@ -220,7 +220,7 @@ pub fn build(b: *std.Build) !void {
                 // lib.linkFramework("AudioToolbox");
                 // // lib.linkFramework("AVFoundation");
                 // lib.linkFramework("CoreHaptics");
-                lib.linkFramework("CoreGraphics");
+                // lib.linkFramework("CoreGraphics");
             },
             else => {
                 const config_header = b.addConfigHeader(.{
