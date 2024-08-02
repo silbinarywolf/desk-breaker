@@ -210,6 +210,11 @@ pub fn build(b: *std.Build) !void {
                 lib.linkFramework("IOKit");
                 lib.linkFramework("Metal");
 
+                lib.linkFramework("AppKit");
+                lib.linkFramework("CoreFoundation");
+                lib.linkFramework("Foundation");
+                lib.linkFramework("CoreGraphics");
+
                 // lib.linkFramework("Metal");
                 // lib.linkFramework("CoreVideo");
                 // lib.linkFramework("Cocoa");

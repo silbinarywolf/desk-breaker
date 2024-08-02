@@ -116,7 +116,7 @@ pub fn build(b: *std.Build) !void {
                 exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
                 exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
 
-                exe.linkSystemLibrary("objc");
+                // exe.linkSystemLibrary("objc");
             }
         }
 
