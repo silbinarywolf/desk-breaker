@@ -199,6 +199,7 @@ pub fn build(b: *std.Build) !void {
                 });
                 // lib.linkFramework("OpenGL");
                 //  -framework AudioToolbox -framework Carbon -framework Cocoa -framework CoreAudio -framework CoreHaptics -framework CoreVideo -framework ForceFeedback -framework GameController -framework IOKit -framework Metal
+
                 lib.linkFramework("AudioToolbox");
                 lib.linkFramework("Carbon");
                 lib.linkFramework("Cocoa");
@@ -214,6 +215,8 @@ pub fn build(b: *std.Build) !void {
                 lib.linkFramework("CoreFoundation");
                 lib.linkFramework("Foundation");
                 lib.linkFramework("CoreGraphics");
+
+                lib.linkLibrary("objc"); // _objc_release, _objc_begin_catch
 
                 // lib.linkFramework("Metal");
                 // lib.linkFramework("CoreVideo");
