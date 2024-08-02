@@ -24,12 +24,6 @@ jobs:
         include:
           - os: "ubuntu-20.04"
             suffix: "linux"
-          - os: "windows-2019"
-            suffix: "windows"
-          - os: "macos-12"
-            suffix: "mac-x86_64"
-          - os: "macos-14"
-            suffix: "mac-arm"
 
     runs-on: ${{matrix.os}}
  
@@ -46,11 +40,15 @@ jobs:
 
     - name: Build Debug
       if: startsWith(github.ref, 'refs/tags/') == false
-      run: zig build --verbose
+      run: |
+        zig build --verbose
+        zig build -Dtarget=x86_64-macos --verbose
+        zig build -Dtarget=aarch64-macos --verbose
 
     - name: Build Release
       if: startsWith(github.ref, 'refs/tags/')
-      run: zig build -Doptimize=ReleaseSafe -DbinSuffix=${{matrix.suffix}} --verbose
+      run: |
+        zig build -Doptimize=ReleaseSafe -DbinSuffix=${{matrix.suffix}} --verbose
 
     - name: Release
       uses: softprops/action-gh-release@v2
