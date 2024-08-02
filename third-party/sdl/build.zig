@@ -197,19 +197,30 @@ pub fn build(b: *std.Build) !void {
                     .files = &objective_c_src_files,
                     .flags = &.{"-fobjc-arc"},
                 });
-                lib.linkFramework("OpenGL");
-                lib.linkFramework("Metal");
-                lib.linkFramework("CoreVideo");
-                lib.linkFramework("Cocoa");
-                lib.linkFramework("IOKit");
-                lib.linkFramework("ForceFeedback");
-                lib.linkFramework("Carbon");
-                lib.linkFramework("CoreAudio");
+                // lib.linkFramework("OpenGL");
+                //  -framework AudioToolbox -framework Carbon -framework Cocoa -framework CoreAudio -framework CoreHaptics -framework CoreVideo -framework ForceFeedback -framework GameController -framework IOKit -framework Metal
                 lib.linkFramework("AudioToolbox");
-                // lib.linkFramework("AVFoundation");
-                lib.linkFramework("Foundation");
-                lib.linkFramework("GameController");
+                lib.linkFramework("Carbon");
+                lib.linkFramework("Cocoa");
+                lib.linkFramework("CoreAudio");
                 lib.linkFramework("CoreHaptics");
+                lib.linkFramework("CoreVideo");
+                lib.linkFramework("ForceFeedback");
+                lib.linkFramework("GameController");
+                lib.linkFramework("IOKit");
+                lib.linkFramework("Metal");
+
+                // lib.linkFramework("Metal");
+                // lib.linkFramework("CoreVideo");
+                // lib.linkFramework("Cocoa");
+                // lib.linkFramework("IOKit");
+                // lib.linkFramework("ForceFeedback");
+                // lib.linkFramework("Carbon");
+                // lib.linkFramework("CoreAudio");
+                // lib.linkFramework("AudioToolbox");
+                // // lib.linkFramework("AVFoundation");
+                // lib.linkFramework("CoreHaptics");
+                lib.linkFramework("CoreGraphics");
             },
             else => {
                 const config_header = b.addConfigHeader(.{

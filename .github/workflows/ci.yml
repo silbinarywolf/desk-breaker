@@ -41,7 +41,6 @@ jobs:
     - name: Build Debug
       if: startsWith(github.ref, 'refs/tags/') == false
       run: |
-        zig build --verbose
         zig build -Dtarget=x86_64-macos --verbose
         zig build -Dtarget=aarch64-macos --verbose
 
