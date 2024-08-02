@@ -206,7 +206,7 @@ pub fn build(b: *std.Build) !void {
                 lib.linkFramework("Carbon");
                 lib.linkFramework("CoreAudio");
                 lib.linkFramework("AudioToolbox");
-                lib.linkFramework("AVFoundation");
+                // lib.linkFramework("AVFoundation");
                 lib.linkFramework("Foundation");
                 lib.linkFramework("GameController");
                 lib.linkFramework("CoreHaptics");
