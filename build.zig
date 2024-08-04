@@ -190,4 +190,32 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     }));
     test_step.dependOn(&test_cmd.step);
+
+    const DeployTarget = struct {
+        target_name: []const u8,
+        suffix: []const u8,
+    };
+    const deploy_targets = [_]DeployTarget{
+        .{ .target_name = "x86_64-macos", .suffix = "mac-x86" },
+        .{ .target_name = "aarch64-macos", .suffix = "mac-arm" },
+        .{ .target_name = "x86_64-windows", .suffix = "windows" },
+        .{ .target_name = "", .suffix = "linux" },
+    };
+    const all_targets_step = b.step("all-targets", "Build for all targets (must be run on Linux)");
+    for (deploy_targets) |deploy_target| {
+        const build_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+        if (deploy_target.target_name.len > 0) {
+            build_cmd.addArg(b.fmt("-Dtarget={s}", .{deploy_target.target_name}));
+        }
+        if (optimize != .Debug) {
+            build_cmd.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
+        }
+        if (deploy_target.suffix.len > 0) {
+            build_cmd.addArg(b.fmt("-Dsuffix={s}", .{deploy_target.suffix}));
+        }
+        if (b.verbose) {
+            build_cmd.addArg("--verbose");
+        }
+        all_targets_step.dependOn(&build_cmd.step);
+    }
 }
