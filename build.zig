@@ -108,13 +108,12 @@ pub fn build(b: *std.Build) !void {
             if (maybe_macos_sdk) |macos_sdk| {
                 const macos_sdk_path = macos_sdk.path("root");
 
+                // add macos sdk to sdl
                 sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
                 sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
                 sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
 
-                // sdl_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                // sdl_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-
+                // add to exe
                 exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
                 exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
                 exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));

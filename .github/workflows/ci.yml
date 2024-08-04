@@ -22,7 +22,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: "ubuntu-20.04"
+          - os: "ubuntu-22.04"
             suffix: "linux"
 
     runs-on: ${{matrix.os}}
@@ -34,6 +34,17 @@ jobs:
       uses: goto-bus-stop/setup-zig@v2
       with:
         version: "0.13.0"
+
+    # source: https://github.com/libsdl-org/SDL/blob/f32575dfabecac37892e3abfe31b08b9e348a9d7/docs/README-linux.md
+    - name: Install SDL2 Linux dependencies
+      run: |
+        sudo apt-get install build-essential git make \
+        pkg-config cmake ninja-build gnome-desktop-testing libasound2-dev libpulse-dev \
+        libaudio-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
+        libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+        libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+        libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev fcitx-libs-dev \
+        libpipewire-0.3-dev libwayland-dev libdecor-0-dev
 
     - name: Test
       run: zig build test --verbose
