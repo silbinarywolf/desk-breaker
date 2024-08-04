@@ -16,6 +16,13 @@
             .url = "https://github.com/zigimg/zigimg/archive/d9dbbe22b5f7b5f1f4772169ed93ffeed8e8124d.tar.gz",
             .hash = "122013646f7038ecc71ddf8a0d7de346d29a6ec40140af57f838b0a975c69af512b0",
         },
+        // NOTE(jae): 2024-07-31
+        // Experiment with MacOS cross-compilation
+        .@"macos-sdk" = .{
+            .url = "git+https://github.com/hexops-graveyard/sdk-macos-12.0#14613b4917c7059dad8f3789f55bb13a2548f83d",
+            .hash = "1220f4c7df213c2bee1e0d9f101a84e164f4a11474efd62775236dd54f4c30fd6378",
+            .lazy = true,
+        },
     },
     .paths = .{
         "LICENSE",

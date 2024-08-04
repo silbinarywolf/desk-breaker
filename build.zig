@@ -95,6 +95,31 @@ pub fn build(b: *std.Build) !void {
 
         const sdl_module = sdl_dep.module("sdl");
         exe.root_module.addImport("sdl", sdl_module);
+
+        // NOTE(jae): 2024-07-31
+        // Experiment with MacOS cross-compilation
+        // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
+        // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+        if (target.result.os.tag == .macos) {
+            if (b.host.result.os.tag == .windows) {
+                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
+            }
+            const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
+            if (maybe_macos_sdk) |macos_sdk| {
+                const macos_sdk_path = macos_sdk.path("root");
+
+                // add macos sdk to sdl
+                sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
+
+                // add to exe
+                exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
+            }
+        }
+
         break :blk sdl_module;
     };
 
@@ -136,6 +161,8 @@ pub fn build(b: *std.Build) !void {
             switch (sdl_include_dir) {
                 .path => |p| imgui_lib.addIncludePath(p),
                 .config_header_step => |ch| imgui_lib.addConfigHeader(ch),
+                // NOTE(jae): 2024-07-31: added to ignore Mac system includes used by SDL2 build
+                .path_system, .framework_path_system => continue,
                 else => std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
             }
         }
@@ -163,4 +190,32 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     }));
     test_step.dependOn(&test_cmd.step);
+
+    const DeployTarget = struct {
+        target_name: []const u8,
+        suffix: []const u8,
+    };
+    const deploy_targets = [_]DeployTarget{
+        .{ .target_name = "x86_64-macos", .suffix = "mac-x86" },
+        .{ .target_name = "aarch64-macos", .suffix = "mac-arm" },
+        .{ .target_name = "x86_64-windows", .suffix = "windows" },
+        .{ .target_name = "", .suffix = "linux" },
+    };
+    const all_targets_step = b.step("all-targets", "Build for all targets (must be run on Linux)");
+    for (deploy_targets) |deploy_target| {
+        const build_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+        if (deploy_target.target_name.len > 0) {
+            build_cmd.addArg(b.fmt("-Dtarget={s}", .{deploy_target.target_name}));
+        }
+        if (optimize != .Debug) {
+            build_cmd.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
+        }
+        if (deploy_target.suffix.len > 0) {
+            build_cmd.addArg(b.fmt("-DbinSuffix={s}", .{deploy_target.suffix}));
+        }
+        if (b.verbose) {
+            build_cmd.addArg("--verbose");
+        }
+        all_targets_step.dependOn(&build_cmd.step);
+    }
 }

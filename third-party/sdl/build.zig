@@ -197,19 +197,24 @@ pub fn build(b: *std.Build) !void {
                     .files = &objective_c_src_files,
                     .flags = &.{"-fobjc-arc"},
                 });
-                lib.linkFramework("OpenGL");
-                lib.linkFramework("Metal");
-                lib.linkFramework("CoreVideo");
-                lib.linkFramework("Cocoa");
-                lib.linkFramework("IOKit");
-                lib.linkFramework("ForceFeedback");
-                lib.linkFramework("Carbon");
-                lib.linkFramework("CoreAudio");
+
                 lib.linkFramework("AudioToolbox");
-                lib.linkFramework("AVFoundation");
-                lib.linkFramework("Foundation");
-                lib.linkFramework("GameController");
+                lib.linkFramework("Carbon");
+                lib.linkFramework("Cocoa");
+                lib.linkFramework("CoreAudio");
                 lib.linkFramework("CoreHaptics");
+                lib.linkFramework("CoreVideo");
+                lib.linkFramework("ForceFeedback");
+                lib.linkFramework("GameController");
+                lib.linkFramework("IOKit");
+                lib.linkFramework("Metal");
+
+                lib.linkFramework("AppKit");
+                lib.linkFramework("CoreFoundation");
+                lib.linkFramework("Foundation");
+                lib.linkFramework("CoreGraphics");
+                lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
+                lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
             },
             else => {
                 const config_header = b.addConfigHeader(.{
