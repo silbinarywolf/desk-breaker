@@ -211,7 +211,7 @@ pub fn build(b: *std.Build) !void {
             build_cmd.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
         }
         if (deploy_target.suffix.len > 0) {
-            build_cmd.addArg(b.fmt("-Dsuffix={s}", .{deploy_target.suffix}));
+            build_cmd.addArg(b.fmt("-DbinSuffix={s}", .{deploy_target.suffix}));
         }
         if (b.verbose) {
             build_cmd.addArg("--verbose");
