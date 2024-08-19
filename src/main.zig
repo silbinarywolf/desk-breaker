@@ -3,6 +3,7 @@ const time = std.time;
 const builtin = @import("builtin");
 const sdl = @import("sdl");
 const imgui = @import("imgui");
+const winregistry = @import("winregistry.zig");
 
 const userconfig = @import("userconfig.zig");
 
@@ -152,6 +153,7 @@ pub fn main() !void {
                             if (sdl.SDL_GetWindowID(state.window.window) == event.windowID) {
                                 // If closed the main app window, close entire app
                                 has_quit = true;
+                                break;
                             }
                         },
                         // sdl.SDL_WINDOWEVENT_MINIMIZED => {
@@ -194,6 +196,7 @@ pub fn main() !void {
                 },
                 sdl.SDL_QUIT => {
                     has_quit = true;
+                    break;
                 },
                 else => {},
             }
@@ -216,7 +219,7 @@ pub fn main() !void {
                 // Track time using computer
                 if (state.time_since_last_input) |*time_since_last_input| {
                     // TODO: Make inactivity time a variable
-                    const inactivity_duration = 35 * std.time.ns_per_min;
+                    const inactivity_duration = 5 * std.time.ns_per_min;
                     if (time_since_last_input.read() > inactivity_duration) {
                         state.is_user_mouse_active = false;
                         state.time_till_next_state.reset();
@@ -267,6 +270,30 @@ pub fn main() !void {
         imgui.ImGui_ImplSDLRenderer2_NewFrame();
         imgui.ImGui_ImplSDL2_NewFrame();
         imgui.igNewFrame();
+
+        // If main app is:
+        // - not in break / pending break mode
+        // - minimized
+        //
+        // conserve more CPU with SDL_Delay
+        if (state.mode == .regular and sdl.SDL_GetWindowFlags(state.window.window) & sdl.SDL_WINDOW_MINIMIZED != 0) {
+            const minimized_delay: u32 = switch (builtin.os.tag) {
+                .windows => 100, // Above 1000ms feels unresponsive when you unminimize it
+                .macos => 2000, // Mac OSX feels fine at 2000ms to bring it back up,
+                .linux => 800, // Kbuntu opens up, might be a blank ugly transparent screen for a bit, but then pop-in
+                else => 100, // Default to 100ms for anything else that's untested
+            };
+            sdl.SDL_Delay(minimized_delay);
+
+            const renderer = state.window.renderer;
+            _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
+            // _ = sdl.SDL_SetRenderDrawColor(renderer, 200, 200, 200, 0);
+            _ = sdl.SDL_RenderClear(renderer);
+            imgui.igRender();
+            imgui.ImGui_ImplSDLRenderer2_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
+            // sdl.SDL_RenderPresent(renderer);
+            continue;
+        }
 
         const imgui_default_window_flags = imgui.ImGuiWindowFlags_NoTitleBar | imgui.ImGuiWindowFlags_NoDecoration |
             imgui.ImGuiWindowFlags_NoResize | imgui.ImGuiWindowFlags_NoBackground;
@@ -328,8 +355,29 @@ pub fn main() !void {
                                         .is_activity_break_enabled = state.user_settings.is_activity_break_enabled,
                                     };
                                     const ui_options = &state.ui.options;
+
                                     if (state.user_settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
                                     if (state.user_settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
+
+                                    // OS-specific
+                                    switch (builtin.os.tag) {
+                                        .windows => {
+                                            // Set os startup
+                                            ui_options.os_startup = blk: {
+                                                const temp_allocator = state.temp_allocator.allocator();
+                                                const startup_run = try winregistry.RegistryWtf8.openKey(std.os.windows.HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", .{});
+                                                defer startup_run.closeKey();
+                                                const startup_desk_breaker_path = startup_run.getString(temp_allocator, "", "DeskBreaker") catch |err| switch (err) {
+                                                    error.ValueNameNotFound => "",
+                                                    else => return err,
+                                                };
+                                                const out_buf = try temp_allocator.alloc(u8, std.fs.MAX_PATH_BYTES);
+                                                const exe_path = try std.fs.selfExePath(out_buf);
+                                                break :blk std.mem.eql(u8, exe_path, startup_desk_breaker_path);
+                                            };
+                                        },
+                                        else => {},
+                                    }
 
                                     // set ui to options
                                     state.ui.kind = .options;
@@ -561,6 +609,17 @@ pub fn main() !void {
                         .options => {
                             const ui_options = &state.ui.options;
 
+                            if (ui_options.os_startup) |os_startup| {
+                                var is_enabled = os_startup;
+                                if (imgui.igCheckbox("Open on startup", &is_enabled)) {
+                                    if (!is_enabled) {
+                                        ui_options.os_startup = false;
+                                    } else {
+                                        ui_options.os_startup = true;
+                                    }
+                                }
+                            }
+
                             var is_enabled = ui_options.is_activity_break_enabled;
                             if (imgui.igCheckbox("Enable Activity Timer", &is_enabled)) {
                                 if (!is_enabled) {
@@ -620,6 +679,27 @@ pub fn main() !void {
                                     };
                                     break :blk d;
                                 };
+
+                                if (ui_options.os_startup) |os_startup| {
+                                    switch (builtin.os.tag) {
+                                        .windows => {
+                                            const temp_allocator = state.temp_allocator.allocator();
+                                            const startup_run = try winregistry.RegistryWtf8.openKey(std.os.windows.HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", .{});
+                                            defer startup_run.closeKey();
+                                            if (!os_startup) {
+                                                startup_run.deleteValue("DeskBreaker") catch |err| switch (err) {
+                                                    error.ValueNameNotFound => {}, // If entry doesn't exist, do nothing
+                                                    else => return err,
+                                                };
+                                            } else {
+                                                const out_buf = try temp_allocator.alloc(u8, std.fs.MAX_PATH_BYTES);
+                                                const exe_path = try std.fs.selfExePath(out_buf);
+                                                try startup_run.setString("DeskBreaker", exe_path);
+                                            }
+                                        },
+                                        else => {},
+                                    }
+                                }
 
                                 const has_error = ui_options.errors.time_till_break.len > 0 and ui_options.errors.break_time.len > 0;
                                 if (!has_error) {
@@ -735,32 +815,17 @@ pub fn main() !void {
         // _ = sdl.SDL_SetRenderDrawColor(renderer, 200, 200, 200, 0);
         _ = sdl.SDL_RenderClear(renderer);
 
-        // If main app is:
-        // - not in break / pending break mode
-        // - minimized
-        //
-        // conserve more CPU with SDL_Delay
-        if (state.mode == .regular and sdl.SDL_GetWindowFlags(state.window.window) & sdl.SDL_WINDOW_MINIMIZED != 0) {
-            const minimized_delay: u32 = switch (builtin.os.tag) {
-                .windows => 100, // Above 100ms feels unresponsive when you unminimize it
-                .macos => 2000, // Mac OSX feels fine at 2000ms to bring it back up,
-                .linux => 800, // Kbuntu opens up, might be a blank ugly transparent screen for a bit, but then pop-in
-                else => 100, // Default to 100ms for anything else that's untested
-            };
-            sdl.SDL_Delay(minimized_delay);
-        } else {
-            // NOTE(jae): 2024-07-28
-            // May want to disable this logic if using vsync
-            const total_frame_time = sdl.SDL_GetPerformanceCounter() - current_frame_time;
-            const total_frame_time_in_ms = 1000.0 * (@as(f64, @floatFromInt(total_frame_time)) / @as(f64, @floatFromInt(sdl.SDL_GetPerformanceFrequency())));
-            const tick_rate: u64 = 60; // assume 60 FPS always
-            const tick_rate_in_ms: f64 = 1000 / tick_rate;
-            const time_to_delay_for = @floor(tick_rate_in_ms - total_frame_time_in_ms);
-            if (time_to_delay_for >= 1) {
-                const delay = @as(u32, @intFromFloat(time_to_delay_for));
-                // std.debug.print("delay amount: {}, tick rate in ms: 0.{d}\n", .{ delay, @as(u64, @intFromFloat(total_frame_time_in_ms * 100)) });
-                sdl.SDL_Delay(delay);
-            }
+        // NOTE(jae): 2024-07-28
+        // May want to disable this logic if using vsync
+        const total_frame_time = sdl.SDL_GetPerformanceCounter() - current_frame_time;
+        const total_frame_time_in_ms = 1000.0 * (@as(f64, @floatFromInt(total_frame_time)) / @as(f64, @floatFromInt(sdl.SDL_GetPerformanceFrequency())));
+        const tick_rate: u64 = 60; // assume 60 FPS always
+        const tick_rate_in_ms: f64 = 1000 / tick_rate;
+        const time_to_delay_for = @floor(tick_rate_in_ms - total_frame_time_in_ms);
+        if (time_to_delay_for >= 1) {
+            const delay = @as(u32, @intFromFloat(time_to_delay_for));
+            // std.debug.print("delay amount: {}, tick rate in ms: 0.{d}\n", .{ delay, @as(u64, @intFromFloat(total_frame_time_in_ms * 100)) });
+            sdl.SDL_Delay(delay);
         }
 
         imgui.igRender();

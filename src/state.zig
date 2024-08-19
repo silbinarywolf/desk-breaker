@@ -118,6 +118,11 @@ const UiState = struct {
     kind: UiStateKind = .none,
     timer: UiTimer = .{},
     options: struct {
+        /// os_startup is true if you want the application to boot on operating system startup
+        os_startup: ?bool = switch (builtin.os.tag) {
+            .windows => false,
+            else => null,
+        },
         is_activity_break_enabled: bool = false,
         time_till_break: UiDuration = std.mem.zeroes(UiDuration),
         break_time: UiDuration = std.mem.zeroes(UiDuration),
