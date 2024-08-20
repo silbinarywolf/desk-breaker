@@ -1,7 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const wii = @import("zig-wii-sdk");
-// const rm2k_plugin = @import("plugins/rm2k/build.zig");
 
 const app_name = "Desk Breaker";
 const recommended_zig_version = "0.13.0";
