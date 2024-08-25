@@ -153,9 +153,13 @@ pub const State = struct {
     user_settings: UserSettings,
 
     time_since_last_input: ?time.Timer = null,
-    time_till_next_state: time.Timer,
+    /// stores the current time, once the difference between this and current time > user_settings.break_time then a break is triggered
+    activity_timer: time.Timer,
 
     is_user_mouse_active: bool = false,
+
+    /// amount of times snooze button was hit
+    snooze_times: u32 = 0,
 
     // break
     break_mode: struct {
@@ -176,16 +180,16 @@ pub const State = struct {
     }
 
     /// check if a timers criteria has been triggered
-    pub fn time_till_next_timer_complete(self: *State) ?Duration {
+    pub fn time_till_next_timer_complete(state: *State) ?Duration {
         var time_till_break: ?Duration = null;
 
         // Time till activity break
         {
-            switch (self.mode) {
+            switch (state.mode) {
                 .regular, .incoming_break => {
-                    if (self.user_settings.is_activity_break_enabled) {
-                        const time_active_in_ns = self.time_till_next_state.read();
-                        time_till_break = self.user_settings.time_till_break_or_default().diff(time_active_in_ns);
+                    if (state.user_settings.is_activity_break_enabled) {
+                        const time_active_in_ns = state.activity_timer.read();
+                        time_till_break = state.user_settings.time_till_break_or_default().diff(time_active_in_ns);
                     }
                 },
                 .taking_break => {
@@ -196,7 +200,7 @@ pub const State = struct {
         }
 
         // Check timers
-        for (self.user_settings.timers.items) |*t| {
+        for (state.user_settings.timers.items) |*t| {
             switch (t.kind) {
                 .timer => {
                     const timer_duration = t.timer_duration orelse continue;
@@ -219,6 +223,46 @@ pub const State = struct {
         return time_till_break orelse null;
     }
 
+    pub fn can_snooze(state: *State) bool {
+        const is_snoozeable: bool = state.mode == .taking_break or state.mode == .incoming_break;
+        assert(is_snoozeable);
+
+        // Don't show snooze button if not taking break
+        if (!is_snoozeable) {
+            return false;
+        }
+
+        // If it was an alarm or timer, disallow snoozing
+        for (state.user_settings.timers.items) |*t| {
+            switch (t.kind) {
+                .timer => {
+                    const timer_duration = t.timer_duration orelse continue;
+                    var timer_started = t.timer_started orelse continue;
+                    const diff = timer_duration.diff(timer_started.read());
+                    if (diff.nanoseconds <= 0) {
+                        return false;
+                    }
+                },
+                .alarm => {
+                    @panic("TODO: handle alarm in can_snooze");
+                },
+            }
+        }
+        return true;
+    }
+
+    pub fn snooze(state: *State) void {
+        const is_snoozeable: bool = state.can_snooze();
+        assert(is_snoozeable);
+        if (!is_snoozeable) {
+            return;
+        }
+
+        // reset activity timer
+        state.activity_timer.reset();
+        state.snooze_times += 1;
+    }
+
     pub fn change_mode(state: *State, new_mode: Mode) void {
         if (state.mode == new_mode) {
             return;
@@ -233,7 +277,7 @@ pub const State = struct {
                 state.window.update_from_state(state.window_state);
 
                 // reset activity timer
-                state.time_till_next_state.reset();
+                state.activity_timer.reset();
 
                 // reset timers (that have been triggered)
                 for (state.user_settings.timers.items) |*t| {
@@ -265,7 +309,7 @@ pub const State = struct {
             .taking_break => {
                 log.info("change_mode: taking break", .{});
                 state.window.enter_break_mode(state.user_settings.display_index);
-                state.time_till_next_state.reset();
+                state.activity_timer.reset();
                 state.break_mode = .{}; // reset escape presses / etc
             },
         }
