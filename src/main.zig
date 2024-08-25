@@ -12,6 +12,7 @@ const Duration = @import("time.zig").Duration;
 const Alarm = @import("time.zig").Alarm;
 
 const State = @import("state.zig").State;
+const UserSettings = @import("state.zig").UserSettings;
 const Window = @import("state.zig").Window;
 const Timer = @import("state.zig").Timer;
 
@@ -51,6 +52,17 @@ pub fn main() !void {
     // - Make SDL use our allocator
     // - Make ImGui use our allocator
 
+    // Load your settings
+    var user_settings: UserSettings = .{
+        .timers = std.ArrayList(Timer).init(allocator),
+    };
+    userconfig.load_config_file(allocator, &user_settings) catch |err| switch (err) {
+        error.FileNotFound => {
+            // do nothing if there is no config file
+        },
+        else => return err,
+    };
+
     if (builtin.os.tag == .windows) {
         // Force SDL_RaiseWindow to take focus, SDL 2.X.X only supports Windows for now, so only bother
         // enabling this for Windows
@@ -79,8 +91,8 @@ pub fn main() !void {
     var icon_png = try sdlpng.load_from_surface_from_buffer(allocator, @embedFile("icon.png"));
     defer icon_png.deinit(allocator);
 
-    const window_x = sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(0);
-    const window_y = sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(0);
+    const window_x: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
+    const window_y: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
     var app_window = blk: {
         const window = sdl.SDL_CreateWindow(
             "Desk Breaker",
@@ -106,24 +118,16 @@ pub fn main() !void {
     var state: *State = try allocator.create(State);
     state.* = .{
         .mode = .regular,
-        .timers = std.ArrayList(Timer).init(allocator),
         .window = app_window,
+        .user_settings = user_settings,
         .time_till_next_state = try std.time.Timer.start(),
         .temp_allocator = std.heap.ArenaAllocator.init(allocator),
     };
     defer {
-        state.timers.deinit();
+        state.user_settings.deinit();
         state.temp_allocator.deinit();
         allocator.destroy(state);
     }
-
-    // Load your settings
-    userconfig.load_config_file(allocator, state) catch |err| switch (err) {
-        error.FileNotFound => {
-            // do nothing if there is no config file
-        },
-        else => return err,
-    };
 
     // DEBUG: Test break screen
     // state.user_settings.default_time_till_break = Duration.init(30 * time.ns_per_s);
@@ -353,6 +357,7 @@ pub fn main() !void {
                                         // ... resets all options ui state ...
                                         // set this
                                         .is_activity_break_enabled = state.user_settings.is_activity_break_enabled,
+                                        .display_index = state.user_settings.display_index,
                                     };
                                     const ui_options = &state.ui.options;
 
@@ -379,6 +384,22 @@ pub fn main() !void {
                                         else => {},
                                     }
 
+                                    // List displays
+                                    {
+                                        const display_count_or_err: u32 = @intCast(sdl.SDL_GetNumVideoDisplays());
+                                        state.ui.options_metadata.display_names_buf.len = 0;
+                                        if (display_count_or_err >= 1) {
+                                            const display_count: u32 = @intCast(display_count_or_err);
+                                            for (0..display_count) |display_index| {
+                                                const name = sdl.SDL_GetDisplayName(@intCast(display_index));
+                                                if (name == null) {
+                                                    continue;
+                                                }
+                                                try state.ui.options_metadata.display_names_buf.writer().print("{s}\x00", .{name});
+                                            }
+                                        }
+                                    }
+
                                     // set ui to options
                                     state.ui.kind = .options;
                                 }
@@ -386,7 +407,7 @@ pub fn main() !void {
 
                             // List of timers
                             {
-                                for (state.timers.items, 0..) |*t, i| {
+                                for (state.user_settings.timers.items, 0..) |*t, i| {
                                     imgui.igPushID_Int(@intCast(i));
                                     defer imgui.igPopID();
                                     switch (t.kind) {
@@ -450,7 +471,7 @@ pub fn main() !void {
                                 // if (imgui.igBeginTable("table", 2, imgui.ImGuiTableFlags_Borders |
                                 //     imgui.ImGuiTableFlags_SizingFixedFit, .{}, 0))
                                 // {
-                                //     for (state.timers.items) |*t| {
+                                //     for (state.user_settings.timers.items) |*t| {
                                 //         imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, 0);
                                 //         {
                                 //             imgui.igNextColumn();
@@ -575,16 +596,16 @@ pub fn main() !void {
                                 if (should_save_or_create) {
                                     if (ui_timer.id == -1) {
                                         // Create
-                                        try state.timers.append(t);
-                                        ui_timer.id = @intCast(state.timers.items.len - 1);
+                                        try state.user_settings.timers.append(t);
+                                        ui_timer.id = @intCast(state.user_settings.timers.items.len - 1);
                                     } else {
                                         // Save
-                                        state.timers.items[@intCast(ui_timer.id)] = t;
+                                        state.user_settings.timers.items[@intCast(ui_timer.id)] = t;
                                     }
                                     state.ui.kind = .none;
 
                                     // save
-                                    try userconfig.save_config_file(state.temp_allocator.allocator(), state);
+                                    try userconfig.save_config_file(state.temp_allocator.allocator(), &state.user_settings);
                                 }
                             }
                             imgui.igSameLine(0, 8);
@@ -598,16 +619,17 @@ pub fn main() !void {
                                 _ = imgui.igBegin("deletewindow", null, imgui_default_window_flags);
                                 defer imgui.igEnd();
                                 if (imgui.igButton("Delete", .{})) {
-                                    _ = state.timers.orderedRemove(@intCast(ui_timer.id));
+                                    _ = state.user_settings.timers.orderedRemove(@intCast(ui_timer.id));
                                     state.ui.kind = .none;
 
                                     // save
-                                    try userconfig.save_config_file(state.temp_allocator.allocator(), state);
+                                    try userconfig.save_config_file(state.temp_allocator.allocator(), &state.user_settings);
                                 }
                             }
                         },
                         .options => {
                             const ui_options = &state.ui.options;
+                            const ui_metadata = &state.ui.options_metadata;
 
                             if (ui_options.os_startup) |os_startup| {
                                 var is_enabled = os_startup;
@@ -617,6 +639,19 @@ pub fn main() !void {
                                     } else {
                                         ui_options.os_startup = true;
                                     }
+                                }
+                            }
+
+                            if (state.ui.options_metadata.display_names_buf.len > 0) {
+                                var display_index_ui: c_int = @intCast(ui_options.display_index);
+                                _ = imgui.igCombo_Str(
+                                    "Display",
+                                    &display_index_ui,
+                                    ui_metadata.display_names_buf.buffer[0..],
+                                    0,
+                                );
+                                if (display_index_ui >= 0) {
+                                    ui_options.display_index = @intCast(display_index_ui);
                                 }
                             }
 
@@ -703,13 +738,14 @@ pub fn main() !void {
 
                                 const has_error = ui_options.errors.time_till_break.len > 0 and ui_options.errors.break_time.len > 0;
                                 if (!has_error) {
-                                    // update from text
+                                    // update from fields / text
                                     state.user_settings.is_activity_break_enabled = ui_options.is_activity_break_enabled;
                                     state.user_settings.time_till_break = time_till_break;
                                     state.user_settings.break_time = break_time;
+                                    state.user_settings.display_index = ui_options.display_index;
 
                                     // save
-                                    try userconfig.save_config_file(state.temp_allocator.allocator(), state);
+                                    try userconfig.save_config_file(state.temp_allocator.allocator(), &state.user_settings);
 
                                     // close
                                     state.ui.kind = .none;

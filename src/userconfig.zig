@@ -1,9 +1,10 @@
 const std = @import("std");
+const sdl = @import("sdl");
 const time = std.time;
 const mem = std.mem;
 const testing = std.testing;
 
-const State = @import("state.zig").State;
+const UserSettings = @import("state.zig").UserSettings;
 const Timer = @import("state.zig").Timer;
 const TimerKind = @import("state.zig").TimerKind;
 const Duration = @import("time.zig").Duration;
@@ -27,6 +28,7 @@ const UserTimer = struct {
 
 pub const UserConfig = struct {
     version: u32 = 1,
+    display_index: u32 = 0,
     activity_timer: struct {
         is_enabled: bool = true,
         time_till_break: ?Duration = null,
@@ -35,7 +37,7 @@ pub const UserConfig = struct {
     timers: []UserTimer,
 };
 
-pub fn save_config_file(allocator: std.mem.Allocator, state: *State) !void {
+pub fn save_config_file(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {
     const path = try get_data_dir_path(allocator);
     defer allocator.free(path);
 
@@ -52,8 +54,8 @@ pub fn save_config_file(allocator: std.mem.Allocator, state: *State) !void {
     defer dir.close();
 
     // Build user config
-    var timers = try std.ArrayList(UserTimer).initCapacity(allocator, state.timers.items.len);
-    for (state.timers.items) |*t| {
+    var timers = try std.ArrayList(UserTimer).initCapacity(allocator, user_settings.timers.items.len);
+    for (user_settings.timers.items) |*t| {
         switch (t.kind) {
             .timer => {
                 try timers.append(.{
@@ -69,10 +71,11 @@ pub fn save_config_file(allocator: std.mem.Allocator, state: *State) !void {
     }
     var user_config: UserConfig = .{
         .activity_timer = .{
-            .is_enabled = state.user_settings.is_activity_break_enabled,
-            .break_time = state.user_settings.break_time,
-            .time_till_break = state.user_settings.time_till_break,
+            .is_enabled = user_settings.is_activity_break_enabled,
+            .break_time = user_settings.break_time,
+            .time_till_break = user_settings.time_till_break,
         },
+        .display_index = user_settings.display_index,
         .timers = timers.items,
     };
     const json_data = try std.json.stringifyAlloc(allocator, &user_config, .{
@@ -86,7 +89,7 @@ pub fn save_config_file(allocator: std.mem.Allocator, state: *State) !void {
     });
 }
 
-pub fn load_config_file(allocator: std.mem.Allocator, state: *State) !void {
+pub fn load_config_file(allocator: std.mem.Allocator, user_settings: *UserSettings) !void {
     const path = try get_data_dir_path(allocator);
     defer allocator.free(path);
 
@@ -100,12 +103,16 @@ pub fn load_config_file(allocator: std.mem.Allocator, state: *State) !void {
     defer userconfig_parsed.deinit();
 
     const userconfig = &userconfig_parsed.value;
-    state.user_settings.is_activity_break_enabled = userconfig.activity_timer.is_enabled;
-    state.user_settings.break_time = userconfig.activity_timer.break_time;
-    state.user_settings.time_till_break = userconfig.activity_timer.time_till_break;
-    state.timers.clearRetainingCapacity();
+    user_settings.is_activity_break_enabled = userconfig.activity_timer.is_enabled;
+    user_settings.break_time = userconfig.activity_timer.break_time;
+    user_settings.time_till_break = userconfig.activity_timer.time_till_break;
+    // Only set configured display if we have that many
+    if (userconfig.display_index >= sdl.SDL_GetNumVideoDisplays()) {
+        user_settings.display_index = userconfig.display_index;
+    }
+    user_settings.timers.clearRetainingCapacity();
     for (userconfig.timers) |*t| {
-        try state.timers.append(.{
+        try user_settings.timers.append(.{
             .kind = t.kind,
             .name = try Timer.Name.fromSlice(t.name),
             .timer_duration = t.timer_duration,

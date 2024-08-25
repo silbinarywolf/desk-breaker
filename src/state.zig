@@ -72,6 +72,13 @@ pub const UserSettings = struct {
     is_activity_break_enabled: bool = true,
     time_till_break: ?Duration = null,
     break_time: ?Duration = null,
+    /// this is the monitor to display on
+    display_index: u32 = 0,
+    timers: std.ArrayList(Timer),
+
+    pub fn deinit(self: *@This()) void {
+        self.timers.deinit();
+    }
 
     pub fn time_till_break_or_default(self: *const @This()) Duration {
         return self.time_till_break orelse self.default_time_till_break;
@@ -123,6 +130,7 @@ const UiState = struct {
             .windows => false,
             else => null,
         },
+        display_index: u32 = 0,
         is_activity_break_enabled: bool = false,
         time_till_break: UiDuration = std.mem.zeroes(UiDuration),
         break_time: UiDuration = std.mem.zeroes(UiDuration),
@@ -130,6 +138,9 @@ const UiState = struct {
             time_till_break: []const u8 = &[0]u8{},
             break_time: []const u8 = &[0]u8{},
         } = .{},
+    } = .{},
+    options_metadata: struct {
+        display_names_buf: std.BoundedArray(u8, 4096) = std.BoundedArray(u8, 4096){},
     } = .{},
 };
 
@@ -139,8 +150,7 @@ pub const State = struct {
     window_state: WindowState = .{},
 
     // user settings
-    timers: std.ArrayList(Timer),
-    user_settings: UserSettings = .{},
+    user_settings: UserSettings,
 
     time_since_last_input: ?time.Timer = null,
     time_till_next_state: time.Timer,
@@ -186,7 +196,7 @@ pub const State = struct {
         }
 
         // Check timers
-        for (self.timers.items) |*t| {
+        for (self.user_settings.timers.items) |*t| {
             switch (t.kind) {
                 .timer => {
                     const timer_duration = t.timer_duration orelse continue;
@@ -226,7 +236,7 @@ pub const State = struct {
                 state.time_till_next_state.reset();
 
                 // reset timers (that have been triggered)
-                for (state.timers.items) |*t| {
+                for (state.user_settings.timers.items) |*t| {
                     switch (t.kind) {
                         .timer => {
                             // Check if timer started
@@ -246,7 +256,7 @@ pub const State = struct {
                 }
             },
             .incoming_break => {
-                if (!state.window.enter_incoming_break()) {
+                if (!state.window.enter_incoming_break(state.user_settings.display_index)) {
                     // Don't change state if we can't query display
                     return;
                 }
@@ -254,7 +264,7 @@ pub const State = struct {
             },
             .taking_break => {
                 log.info("change_mode: taking break", .{});
-                state.window.enter_break_mode();
+                state.window.enter_break_mode(state.user_settings.display_index);
                 state.time_till_next_state.reset();
                 state.break_mode = .{}; // reset escape presses / etc
             },
@@ -275,9 +285,7 @@ pub const Window = struct {
     window: ?*sdl.SDL_Window = null,
     renderer: ?*sdl.SDL_Renderer = null,
     imgui_context: ?*imgui.ImGuiContext = null,
-
-    // TODO: make this configurable
-    const break_display_id: c_int = 0;
+    display_index: u32 = 0,
 
     pub fn init(font_atlas: *imgui.ImFontAtlas, icon: *sdl.SDL_Surface, maybe_window: ?*sdl.SDL_Window) !Window {
         const window: *sdl.SDL_Window = maybe_window orelse {
@@ -285,8 +293,9 @@ pub const Window = struct {
             return error.SDLWindowInitializationFailed;
         };
         sdl.SDL_SetWindowIcon(window, icon);
-        // TODO: Make SOFTWARE renderer optional in settings
-        const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, -1, 0) orelse {
+        // TODO(jae): 2024-08-20
+        // Add option to use hardware accelerated instead
+        const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, -1, sdl.SDL_RENDERER_SOFTWARE) orelse {
             log.err("unable to create renderer: {s}", .{sdl.SDL_GetError()});
             return error.SDLRendererInitializationFailed;
         };
@@ -348,10 +357,10 @@ pub const Window = struct {
         }
     }
 
-    fn enter_incoming_break(self: *Window) bool {
+    fn enter_incoming_break(self: *Window, display_index: u32) bool {
         // Don't work if we can't get display dimensions
         var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayUsableBounds(break_display_id, &display) != 0) {
+        if (sdl.SDL_GetDisplayUsableBounds(@intCast(display_index), &display) != 0) {
             return false;
         }
         const window = self.window orelse unreachable;
@@ -374,7 +383,7 @@ pub const Window = struct {
         return true;
     }
 
-    fn enter_break_mode(self: *Window) void {
+    fn enter_break_mode(self: *Window, display_index: u32) void {
         const window = self.window orelse unreachable;
 
         sdl.SDL_SetWindowMouseGrab(window, 1); // lock mouse to window
@@ -387,7 +396,7 @@ pub const Window = struct {
         }
 
         var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayUsableBounds(break_display_id, &display) == 0) {
+        if (sdl.SDL_GetDisplayUsableBounds(@intCast(display_index), &display) == 0) {
             log.info("change_mode: got display: {}", .{display});
             sdl.SDL_SetWindowPosition(window, display.x, display.y);
             sdl.SDL_SetWindowSize(window, display.w, display.h);
