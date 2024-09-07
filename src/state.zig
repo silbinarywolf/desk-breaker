@@ -66,6 +66,7 @@ pub const Timer = struct {
 
 pub const UserSettings = struct {
     default_time_till_break: Duration = Duration.init(30 * time.ns_per_min),
+    default_snooze: Duration = Duration.init(10 * time.ns_per_min),
     default_break_time: Duration = Duration.init(5 * time.ns_per_min),
     default_exit_time: Duration = Duration.init(10 * time.ns_per_s),
 
@@ -82,6 +83,11 @@ pub const UserSettings = struct {
 
     pub fn time_till_break_or_default(self: *const @This()) Duration {
         return self.time_till_break orelse self.default_time_till_break;
+    }
+
+    pub fn snooze_duration_or_default(self: *const @This()) Duration {
+        // TODO(jae): make snooze configurable
+        return self.default_snooze;
     }
 
     pub fn break_time_or_default(self: *const @This()) Duration {
@@ -144,6 +150,14 @@ const UiState = struct {
     } = .{},
 };
 
+pub const NextTimer = struct {
+    pub const ActivityTimer: i32 = -1;
+    pub const SnoozeTimer: i32 = -2;
+
+    id: i32,
+    time_till_next_break: Duration,
+};
+
 pub const State = struct {
     mode: Mode,
     window: Window,
@@ -153,8 +167,12 @@ pub const State = struct {
     user_settings: UserSettings,
 
     time_since_last_input: ?time.Timer = null,
+
     /// stores the current time, once the difference between this and current time > user_settings.break_time then a break is triggered
     activity_timer: time.Timer,
+
+    // if you click snooze, a shorter timer will start
+    snooze_activity_break_timer: ?time.Timer = null,
 
     is_user_mouse_active: bool = false,
 
@@ -166,7 +184,13 @@ pub const State = struct {
         /// if clicked the Exit button or ESC an amount of times, close break window
         esc_or_exit_presses: u32 = 0,
         held_down_timer: ?std.time.Timer = null,
-    } = .{},
+        /// timer that runs while waiting for a break
+        timer: std.time.Timer,
+        duration: Duration,
+    } = .{
+        .timer = std.mem.zeroes(std.time.Timer),
+        .duration = Duration.init(0),
+    },
 
     // ui state (temporary state when editing)
     ui: UiState = .{},
@@ -180,39 +204,65 @@ pub const State = struct {
     }
 
     /// check if a timers criteria has been triggered
-    pub fn time_till_next_timer_complete(state: *State) ?Duration {
-        var time_till_break: ?Duration = null;
+    pub fn time_till_next_timer_complete(state: *State) ?NextTimer {
+        var next_timer: ?NextTimer = null;
+
+        // If snoozing activity break
+        if (state.snooze_activity_break_timer) |*snooze_timer| {
+            const snooze_time_in_ns = snooze_timer.read();
+            next_timer = NextTimer{
+                .id = NextTimer.SnoozeTimer,
+                .time_till_next_break = state.user_settings.snooze_duration_or_default().diff(snooze_time_in_ns),
+            };
+        }
 
         // Time till activity break
         {
-            switch (state.mode) {
-                .regular, .incoming_break => {
-                    if (state.user_settings.is_activity_break_enabled) {
-                        const time_active_in_ns = state.activity_timer.read();
-                        time_till_break = state.user_settings.time_till_break_or_default().diff(time_active_in_ns);
-                    }
-                },
-                .taking_break => {
-                    // if taking a break, then the time until next timer is irrelevant
-                    return null;
-                },
+            var can_trigger_activity_break = true;
+            if (next_timer) |nt| {
+                if (nt.id == NextTimer.SnoozeTimer) {
+                    can_trigger_activity_break = false;
+                }
+            }
+            if (can_trigger_activity_break) {
+                switch (state.mode) {
+                    .regular, .incoming_break => {
+                        if (state.user_settings.is_activity_break_enabled) {
+                            const time_active_in_ns = state.activity_timer.read();
+                            next_timer = NextTimer{
+                                .id = NextTimer.ActivityTimer,
+                                .time_till_next_break = state.user_settings.time_till_break_or_default().diff(time_active_in_ns),
+                            };
+                        }
+                    },
+                    .taking_break => {
+                        // if taking a break, then the time until next timer is irrelevant
+                        return null;
+                    },
+                }
             }
         }
 
         // Check timers
-        for (state.user_settings.timers.items) |*t| {
+        for (state.user_settings.timers.items, 0..) |*t, i| {
             switch (t.kind) {
                 .timer => {
                     const timer_duration = t.timer_duration orelse continue;
                     var timer_started = t.timer_started orelse continue;
                     const diff = timer_duration.diff(timer_started.read());
-                    const time_till_break_no_null = time_till_break orelse {
-                        // If not set, then
-                        time_till_break = diff;
+                    const existing_next_timer: NextTimer = next_timer orelse {
+                        // If no existing timer set, then
+                        next_timer = NextTimer{
+                            .id = @intCast(i),
+                            .time_till_next_break = diff,
+                        };
                         continue;
                     };
-                    if (diff.nanoseconds < time_till_break_no_null.nanoseconds) {
-                        time_till_break = diff;
+                    if (diff.nanoseconds < existing_next_timer.time_till_next_break.nanoseconds) {
+                        next_timer = NextTimer{
+                            .id = @intCast(i),
+                            .time_till_next_break = diff,
+                        };
                     }
                 },
                 .alarm => {
@@ -220,9 +270,10 @@ pub const State = struct {
                 },
             }
         }
-        return time_till_break orelse null;
+        return next_timer;
     }
 
+    /// can_snooze is true if it's an activity timer but not a special alarm
     pub fn can_snooze(state: *State) bool {
         const is_snoozeable: bool = state.mode == .taking_break or state.mode == .incoming_break;
         assert(is_snoozeable);
@@ -233,6 +284,14 @@ pub const State = struct {
         }
 
         // If it was an alarm or timer, disallow snoozing
+        if (state.has_timer_or_alarm_triggered()) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn has_timer_or_alarm_triggered(state: *State) bool {
         for (state.user_settings.timers.items) |*t| {
             switch (t.kind) {
                 .timer => {
@@ -240,15 +299,15 @@ pub const State = struct {
                     var timer_started = t.timer_started orelse continue;
                     const diff = timer_duration.diff(timer_started.read());
                     if (diff.nanoseconds <= 0) {
-                        return false;
+                        return true;
                     }
                 },
                 .alarm => {
-                    @panic("TODO: handle alarm in can_snooze");
+                    @panic("TODO: handle alarm in has_timer_or_alarm_triggered");
                 },
             }
         }
-        return true;
+        return false;
     }
 
     pub fn snooze(state: *State) void {
@@ -260,6 +319,7 @@ pub const State = struct {
 
         // reset activity timer
         state.activity_timer.reset();
+        state.snooze_activity_break_timer = time.Timer.start() catch unreachable;
         state.snooze_times += 1;
     }
 
@@ -309,8 +369,39 @@ pub const State = struct {
             .taking_break => {
                 log.info("change_mode: taking break", .{});
                 state.window.enter_break_mode(state.user_settings.display_index);
+
+                // Setup break time
+                var break_time_duration = state.user_settings.break_time_or_default();
+
+                // If break for timer or alarm then make it 45 seconds
+                if (state.time_till_next_timer_complete()) |next_timer| {
+                    if (next_timer.id >= 0) {
+                        // TODO(jae): Make this configurable
+                        const timer_break_duration = 45 * time.ns_per_s;
+                        if (break_time_duration.nanoseconds > timer_break_duration) {
+                            break_time_duration = Duration.init(45 * time.ns_per_s);
+                        }
+                    } else {
+                        switch (next_timer.id) {
+                            NextTimer.ActivityTimer => {}, // no-op
+                            NextTimer.SnoozeTimer => {
+                                state.snooze_activity_break_timer = null;
+                            },
+                            else => {},
+                        }
+                    }
+                } else {
+                    // If invalid/unknown state
+                    log.err("unexpected state in change_mode(.taking_break), no next timer", .{});
+                }
+
                 state.activity_timer.reset();
-                state.break_mode = .{}; // reset escape presses / etc
+                state.break_mode = .{
+                    // setup these fields
+                    .timer = time.Timer.start() catch unreachable,
+                    .duration = break_time_duration,
+                    // reset escape presses / etc
+                };
             },
         }
         state.mode = new_mode;

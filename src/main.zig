@@ -15,6 +15,7 @@ const State = @import("state.zig").State;
 const UserSettings = @import("state.zig").UserSettings;
 const Window = @import("state.zig").Window;
 const Timer = @import("state.zig").Timer;
+const NextTimer = @import("state.zig").NextTimer;
 
 const log = std.log.default;
 const assert = std.debug.assert;
@@ -238,26 +239,27 @@ pub fn main() !void {
             {
                 switch (state.mode) {
                     .regular => {
-                        if (state.time_till_next_timer_complete()) |time_till_break| {
+                        // TODO(jae): Make this configurable
+                        const incoming_break_duration = 10 * time.ns_per_s;
+                        if (state.time_till_next_timer_complete()) |next_timer| {
+                            const time_till_break = next_timer.time_till_next_break;
                             if (time_till_break.nanoseconds <= 0) {
                                 state.change_mode(.taking_break);
-                            } else if (time_till_break.nanoseconds <= 10 * time.ns_per_s) {
+                            } else if (time_till_break.nanoseconds <= incoming_break_duration) {
                                 state.change_mode(.incoming_break);
                             }
                         }
                     },
                     .taking_break => {
-                        const time_active_in_ns = state.activity_timer.read();
-                        const time_till_break_over = state.user_settings.break_time_or_default().diff(time_active_in_ns);
+                        const time_active_in_ns = state.break_mode.timer.read();
+                        const time_till_break_over = state.break_mode.duration.diff(time_active_in_ns);
                         if (time_till_break_over.nanoseconds <= 0) {
                             state.change_mode(.regular);
                         }
                     },
                     .incoming_break => {
-                        if (state.time_till_next_timer_complete()) |time_till_break| {
-                            // log.debug("time until break: {}", .{time_till_break.nanoseconds});
-                            if (time_till_break.nanoseconds <= 0) {
-                                // log.debug("switch from incoming_break to taking_break", .{});
+                        if (state.time_till_next_timer_complete()) |next_timer| {
+                            if (next_timer.time_till_next_break.nanoseconds <= 0) {
                                 state.change_mode(.taking_break);
                             }
                         } else {
@@ -523,8 +525,8 @@ pub fn main() !void {
                                     } else {
                                         imgui.igText("DEBUG: Time since last activity: (none detected)");
                                     }
-                                    if (state.time_till_next_timer_complete()) |d| {
-                                        imgui.igText(try state.tprint("DEBUG: Time till popout: {s}", .{d}));
+                                    if (state.time_till_next_timer_complete()) |next_timer| {
+                                        imgui.igText(try state.tprint("DEBUG: Time till popout: {s}", .{next_timer.time_till_next_break}));
                                     }
                                 }
                             }
@@ -782,7 +784,7 @@ pub fn main() !void {
                         defer imgui.igEnd();
 
                         imgui.igText(try state.tprint("Time till break is over: {s}", .{
-                            state.user_settings.break_time_or_default().diff(state.activity_timer.read()),
+                            state.break_mode.duration.diff(state.break_mode.timer.read()),
                         }));
                     }
 
@@ -902,13 +904,31 @@ pub fn main() !void {
                     _ = imgui.igBegin("incoming_break", null, imgui_default_window_flags);
                     defer imgui.igEnd();
 
-                    imgui.igText("Break time in:");
-                    if (state.time_till_next_timer_complete()) |time_till_break| {
-                        imgui.igText(try state.tprint("{s}", .{time_till_break}));
+                    const next_timer = state.time_till_next_timer_complete() orelse {
+                        break;
+                    };
+
+                    var heading_text: [:0]const u8 = "Time in:";
+                    if (next_timer.id >= 0) {
+                        heading_text = "Timer or alarm in:";
                     } else {
-                        imgui.igText(try state.tprint("", .{}));
+                        switch (next_timer.id) {
+                            NextTimer.ActivityTimer => {
+                                heading_text = "Break time in:";
+                            },
+                            NextTimer.SnoozeTimer => {
+                                // TODO(jae): Better phrasing here, for now it informs you that you hit snooze already
+                                heading_text = "Snooze in:";
+                            },
+                            else => {},
+                        }
                     }
-                    if (state.can_snooze()) {
+
+                    imgui.igText(heading_text);
+                    imgui.igText(try state.tprint("{s}", .{next_timer.time_till_next_break}));
+                    if (next_timer.id == NextTimer.ActivityTimer or
+                        next_timer.id == NextTimer.SnoozeTimer)
+                    {
                         if (imgui.igButton("Snooze", .{})) {
                             state.snooze();
                             state.change_mode(.regular);
