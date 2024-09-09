@@ -500,7 +500,11 @@ pub fn main() !void {
                                     imgui.igText(try state.tprint("Times snoozed: {d}", .{state.snooze_times}));
                                 }
 
-                                if (state.user_settings.is_activity_break_enabled) {
+                                if (state.snooze_activity_break_timer) |*snooze_timer| {
+                                    imgui.igText(try state.tprint("Snooze timer over in: {s}", .{
+                                        state.user_settings.snooze_duration_or_default().diff(snooze_timer.read()),
+                                    }));
+                                } else if (state.user_settings.is_activity_break_enabled) {
                                     const time_till_activity_break_format = "Time till activity break: {s}";
                                     if (state.is_user_mouse_active) {
                                         imgui.igText(try state.tprint(time_till_activity_break_format, .{
