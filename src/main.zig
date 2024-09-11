@@ -292,12 +292,12 @@ pub fn main() !void {
             sdl.SDL_Delay(minimized_delay);
 
             const renderer = state.window.renderer;
-            _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
+            // _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
             // _ = sdl.SDL_SetRenderDrawColor(renderer, 200, 200, 200, 0);
-            _ = sdl.SDL_RenderClear(renderer);
+            // _ = sdl.SDL_RenderClear(renderer);
             imgui.igRender();
             imgui.ImGui_ImplSDLRenderer2_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
-            // sdl.SDL_RenderPresent(renderer);
+            _ = sdl.SDL_RenderFlush(renderer);
             continue;
         }
 

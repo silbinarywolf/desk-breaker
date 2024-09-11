@@ -57,7 +57,7 @@ jobs:
     - name: Build Release
       if: startsWith(github.ref, 'refs/tags/')
       run: |
-        zig build all-targets -Doptimize=ReleaseSafe --verbose
+        zig build all-targets -Doptimize=ReleaseFast --verbose
 
     - name: Release
       uses: softprops/action-gh-release@v2
