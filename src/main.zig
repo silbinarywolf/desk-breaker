@@ -15,6 +15,7 @@ const State = @import("state.zig").State;
 const UserSettings = @import("state.zig").UserSettings;
 const Window = @import("state.zig").Window;
 const Timer = @import("state.zig").Timer;
+const NextTimer = @import("state.zig").NextTimer;
 
 const log = std.log.default;
 const assert = std.debug.assert;
@@ -120,7 +121,7 @@ pub fn main() !void {
         .mode = .regular,
         .window = app_window,
         .user_settings = user_settings,
-        .time_till_next_state = try std.time.Timer.start(),
+        .activity_timer = try std.time.Timer.start(),
         .temp_allocator = std.heap.ArenaAllocator.init(allocator),
     };
     defer {
@@ -134,7 +135,6 @@ pub fn main() !void {
     // state.user_settings.default_break_time = Duration.init(5 * time.ns_per_s);
 
     var has_quit = false;
-    var todo_checkbox: bool = false;
     while (!has_quit) {
         imgui.igSetCurrentContext(state.window.imgui_context);
         _ = state.temp_allocator.reset(.retain_capacity);
@@ -217,6 +217,7 @@ pub fn main() !void {
                 diff.y >= 5)
             {
                 state.time_since_last_input = try std.time.Timer.start();
+                state.is_user_mouse_active = true;
             }
 
             if (state.mode == .regular) {
@@ -226,10 +227,10 @@ pub fn main() !void {
                     const inactivity_duration = 5 * std.time.ns_per_min;
                     if (time_since_last_input.read() > inactivity_duration) {
                         state.is_user_mouse_active = false;
-                        state.time_till_next_state.reset();
+                        state.activity_timer.reset();
                     }
                 } else {
-                    state.time_till_next_state.reset();
+                    state.activity_timer.reset();
                     state.is_user_mouse_active = false;
                 }
             }
@@ -238,26 +239,27 @@ pub fn main() !void {
             {
                 switch (state.mode) {
                     .regular => {
-                        if (state.time_till_next_timer_complete()) |time_till_break| {
+                        // TODO(jae): Make this configurable
+                        const incoming_break_duration = 10 * time.ns_per_s;
+                        if (state.time_till_next_timer_complete()) |next_timer| {
+                            const time_till_break = next_timer.time_till_next_break;
                             if (time_till_break.nanoseconds <= 0) {
                                 state.change_mode(.taking_break);
-                            } else if (time_till_break.nanoseconds <= 10 * time.ns_per_s) {
+                            } else if (time_till_break.nanoseconds <= incoming_break_duration) {
                                 state.change_mode(.incoming_break);
                             }
                         }
                     },
                     .taking_break => {
-                        const time_active_in_ns = state.time_till_next_state.read();
-                        const time_till_break_over = state.user_settings.break_time_or_default().diff(time_active_in_ns);
+                        const time_active_in_ns = state.break_mode.timer.read();
+                        const time_till_break_over = state.break_mode.duration.diff(time_active_in_ns);
                         if (time_till_break_over.nanoseconds <= 0) {
                             state.change_mode(.regular);
                         }
                     },
                     .incoming_break => {
-                        if (state.time_till_next_timer_complete()) |time_till_break| {
-                            // log.debug("time until break: {}", .{time_till_break.nanoseconds});
-                            if (time_till_break.nanoseconds <= 0) {
-                                // log.debug("switch from incoming_break to taking_break", .{});
+                        if (state.time_till_next_timer_complete()) |next_timer| {
+                            if (next_timer.time_till_next_break.nanoseconds <= 0) {
                                 state.change_mode(.taking_break);
                             }
                         } else {
@@ -283,19 +285,19 @@ pub fn main() !void {
         if (state.mode == .regular and sdl.SDL_GetWindowFlags(state.window.window) & sdl.SDL_WINDOW_MINIMIZED != 0) {
             const minimized_delay: u32 = switch (builtin.os.tag) {
                 .windows => 100, // Above 1000ms feels unresponsive when you unminimize it
-                .macos => 2000, // Mac OSX feels fine at 2000ms to bring it back up,
+                .macos => 1000, // Mac OSX feels fine at 1000ms to bring it back up,
                 .linux => 800, // Kbuntu opens up, might be a blank ugly transparent screen for a bit, but then pop-in
                 else => 100, // Default to 100ms for anything else that's untested
             };
             sdl.SDL_Delay(minimized_delay);
 
             const renderer = state.window.renderer;
-            _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
+            // _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
             // _ = sdl.SDL_SetRenderDrawColor(renderer, 200, 200, 200, 0);
-            _ = sdl.SDL_RenderClear(renderer);
+            // _ = sdl.SDL_RenderClear(renderer);
             imgui.igRender();
             imgui.ImGui_ImplSDLRenderer2_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
-            // sdl.SDL_RenderPresent(renderer);
+            _ = sdl.SDL_RenderFlush(renderer);
             continue;
         }
 
@@ -384,18 +386,20 @@ pub fn main() !void {
                                         else => {},
                                     }
 
-                                    // List displays
+                                    // List displays by name (if supported by operating system)
+                                    // - Windows: "0: MSI G241", "1: UGREEN"
+                                    // - MacOS: "0: 0" and "1: 1"
                                     {
                                         const display_count_or_err: u32 = @intCast(sdl.SDL_GetNumVideoDisplays());
                                         state.ui.options_metadata.display_names_buf.len = 0;
                                         if (display_count_or_err >= 1) {
                                             const display_count: u32 = @intCast(display_count_or_err);
                                             for (0..display_count) |display_index| {
-                                                const name = sdl.SDL_GetDisplayName(@intCast(display_index));
-                                                if (name == null) {
+                                                const name_c_str = sdl.SDL_GetDisplayName(@intCast(display_index));
+                                                if (name_c_str == null) {
                                                     continue;
                                                 }
-                                                try state.ui.options_metadata.display_names_buf.writer().print("{s}\x00", .{name});
+                                                try state.ui.options_metadata.display_names_buf.writer().print("{d}: {s}\x00", .{ display_index, name_c_str });
                                             }
                                         }
                                     }
@@ -489,19 +493,34 @@ pub fn main() !void {
                             // Bottom-left-corner
                             {
                                 imgui.igSetNextWindowPos(.{ .x = 0, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 0, .y = 1 });
-                                _ = imgui.igBegin("general-bottom-left-corner", null, imgui_default_window_flags);
+                                _ = imgui.igBegin("general-bottom-left-corner", null, imgui_default_window_flags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
                                 defer imgui.igEnd();
 
-                                if (state.user_settings.is_activity_break_enabled) {
-                                    imgui.igText(try state.tprint("Time till activity break: {s}", .{
-                                        state.user_settings.time_till_break_or_default().diff(state.time_till_next_state.read()),
+                                if (state.snooze_times > 0) {
+                                    imgui.igText(try state.tprint("Times snoozed: {d}", .{state.snooze_times}));
+                                }
+
+                                if (state.snooze_activity_break_timer) |*snooze_timer| {
+                                    imgui.igText(try state.tprint("Snooze timer over in: {s}", .{
+                                        state.user_settings.snooze_duration_or_default().diff(snooze_timer.read()),
                                     }));
+                                } else if (state.user_settings.is_activity_break_enabled) {
+                                    const time_till_activity_break_format = "Time till activity break: {s}";
+                                    if (state.is_user_mouse_active) {
+                                        imgui.igText(try state.tprint(time_till_activity_break_format, .{
+                                            state.user_settings.time_till_break_or_default().diff(state.activity_timer.read()),
+                                        }));
+                                    } else {
+                                        imgui.igText(try state.tprint(time_till_activity_break_format, .{
+                                            "(No mouse activity)",
+                                        }));
+                                    }
                                 }
 
                                 // DEBUG: Add debug info
                                 if (builtin.mode == .Debug) {
                                     {
-                                        const time_in_seconds = @divFloor(state.time_till_next_state.read(), std.time.ns_per_s);
+                                        const time_in_seconds = @divFloor(state.activity_timer.read(), std.time.ns_per_s);
                                         imgui.igText("DEBUG: Time using computer: %d", time_in_seconds);
                                     }
                                     if (state.time_since_last_input) |*time_since_last_input| {
@@ -510,8 +529,8 @@ pub fn main() !void {
                                     } else {
                                         imgui.igText("DEBUG: Time since last activity: (none detected)");
                                     }
-                                    if (state.time_till_next_timer_complete()) |d| {
-                                        imgui.igText(try state.tprint("DEBUG: Time till popout: {s}", .{d}));
+                                    if (state.time_till_next_timer_complete()) |next_timer| {
+                                        imgui.igText(try state.tprint("DEBUG: Time till popout: {s}", .{next_timer.time_till_next_break}));
                                     }
                                 }
                             }
@@ -759,51 +778,27 @@ pub fn main() !void {
                     }
                 },
                 .taking_break => {
+                    var has_triggered_exiting_break_mode = false;
+                    const required_esc_presses = 30;
+
+                    // Top-Left
                     {
                         imgui.igSetNextWindowPos(viewport_pos, 0, .{ .x = 0, .y = 0 });
-                        imgui.igSetNextWindowSize(.{ .x = viewport_size.x, .y = 0 }, 0);
-                        _ = imgui.igBegin("break", null, imgui_default_window_flags);
+                        _ = imgui.igBegin("break-top-left", null, imgui_default_window_flags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
                         defer imgui.igEnd();
 
                         imgui.igText(try state.tprint("Time till break is over: {s}", .{
-                            state.user_settings.break_time_or_default().diff(state.time_till_next_state.read()),
+                            state.break_mode.duration.diff(state.break_mode.timer.read()),
                         }));
                     }
 
+                    // Top-Right
                     {
-                        imgui.igSetNextWindowPos(.{ .x = viewport_size.x / 2, .y = viewport_size.y / 2 }, imgui.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
-                        _ = imgui.igBegin("break-center", null, imgui_default_window_flags);
+                        imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = 0 }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 0 });
+                        _ = imgui.igBegin("break-top-right", null, imgui_default_window_flags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
                         defer imgui.igEnd();
 
-                        imgui.igText("(In a future version we want to add the ability to add a daily todo list here)");
-                        if (builtin.mode == .Debug) {
-                            imgui.igText("Daily To-Do List");
-                            _ = imgui.igCheckbox("Todo Item One", &todo_checkbox);
-                            _ = imgui.igCheckbox("Todo Item Two", &todo_checkbox);
-                            _ = imgui.igCheckbox("Todo Item Three", &todo_checkbox);
-                        }
-                    }
-
-                    {
-                        imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 1 });
-                        _ = imgui.igBegin("break-bottom-right-corner", null, imgui_default_window_flags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
-                        defer imgui.igEnd();
-
-                        if (state.break_mode.held_down_timer) |*exit_timer| {
-                            imgui.igText(
-                                try state.tprint("Will exit in: {s}", .{state.user_settings.exit_time_or_default().diff(exit_timer.read())}),
-                            );
-                        }
-
-                        var has_triggered_exiting_break_mode = false;
-                        const required_esc_presses = 30;
-                        if (state.break_mode.esc_or_exit_presses > 1) {
-                            imgui.igText(
-                                try state.tprint("Presses until exit: {}/{}", .{ state.break_mode.esc_or_exit_presses, required_esc_presses }),
-                            );
-                        }
-
-                        if (imgui.igButtonEx("Exit", .{}, imgui.ImGuiButtonFlags_PressedOnClick)) {
+                        if (imgui.igButton("Exit", .{})) {
                             if (state.break_mode.held_down_timer == null) {
                                 state.break_mode.held_down_timer = try time.Timer.start();
                             }
@@ -816,20 +811,95 @@ pub fn main() !void {
                                 has_quit = true;
                             }
                         }
+                    }
 
-                        // Check if triggered exit break mode manually
+                    {
+                        imgui.igSetNextWindowPos(.{ .x = viewport_size.x / 2, .y = viewport_size.y / 2 }, imgui.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
+                        _ = imgui.igBegin("break-center", null, imgui_default_window_flags);
+                        defer imgui.igEnd();
+
+                        const has_active_timers = timercheck: {
+                            for (state.user_settings.timers.items) |*t| {
+                                switch (t.kind) {
+                                    .timer => {
+                                        if (t.timer_started == null or // If not using this timer, skip
+                                            t.timer_duration == null // If no duration configured, skip
+                                        ) {
+                                            continue;
+                                        }
+                                        break :timercheck true;
+                                    },
+                                    .alarm => @panic("TODO: Handle listing alarm"),
+                                }
+                            }
+                            break :timercheck false;
+                        };
+                        imgui.igText("It's time for a break. Get up, stretch your limbs a bit!");
+                        if (has_active_timers) {
+                            imgui.igNewLine();
+                            imgui.igText("Timers:");
+                            for (state.user_settings.timers.items) |*t| {
+                                switch (t.kind) {
+                                    .timer => {
+                                        // If not using this timer, skip
+                                        var timer_started = t.timer_started orelse continue;
+                                        // If no duration configured, skip
+                                        const timer_duration = t.timer_duration orelse continue;
+
+                                        // Show timer with time left
+                                        const duration_left = timer_duration.diff(timer_started.read());
+                                        imgui.igText(try state.tprint("{s} - {s}", .{ t.name.slice(), duration_left }));
+                                    },
+                                    .alarm => @panic("TODO: Handle listing alarm"),
+                                }
+                            }
+                        }
+                        // if (builtin.mode == .Debug) {
+                        //     imgui.igText("Daily To-Do List");
+                        //     _ = imgui.igCheckbox("Todo Item One", &todo_checkbox);
+                        //     _ = imgui.igCheckbox("Todo Item Two", &todo_checkbox);
+                        //     _ = imgui.igCheckbox("Todo Item Three", &todo_checkbox);
+                        // }
+                    }
+
+                    // Bottom-right
+                    {
+                        imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 1 });
+                        _ = imgui.igBegin("break-bottom-right-corner", null, imgui_default_window_flags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
+                        defer imgui.igEnd();
+
                         if (state.break_mode.held_down_timer) |*exit_timer| {
-                            const exit_time_left = state.user_settings.exit_time_or_default().diff(exit_timer.read());
-                            if (exit_time_left.nanoseconds <= 0) {
+                            imgui.igText(
+                                try state.tprint("Will exit in: {s}", .{state.user_settings.exit_time_or_default().diff(exit_timer.read())}),
+                            );
+                        }
+
+                        if (state.break_mode.esc_or_exit_presses > 1) {
+                            imgui.igText(
+                                try state.tprint("Presses until exit: {}/{}", .{ state.break_mode.esc_or_exit_presses, required_esc_presses }),
+                            );
+                        }
+
+                        if (state.can_snooze()) {
+                            if (imgui.igButton("Snooze", .{})) {
+                                state.snooze();
                                 has_triggered_exiting_break_mode = true;
                             }
                         }
-                        if (state.break_mode.esc_or_exit_presses >= required_esc_presses) {
+                    }
+
+                    // Check if triggered exit break mode manually
+                    if (state.break_mode.held_down_timer) |*exit_timer| {
+                        const exit_time_left = state.user_settings.exit_time_or_default().diff(exit_timer.read());
+                        if (exit_time_left.nanoseconds <= 0) {
                             has_triggered_exiting_break_mode = true;
                         }
-                        if (has_triggered_exiting_break_mode) {
-                            state.change_mode(.regular);
-                        }
+                    }
+                    if (state.break_mode.esc_or_exit_presses >= required_esc_presses) {
+                        has_triggered_exiting_break_mode = true;
+                    }
+                    if (has_triggered_exiting_break_mode) {
+                        state.change_mode(.regular);
                     }
                 },
                 .incoming_break => {
@@ -838,9 +908,35 @@ pub fn main() !void {
                     _ = imgui.igBegin("incoming_break", null, imgui_default_window_flags);
                     defer imgui.igEnd();
 
-                    imgui.igText("Break time in:");
-                    if (state.time_till_next_timer_complete()) |time_till_break| {
-                        imgui.igText(try state.tprint("{s}", .{time_till_break}));
+                    const next_timer = state.time_till_next_timer_complete() orelse {
+                        break;
+                    };
+
+                    var heading_text: [:0]const u8 = "Time in:";
+                    if (next_timer.id >= 0) {
+                        heading_text = "Timer or alarm in:";
+                    } else {
+                        switch (next_timer.id) {
+                            NextTimer.ActivityTimer => {
+                                heading_text = "Break time in:";
+                            },
+                            NextTimer.SnoozeTimer => {
+                                // TODO(jae): Better phrasing here, for now it informs you that you hit snooze already
+                                heading_text = "Snooze in:";
+                            },
+                            else => {},
+                        }
+                    }
+
+                    imgui.igText(heading_text);
+                    imgui.igText(try state.tprint("{s}", .{next_timer.time_till_next_break}));
+                    if (next_timer.id == NextTimer.ActivityTimer or
+                        next_timer.id == NextTimer.SnoozeTimer)
+                    {
+                        if (imgui.igButton("Snooze", .{})) {
+                            state.snooze();
+                            state.change_mode(.regular);
+                        }
                     }
                 },
             }
