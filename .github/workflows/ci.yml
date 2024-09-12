@@ -38,7 +38,7 @@ jobs:
     # source: https://github.com/libsdl-org/SDL/blob/f32575dfabecac37892e3abfe31b08b9e348a9d7/docs/README-linux.md
     - name: Install SDL2 Linux dependencies
       run: |
-        sudo apt-get install build-essential make \
+        sudo apt-get update && apt-get install build-essential make \
         pkg-config libasound2-dev libpulse-dev \
         libaudio-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
         libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
