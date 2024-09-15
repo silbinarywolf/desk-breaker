@@ -31,7 +31,10 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Setup Zig
-      uses: goto-bus-stop/setup-zig@v2
+      # note(jae): 2024-09-15
+      # Uses download mirror first as preferred by Zig Foundation
+      # see: https://ziglang.org/news/migrate-to-self-hosting/
+      uses: mlugg/setup-zig@v1
       with:
         version: "0.13.0"
 
