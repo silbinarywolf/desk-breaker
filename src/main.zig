@@ -142,7 +142,27 @@ pub fn main() !void {
         const current_frame_time = sdl.SDL_GetPerformanceCounter();
 
         var sdl_event: sdl.SDL_Event = undefined;
-        while (sdl.SDL_PollEvent(&sdl_event) != 0) {
+        var is_polling_events = false;
+        while (true) {
+            // Get next event
+            {
+                const ev_res = if (!is_polling_events)
+                    // This either blocks until {N}ms passed or we get an event
+                    // Conserves CPU. Opted for 500ms so it definitely refreshes every second
+                    // for the live update on the home screen.
+                    //
+                    // We also need the timeout so that it eventually reads global mouse position
+                    // outside of this loop to detect activity.
+                    sdl.SDL_WaitEventTimeout(&sdl_event, 500)
+                else
+                    sdl.SDL_PollEvent(&sdl_event);
+                if (ev_res == 0) {
+                    break;
+                }
+                // If we received one event, start polling
+                is_polling_events = true;
+            }
+
             _ = imgui.ImGui_ImplSDL2_ProcessEvent(@ptrCast(&sdl_event));
             switch (sdl_event.type) {
                 sdl.SDL_WINDOWEVENT => {
@@ -283,14 +303,6 @@ pub fn main() !void {
         //
         // conserve more CPU with SDL_Delay
         if (state.mode == .regular and sdl.SDL_GetWindowFlags(state.window.window) & sdl.SDL_WINDOW_MINIMIZED != 0) {
-            const minimized_delay: u32 = switch (builtin.os.tag) {
-                .windows => 100, // Above 1000ms feels unresponsive when you unminimize it
-                .macos => 1000, // Mac OSX feels fine at 1000ms to bring it back up,
-                .linux => 800, // Kbuntu opens up, might be a blank ugly transparent screen for a bit, but then pop-in
-                else => 100, // Default to 100ms for anything else that's untested
-            };
-            sdl.SDL_Delay(minimized_delay);
-
             const renderer = state.window.renderer;
             // _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
             // _ = sdl.SDL_SetRenderDrawColor(renderer, 200, 200, 200, 0);
