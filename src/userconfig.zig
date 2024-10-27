@@ -106,10 +106,8 @@ pub fn load_config_file(allocator: std.mem.Allocator, user_settings: *UserSettin
     user_settings.is_activity_break_enabled = userconfig.activity_timer.is_enabled;
     user_settings.break_time = userconfig.activity_timer.break_time;
     user_settings.time_till_break = userconfig.activity_timer.time_till_break;
-    // Only set configured display if we have that many
-    if (userconfig.display_index >= sdl.SDL_GetNumVideoDisplays()) {
-        user_settings.display_index = userconfig.display_index;
-    }
+    user_settings.display_index = userconfig.display_index;
+
     user_settings.timers.clearRetainingCapacity();
     for (userconfig.timers) |*t| {
         try user_settings.timers.append(.{

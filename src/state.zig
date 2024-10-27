@@ -427,10 +427,10 @@ pub const Window = struct {
             log.err("unable to create window: {s}", .{sdl.SDL_GetError()});
             return error.SDLWindowInitializationFailed;
         };
-        sdl.SDL_SetWindowIcon(window, icon);
+        _ = sdl.SDL_SetWindowIcon(window, icon);
         // TODO(jae): 2024-08-20
         // Add option to use hardware accelerated instead
-        const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, -1, sdl.SDL_RENDERER_SOFTWARE) orelse {
+        const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, sdl.SDL_SOFTWARE_RENDERER) orelse {
             log.err("unable to create renderer: {s}", .{sdl.SDL_GetError()});
             return error.SDLRendererInitializationFailed;
         };
@@ -443,11 +443,11 @@ pub const Window = struct {
         imgui_io.IniFilename = null; // disable imgui.ini
         imgui_io.IniSavingRate = -1; // disable imgui.ini
 
-        _ = imgui.ImGui_ImplSDL2_InitForSDLRenderer(@ptrCast(window), @ptrCast(renderer));
-        errdefer imgui.ImGui_ImplSDL2_Shutdown();
+        _ = imgui.ImGui_ImplSDL3_InitForSDLRenderer(@ptrCast(window), @ptrCast(renderer));
+        errdefer imgui.ImGui_ImplSDL3_Shutdown();
 
-        _ = imgui.ImGui_ImplSDLRenderer2_Init(@ptrCast(renderer));
-        errdefer imgui.ImGui_ImplSDLRenderer2_Shutdown();
+        _ = imgui.ImGui_ImplSDLRenderer3_Init(@ptrCast(renderer));
+        errdefer imgui.ImGui_ImplSDLRenderer3_Shutdown();
 
         return .{
             .window = window,
@@ -474,8 +474,12 @@ pub const Window = struct {
         var state: WindowState = .{
             .is_minimized = sdl.SDL_GetWindowFlags(window) & sdl.SDL_WINDOW_MINIMIZED != 0,
         };
-        sdl.SDL_GetWindowPosition(window, &state.x, &state.y);
-        sdl.SDL_GetWindowSize(window, &state.w, &state.h);
+        if (!sdl.SDL_GetWindowPosition(window, &state.x, &state.y)) {
+            // TODO: handle this failure?
+        }
+        if (!sdl.SDL_GetWindowSize(window, &state.w, &state.h)) {
+            // TODO: handle this failure?
+        }
         return state;
     }
 
@@ -484,124 +488,159 @@ pub const Window = struct {
 
         // NOTE(jae): 2024-07-16 - SDL 2.30.5
         // On Windows 10, this must happen before minimizing
-        sdl.SDL_SetWindowSize(window, state.w, state.h);
-        sdl.SDL_SetWindowPosition(window, state.x, state.y);
+        _ = sdl.SDL_SetWindowSize(window, state.w, state.h);
+        _ = sdl.SDL_SetWindowPosition(window, state.x, state.y);
 
         if (state.is_minimized) {
-            sdl.SDL_MinimizeWindow(window);
+            _ = sdl.SDL_MinimizeWindow(window);
         }
+    }
+
+    fn get_display_id_from_index(display_index: u32) sdl.SDL_DisplayID {
+        var display_count: c_int = undefined;
+        const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
+        if (display_list_or_err == null) {
+            return 0;
+        }
+        if (display_count == 0) {
+            return 0;
+        }
+        const display_list = display_list_or_err[0..@intCast(display_count)];
+        if (display_index < display_list.len) {
+            // Use found display
+            return display_list[display_index];
+        }
+        // If cannot find display by index, use first item
+        return display_list[0];
     }
 
     fn enter_incoming_break(self: *Window, display_index: u32) bool {
         // Don't work if we can't get display dimensions
         var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayUsableBounds(@intCast(display_index), &display) != 0) {
+        if (!sdl.SDL_GetDisplayUsableBounds(get_display_id_from_index(display_index), &display)) {
             return false;
         }
         const window = self.window orelse unreachable;
 
-        RestoreWindow_NoActivateFocus(window); // unminimize it
-        sdl.SDL_SetWindowResizable(window, 0);
-        if (builtin.os.tag == .macos) {
-            _ = sdl.SDL_SetWindowBordered(window, 0);
-        }
+        _ = sdl.SDL_SetWindowResizable(window, false);
+        _ = sdl.SDL_SetWindowBordered(window, false);
 
         const width: c_int = 200;
         const height: c_int = 200;
-        sdl.SDL_SetWindowSize(window, width, height);
-        sdl.SDL_SetWindowPosition(window, display.x + display.w - width, display.y + display.h - height);
+        _ = sdl.SDL_SetWindowSize(window, width, height);
+        _ = sdl.SDL_SetWindowPosition(window, display.x + display.w - width, display.y + display.h - height);
+        _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
 
-        _ = sdl.SDL_SetWindowAlwaysOnTop(window, 1);
-        if (builtin.os.tag != .macos) {
-            _ = sdl.SDL_SetWindowBordered(window, 0); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
-        }
+        RestoreWindow_NoActivateFocus(window); // unminimize it
         return true;
     }
 
     fn enter_break_mode(self: *Window, display_index: u32) void {
         const window = self.window orelse unreachable;
 
-        sdl.SDL_SetWindowMouseGrab(window, 1); // lock mouse to window
-        sdl.SDL_SetWindowKeyboardGrab(window, 1); // lock keyboard to window
-
-        RaiseAndActivateFocus(window); // unminimize and set input focus
-        sdl.SDL_SetWindowResizable(window, 0);
-        if (builtin.os.tag == .macos) {
-            _ = sdl.SDL_SetWindowBordered(window, 0);
-        }
+        _ = sdl.SDL_SetWindowResizable(window, false);
+        _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
+        _ = sdl.SDL_SetWindowBordered(window, false); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
 
         var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayUsableBounds(@intCast(display_index), &display) == 0) {
+        if (sdl.SDL_GetDisplayUsableBounds(get_display_id_from_index(display_index), &display)) {
             log.info("change_mode: got display: {}", .{display});
-            sdl.SDL_SetWindowPosition(window, display.x, display.y);
-            sdl.SDL_SetWindowSize(window, display.w, display.h);
+            _ = sdl.SDL_SetWindowPosition(window, display.x, display.y);
+            _ = sdl.SDL_SetWindowSize(window, display.w, display.h);
         } else {
             // Fallback if cannot query display
-            sdl.SDL_SetWindowPosition(window, 0, 0);
-            sdl.SDL_SetWindowSize(window, 640, 480);
+            _ = sdl.SDL_SetWindowPosition(window, 0, 0);
+            _ = sdl.SDL_SetWindowSize(window, 640, 480);
         }
 
-        _ = sdl.SDL_SetWindowAlwaysOnTop(window, 1);
-        if (builtin.os.tag != .macos) {
-            _ = sdl.SDL_SetWindowBordered(window, 0); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
-        }
+        _ = sdl.SDL_SetWindowMouseGrab(window, true); // lock mouse to window
+        _ = sdl.SDL_SetWindowKeyboardGrab(window, true); // lock keyboard to window
+
+        RaiseAndActivateFocus(window); // unminimize and set input focus
     }
 
     fn exit_break_mode(self: *Window) void {
         const window = self.window;
 
-        sdl.SDL_SetWindowMouseGrab(window, 0); // free mouse lock from window
-        sdl.SDL_SetWindowKeyboardGrab(window, 0); // lock keyboard to window
+        _ = sdl.SDL_SetWindowMouseGrab(window, false); // free mouse lock from window
+        _ = sdl.SDL_SetWindowKeyboardGrab(window, false); // lock keyboard to window
 
-        sdl.SDL_SetWindowAlwaysOnTop(window, 0);
-        sdl.SDL_SetWindowBordered(window, 1);
-        sdl.SDL_SetWindowResizable(window, 1);
+        _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
+        _ = sdl.SDL_SetWindowBordered(window, true);
+        _ = sdl.SDL_SetWindowResizable(window, true);
     }
 };
 
 fn RestoreWindow_NoActivateFocus(window: *sdl.SDL_Window) void {
-    switch (builtin.os.tag) {
-        .windows => {
-            // NOTE(jae): 2024-07-16 - SDL 2.30.5
-            // Do this to make sure the window appears where we set it
-            sdl.SDL_HideWindow(window);
-            sdl.SDL_RestoreWindow(window);
+    const oldActivateWhenRaised = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED);
+    const oldActivateWhenShown = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+    _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, "0");
+    _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+    defer {
+        _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, oldActivateWhenRaised);
+        _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, oldActivateWhenShown);
+    }
 
-            // NOTE(jae): 2024-07-16 - SDL 2.30.5
-            // This hint is only supported on the Windows OS right now
-            _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
-            sdl.SDL_ShowWindow(window);
-            _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "0");
-        },
-        else => {
-            sdl.SDL_RestoreWindow(window); // unminimize
-            sdl.SDL_RaiseWindow(window); // put above every other window
-        },
+    const isMinimized = sdl.SDL_GetWindowFlags(window) & sdl.SDL_WINDOW_MINIMIZED != 0;
+    if (isMinimized) {
+        // TODO(jae): 2024-10-27
+        // - Windows has issue where restoring from minimize causes this to steal focus.
+        _ = sdl.SDL_RestoreWindow(window); // unminimize
+    } else {
+        _ = sdl.SDL_HideWindow(window);
+        _ = sdl.SDL_ShowWindow(window); // put above every other window
     }
 }
 
 fn RaiseAndActivateFocus(window: *sdl.SDL_Window) void {
-    switch (builtin.os.tag) {
-        .windows => {
-            // NOTE(jae): 2024-07-16 - SDL 2.30.5
-            // We do this so that on a multiple monitor setup so that minimizing / raising the window
-            // captures the mouse into the window and locks it in
-            sdl.SDL_MinimizeWindow(window);
-
-            sdl.SDL_RaiseWindow(window);
-
-            _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "0");
-            sdl.SDL_ShowWindow(window);
-            _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
-        },
-        else => {
-            // NOTE(jae): 2024-07-16 - SDL 2.30.5
-            // Do this to capture mouse on X11 (Linux), needs ShowWindow afterward to activate it
-            sdl.SDL_RaiseWindow(window);
-            sdl.SDL_HideWindow(window); // X11: hide window first, then do ShowWindow to activate it
-            sdl.SDL_ShowWindow(window);
-        },
+    const oldActivateWhenRaised = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED);
+    const oldActivateWhenShown = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+    const oldForceRaiseWindow = sdl.SDL_GetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW);
+    _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, "1");
+    _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "1");
+    _ = sdl.SDL_SetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW, "1");
+    defer {
+        _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, oldActivateWhenRaised);
+        _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, oldActivateWhenShown);
+        _ = sdl.SDL_SetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW, oldForceRaiseWindow);
     }
+
+    const isMinimized = sdl.SDL_GetWindowFlags(window) & sdl.SDL_WINDOW_MINIMIZED != 0;
+    if (isMinimized) {
+        _ = sdl.SDL_RestoreWindow(window); // unminimize
+    } else {
+        _ = sdl.SDL_RaiseWindow(window);
+    }
+
+    _ = sdl.SDL_HideWindow(window);
+    _ = sdl.SDL_ShowWindow(window); // put above every other window
+
+    // switch (builtin.os.tag) {
+    //     .windows => {
+    //         // NOTE(jae): 2024-07-16 - SDL 2.30.5
+    //         // We do this so that on a multiple monitor setup so that minimizing / raising the window
+    //         // captures the mouse into the window and locks it in
+    //         _ = sdl.SDL_MinimizeWindow(window);
+
+    //         _ = sdl.SDL_RaiseWindow(window);
+
+    //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "1");
+    //         _ = sdl.SDL_ShowWindow(window);
+    //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+    //     },
+    //     else => {
+    //         // NOTE(jae): 2024-07-16 - SDL 2.30.5
+    //         // Do this to capture mouse on X11 (Linux), needs ShowWindow afterward to activate it
+    //         _ = sdl.SDL_RaiseWindow(window);
+    //         _ = sdl.SDL_HideWindow(window); // X11: hide window first, then do ShowWindow to activate it
+
+    //         // TODO(jae): 2024-10-08
+    //         // Investigate and see if this hint works on other OSes as of SDL3: SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN
+    //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "1");
+    //         _ = sdl.SDL_ShowWindow(window);
+    //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+    //     },
+    // }
 }
 
 // SDL_VERSION alterantive that works, Zig 0.13.0 can't translate the macro

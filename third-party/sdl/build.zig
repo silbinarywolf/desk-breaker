@@ -1,35 +1,266 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const SDLBuildGenerator = @import("tools/gen_sdlbuild.zig").SDLBuildGenerator;
+const SDLConfig = @import("src/build/sdlbuild.zig").SDLConfig;
+const sdlsrc = @import("src/build/sdlbuild.zig");
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sdl_dep = b.dependency("sdl", .{});
+    const sdl_dep = b.dependency("sdl3", .{});
     const sdl_path = sdl_dep.path("");
-    const sdl_include_path = sdl_path.path(b, "include");
+    const sdl_api_include_path = sdl_path.path(b, "include");
+    const sdl_build_config_include_path = sdl_api_include_path.path(b, "build_config");
 
-    var sdl_config_header: ?*std.Build.Step.ConfigHeader = null;
+    // Generate source file stuff
+    const do_sdl_codegen = b.option(bool, "generate", "run code generation") orelse false;
+    if (do_sdl_codegen) {
+        var gen = try SDLBuildGenerator.init(b.allocator, sdl_dep.path("").getPath(b));
+        defer gen.deinit();
+        try gen.generateSDLConfig();
+        try gen.generateSDLBuild();
+        try gen.formatAndWriteFile(b.pathJoin(&.{ b.path("").getPath(b), "src", "build", "sdlbuild.zig" }));
+    }
 
-    if (target.result.os.tag == .linux) {
+    const use_cmake = target.result.os.tag == .linux and target.result.abi != .android;
+    if (!use_cmake) {
+        const lib = b.addStaticLibrary(.{
+            .name = "SDL3",
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        lib.addCSourceFiles(.{
+            .root = sdl_path,
+            .files = &generic_src_files,
+        });
+        lib.addIncludePath(sdl_path.path(b, "src")); // SDL_internal.h, etc
+        lib.addIncludePath(sdl_api_include_path); // SDL3/*.h, etc
+
+        // Set for SDL_revision.h
+        // - If building with cmake, SDL_revision.h generally sets 'SDL_REVISION' to 'SDL-3.1.3-no-vcs'
+        // - If building SDL3 via Github Actions, it sets this to: "Github Workflow"
+        lib.root_module.addCMacro("SDL_VENDOR_INFO", "\"zig-sdl3\"");
+
+        // Used for SDL_egl.h and SDL_opengles2.h
+        lib.root_module.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
+
+        switch (target.result.os.tag) {
+            .windows => {
+                lib.root_module.addCMacro("HAVE_MODF", "1");
+
+                lib.addCSourceFiles(.{
+                    .root = sdl_path,
+                    .files = &windows_src_files,
+                });
+                lib.addWin32ResourceFile(.{
+                    // SDL version
+                    .file = sdl_path.path(b, sdlsrc.core.windows.win32_resource_files[0]),
+                });
+                lib.addWin32ResourceFile(.{
+                    // HIDAPI version
+                    .file = sdl_path.path(b, sdlsrc.hidapi.windows.win32_resource_files[0]),
+                    .include_paths = &.{
+                        sdl_path.path(b, "src/hidapi/hidapi"),
+                    },
+                });
+                lib.linkSystemLibrary("setupapi");
+                lib.linkSystemLibrary("winmm");
+                lib.linkSystemLibrary("gdi32");
+                lib.linkSystemLibrary("imm32");
+                lib.linkSystemLibrary("version");
+                lib.linkSystemLibrary("oleaut32"); // SDL_windowssensor.c, symbol "SysFreeString"
+                lib.linkSystemLibrary("ole32");
+            },
+            .macos => {
+                // NOTE(jae): 2024-07-07
+                // Cross-compilation from Linux to Mac requires more effort currently (Zig 0.13.0)
+                // See: https://github.com/ziglang/zig/issues/1349
+
+                lib.addCSourceFiles(.{
+                    .root = sdl_path,
+                    .files = &darwin_src_files,
+                });
+                lib.addCSourceFiles(.{
+                    .root = sdl_path,
+                    .files = &objective_c_src_files,
+                    .flags = &.{"-fobjc-arc"},
+                });
+
+                lib.linkFramework("AVFoundation"); // Camera
+                lib.linkFramework("AudioToolbox");
+                lib.linkFramework("Carbon");
+                lib.linkFramework("Cocoa");
+                lib.linkFramework("CoreAudio");
+                lib.linkFramework("CoreMedia");
+                lib.linkFramework("CoreHaptics");
+                lib.linkFramework("CoreVideo");
+                lib.linkFramework("ForceFeedback");
+                lib.linkFramework("GameController");
+                lib.linkFramework("IOKit");
+                lib.linkFramework("Metal");
+
+                lib.linkFramework("AppKit");
+                lib.linkFramework("CoreFoundation");
+                lib.linkFramework("Foundation");
+                lib.linkFramework("CoreGraphics");
+                lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
+                lib.linkFramework("QuartzCore"); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
+                lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
+            },
+            .linux => {
+                if (target.result.abi == .android) {
+                    @panic("TODO: Add android build");
+                }
+                @panic("Only building with cmake is supported for now");
+                // NOTE(jae): 2024-10-26
+                // WARNING: Tried to get this working by pulling down dependencies, etc
+                // but ended up being too much of a timesink to keep bothering.
+                //
+                // lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                // const config_header = b.addConfigHeader(.{
+                //     .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
+                //     .include_path = "SDL_build_config.h",
+                // }, linuxConfig);
+                // sdl_config_header = config_header;
+                // lib.addConfigHeader(config_header);
+                // lib.installConfigHeader(config_header);
+                //
+                // if (b.lazyDependency("xorgproto", .{})) |xorgproto_dep| {
+                //     // Add X11/X.h
+                //     const xorgproto_include = xorgproto_dep.path("include");
+                //     lib.addIncludePath(xorgproto_include);
+                // }
+                // if (b.lazyDependency("x11", .{})) |x11_dep| {
+                //     // X11/Xlib.h
+                //     const x11_include = x11_dep.path("include");
+                //     lib.addIncludePath(x11_include);
+                //
+                //     lib.addConfigHeader(b.addConfigHeader(.{
+                //         .style = .{ .cmake = x11_include.path(b, "X11/XlibConf.h.in") },
+                //         .include_path = "X11/XlibConf.h",
+                //     }, .{
+                //         // Threading support
+                //         .XTHREADS = true,
+                //         // Use multi-threaded libc functions
+                //         .XUSE_MTSAFE_API = true,
+                //     }));
+                // }
+                //
+                // if (b.lazyDependency("xext", .{})) |xext_dep| {
+                //     // X11/extensions/Xext.h
+                //     const xext_include = xext_dep.path("include");
+                //     lib.addIncludePath(xext_include);
+                // }
+                //
+                // if (b.lazyDependency("dbus", .{})) |dbus_dep| {
+                //     const dbus_include = dbus_dep.path("");
+                //     lib.addIncludePath(dbus_include);
+                //     lib.addConfigHeader(b.addConfigHeader(.{
+                //         .style = .{ .cmake = dbus_include.path(b, "dbus/dbus-arch-deps.h.in") },
+                //         .include_path = "dbus/dbus-arch-deps.h",
+                //     }, .{
+                //         .DBUS_VERSION = "1.14.10",
+                //         .DBUS_INT16_TYPE = "short",
+                //         .DBUS_INT32_TYPE = "int",
+                //         .DBUS_INT64_TYPE = "long",
+                //         .DBUS_INT64_CONSTANT = "(val##L)",
+                //         .DBUS_UINT64_CONSTANT = "(val##UL)",
+                //         .DBUS_MAJOR_VERSION = 1,
+                //         .DBUS_MINOR_VERSION = 14,
+                //         .DBUS_MICRO_VERSION = 10,
+                //     }));
+                // }
+                //
+                // // Included by:
+                // // - src/video/x11/SDL_x11vulkan.c
+                // // - src/video/khronos/vulkan.h
+                // if (b.lazyDependency("xcb", .{})) |xcb_dep| {
+                //     const xcb_header_writefiles = b.addNamedWriteFiles("xcb_headers");
+                //     const xcb_include = xcb_dep.path("src");
+                //     _ = xcb_header_writefiles.addCopyDirectory(xcb_include, "xcb", .{
+                //         .include_extensions = &.{".h"},
+                //     });
+                //     // Add xcbproto - generated xproto.h header
+                //     _ = xcb_header_writefiles.addCopyDirectory(b.path("third-party/xcbproto/src"), "xcb", .{
+                //         .include_extensions = &.{".h"},
+                //     });
+                //     lib.addIncludePath(xcb_header_writefiles.getDirectory());
+                // }
+                //
+                // if (b.lazyDependency("ibus", .{})) |ibus_dep| {
+                //     //if (b.lazyDependency("glib", .{})) |glib_dep| {
+                //     const glib_include = b.path(b.pathJoin(&.{ "third-party", "glib-types" })); // glib_dep.path("");
+                //     const ibus_include = ibus_dep.path("src");
+                //
+                //     // lib.addIncludePath(.{
+                //     //     .cwd_relative = "/usr/lib/x86_64-linux-gnu/glib-2.0/include",
+                //     // });
+                //     // lib.addIncludePath(.{
+                //     //     .cwd_relative = "/usr/include/glib-2.0",
+                //     // });
+                //     // lib.addIncludePath(glib_include); // glib/galloca.h
+                //     // lib.addIncludePath(glib_include.path(b, "glib")); // "glib.h"
+                //     lib.addIncludePath(glib_include);
+                //     lib.addIncludePath(ibus_include);
+                //
+                //     lib.addConfigHeader(b.addConfigHeader(.{
+                //         .style = .{ .cmake = ibus_include.path(b, "ibusversion.h.in") },
+                //         .include_path = "ibusversion.h",
+                //     }, .{
+                //         .IBUS_MAJOR_VERSION = 1,
+                //         .IBUS_MINOR_VERSION = 5,
+                //         .IBUS_MICRO_VERSION = 30,
+                //     }));
+                //     // }
+                // }
+                // lib.addIncludePath(b.path("third-party/libudev"));
+                // lib.addCSourceFiles(.{
+                //     .root = sdl_path,
+                //     .files = &linux_src_files,
+                //     .flags = &.{
+                //         // X11/Xproto.h include for xcb/xcb.h complains because it's not xproto.h (lowercase x)
+                //         // "-Wno-nonportable-include-path",
+                //     },
+                // });
+                // lib.addCSourceFiles(.{
+                //     .root = sdl_path,
+                //     .files = &sdlsrc.hidapi.linux.c_files,
+                //     .flags = &.{
+                //         // "-std=c17",
+                //     },
+                // });
+            },
+            else => {
+                lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                const config_header = b.addConfigHeader(.{
+                    .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
+                    .include_path = "SDL_build_config.h",
+                }, SDLConfig{});
+
+                lib.addConfigHeader(config_header);
+                lib.installConfigHeader(config_header);
+            },
+        }
+        // NOTE(jae): 2024-07-07
+        // This must come *after* addConfigHeader logic above for per-OS so that the include for SDL_build_config.h takes precedence
+        lib.addIncludePath(sdl_build_config_include_path);
+
+        // NOTE(jae): 2024-04-07
+        // Not installing header as we include/export it from the module
+        // lib.installHeadersDirectory("include", "SDL");
+        b.installArtifact(lib);
+    } else {
         // NOTE(jae): 2024-07-02
         // Compiling on Linux is an involved process with various system include directories
         // for dbus, wayland, x11 and who knows what else.
         //
-        // So to avoid that complexity for now, we just follow the SDL2 install instructions which
-        // are to run the following commands in order:
-        // - ./configure
-        // - make
-        // - make install
-        //
-        // These are called below but with addPrefixedOutputFileArg where possible so that they're
-        // only run once.
-        //
-        // Then we link that output "lib/libSDL2.a" file as a system library on what is an empty static library
-        // and this will come through as an installable artifact.
-
+        // So to avoid that complexity for now, we just follow the SDL3 install instructions and
+        // execute "cmake", though we set the "CC" environment variable so it uses the Zig C compiler.
         const lib = b.addStaticLibrary(.{
-            .name = "sdl",
+            .name = "SDL3",
             // NOTE(jae): 2024-07-02
             // Need empty file so that Zig build won't complain
             .root_source_file = b.path("src/linux.zig"),
@@ -50,7 +281,7 @@ pub fn build(b: *std.Build) !void {
         }
 
         // Set CC environment variable to use the Zig compiler
-        var c_compiler_path = b.fmt("{s} cc", .{b.graph.zig_exe});
+        var c_compiler_path = b.fmt("{s} cc -std=c89", .{b.graph.zig_exe});
         if (sdl_host_arg.len > 0) {
             c_compiler_path = b.fmt("{s} --target={s}", .{ c_compiler_path, sdl_host_arg });
         }
@@ -58,50 +289,84 @@ pub fn build(b: *std.Build) !void {
             c_compiler_path = b.fmt("{s} -mcpu={s}", .{ c_compiler_path, sdl_cpu_arg });
         }
 
-        // Put the SDL configs in their own folders
-        // ie. sdl-install-arm-linux-musleabihf-arm1176jzf_s
-        var sdl_cache_postfix: []const u8 = "";
-        if (sdl_host_arg.len > 0) {
-            sdl_cache_postfix = b.fmt("{s}-{s}", .{ sdl_cache_postfix, sdl_host_arg });
-        }
-        if (sdl_cpu_arg.len > 0) {
-            sdl_cache_postfix = b.fmt("{s}-{s}", .{ sdl_cache_postfix, sdl_cpu_arg });
-        }
-
-        // Change the working directory for when we call "./configure" and "make" so it doesn't
-        // pollute the SDL dependency folder.
-        //
-        // We want to avoid this so that you can compile on Linux and then cross-compile without issues
-        const sdl_configure_dir: std.Build.LazyPath = blk: {
-            // TODO: Replace "sdl2" with some sort of hash/digest
-            const hash: []const u8 = b.fmt("sdl2{s}", .{sdl_cache_postfix});
-            const tmp_dir_sub_path = b.pathJoin(&.{ "tmp", hash, "config" });
-            const result_path = b.cache_root.join(b.allocator, &.{tmp_dir_sub_path}) catch @panic("OOM");
-            b.cache_root.handle.makePath(tmp_dir_sub_path) catch |err| {
-                std.debug.print("unable to make tmp path '{s}': {s}\n", .{
-                    result_path, @errorName(err),
-                });
-            };
-            break :blk .{
-                .cwd_relative = result_path,
-            };
-        };
-
         // Setup SDL_config.h (if doesn't exist)
-        const configure_script = b.addSystemCommand(&(.{
-            sdl_dep.path("./configure").getPath(b),
+        const cmake_setup = b.addSystemCommand(&(.{
+            "cmake",
         }));
-
-        // NOTE(jae): 2024-07-14
-        // Configure C compiler to use Zig
-        configure_script.setEnvironmentVariable("CC", c_compiler_path);
-        // NOTE(jae): 2024-07-02
-        // Setup --prefix so that this operation is only called once and cached after initially setup
-        const config_cache_path = configure_script.addPrefixedOutputFileArg("--prefix=", "sdl_config");
-        configure_script.addPrefixedDirectoryArg("--srcdir=", sdl_dep.path(""));
-        if (sdl_host_arg.len > 0) {
-            configure_script.addArg(b.fmt("--host={s}", .{sdl_host_arg}));
+        cmake_setup.addArg("-S"); // path to source directory
+        cmake_setup.addDirectoryArg(sdl_dep.path(""));
+        cmake_setup.addArg("-B"); // path to build directory
+        const build_dir = cmake_setup.addOutputDirectoryArg("sdl3_cmake_build");
+        const cmake_build_type: []const u8 = switch (optimize) {
+            .Debug => "Debug",
+            .ReleaseFast => "Release",
+            .ReleaseSafe => "RelWithDebInfo",
+            .ReleaseSmall => "MinSizeRel",
+        };
+        cmake_setup.setEnvironmentVariable("CC", b.fmt("{s}", .{c_compiler_path}));
+        cmake_setup.addArg("--fresh"); // Configure a fresh build tree, removing an existing cache file.
+        cmake_setup.addArg(b.fmt("-DCMAKE_BUILD_TYPE={s}", .{cmake_build_type}));
+        // Fixes using "zig cc" with cmake
+        // - CMake Error at CMakeLists.txt:436 (message):
+        // - Linker does not support '-Wl,--version-script=xxx.sym'.  This is required
+        // cmake_setup.addArg("-DCMAKE_REQUIRED_LINK_OPTIONS=cc");
+        // Fixes using "zig cc" with cmake
+        // - CMake Warning at cmake/sdlchecks.cmake:176 (message):
+        // - You must have SDL_LoadObject() support for dynamic PulseAudio loading
+        // - Call Stack (most recent call first):
+        cmake_setup.addArg("-DHAVE_DLOPEN=1"); //
+        cmake_setup.addArg("-DHAVE_PTHREADS=1");
+        cmake_setup.addArg("-DSDL_SHARED=OFF");
+        cmake_setup.addArg("-DSDL_STATIC=ON");
+        cmake_setup.addArg("-DSDL_DISABLE_INSTALL_DOCS=ON");
+        cmake_setup.addArg("-DSDL_TESTS=OFF");
+        cmake_setup.addArg("-DCMAKE_INSTALL_BINDIR=bin");
+        cmake_setup.addArg("-DCMAKE_INSTALL_DATAROOTDIR=share");
+        cmake_setup.addArg("-DCMAKE_INSTALL_INCLUDEDIR=include");
+        cmake_setup.addArg("-DCMAKE_INSTALL_LIBDIR=lib");
+        if (b.verbose) {
+            cmake_setup.addArg("-Wdev");
         }
+
+        const cmake_build = b.addSystemCommand(&(.{
+            "cmake", "--build",
+        }));
+        cmake_build.step.dependOn(&cmake_setup.step);
+        // If editing SDL3 *.c files, this will use cached copies and only rebuild the *.c files
+        // that changed
+        for (linux_src_files) |linux_src_file| {
+            cmake_build.addFileInput(sdl_path.path(b, linux_src_file));
+        }
+        cmake_build.addDirectoryArg(build_dir);
+        // Setup config: https://github.com/libsdl-org/SDL/blob/45dfdfbb7b1ac7d13915997c4faa8132187b74e1/.github/workflows/generic.yml#L302C54-L302C70
+        cmake_build.addArg("--config");
+        cmake_build.addArg(cmake_build_type);
+        if (b.verbose) {
+            cmake_build.addArg("--verbose");
+        }
+        cmake_build.addArg("--parallel");
+
+        const cmake_install = b.addSystemCommand(&(.{
+            "cmake", "--install",
+        }));
+        cmake_install.step.dependOn(&cmake_build.step);
+        cmake_install.addDirectoryArg(build_dir);
+        // Setup config: https://github.com/libsdl-org/SDL/blob/45dfdfbb7b1ac7d13915997c4faa8132187b74e1/.github/workflows/generic.yml#L302C54-L302C70
+        cmake_install.addArg("--config");
+        cmake_install.addArg(cmake_build_type);
+        cmake_install.addArg("--prefix");
+        const sdl3_install_dir = cmake_install.addOutputDirectoryArg("sdl3_install");
+        if (b.verbose) {
+            cmake_install.addArg("--verbose");
+        }
+
+        // add sdl3 as system lib to "stub" library
+        lib.addLibraryPath(sdl3_install_dir.path(b, "lib"));
+        lib.linkSystemLibrary("SDL3");
+        lib.step.dependOn(&cmake_build.step);
+        lib.step.dependOn(&cmake_install.step);
+
+        b.installArtifact(lib);
 
         // NOTE(jae): 2024-07-14
         // I experimented with getting SDL2 to build for my Raspberry Pi Zero W
@@ -110,496 +375,152 @@ pub fn build(b: *std.Build) !void {
         //
         // It ran... but required SDL2 to be installed via apt-get and then failed to initialize
         // EGL with the following settings. So... this needs work to actually work.
-        const is_raspberry_pi = (std.mem.eql(u8, sdl_host_arg, "arm-linux-musleabihf") or std.mem.eql(u8, sdl_host_arg, "arm-linux-gnueabihf")) and
-            std.mem.eql(u8, sdl_cpu_arg, "arm1176jzf_s");
-        if (is_raspberry_pi) {
-            // Disable for Raspberry Pi
-            // https://wiki.libsdl.org/SDL2/README/raspberrypi
-            configure_script.addArg("--disable-pulseaudio");
-            configure_script.addArg("--disable-esd");
-            // Disable for Raspberry Pi
-            // NOTE(jae): I was missing headers when compiling on my system so.. goodbye
-            configure_script.addArg("--disable-video-wayland");
-            configure_script.addArg("--disable-video-kmsdrm");
-            configure_script.addArg("--disable-sndio"); // sndio is the software layer of the OpenBSD operating system that manages sound cards and MIDI ports
-        }
-
-        configure_script.setCwd(sdl_configure_dir);
-        configure_script.setName("SDL2: ./configure (creates SDL_config.h)");
-
-        // Run make
-        const make_script = b.addSystemCommand(&(.{
-            "make",
-            "--silent", // stop printing `/bin/bash ./build-scripts//updaterev.sh --vendor ""`
-        }));
-        make_script.setCwd(sdl_configure_dir);
-        make_script.setName("SDL2: make");
-        switch (config_cache_path) {
-            .generated => |config_cache_path_generated| {
-                make_script.step.dependOn(config_cache_path_generated.file.step);
-            },
-            else => unreachable,
-        }
-
-        // Run "make install"
-        // NOTE(jae): 2024-07-02: If we ran cmake instead it could be threaded/multi-proc but for now this works
-        const make_install_script = b.addSystemCommand(&(.{ "make", "install" }));
-        make_install_script.addArg("prefix=\"\""); // remove /usr/local/
-        const sdl_install_folder: []const u8 = b.fmt("sdl-install{s}", .{sdl_cache_postfix});
-        const output_lib_path = make_install_script.addPrefixedOutputDirectoryArg("DESTDIR=", sdl_install_folder);
-        make_install_script.setCwd(sdl_configure_dir);
-        make_install_script.setName("SDL2: make install");
-        make_install_script.step.dependOn(&make_script.step);
-
-        // add sdl2 as system lib to "stub" library
-        lib.addLibraryPath(output_lib_path.path(b, "lib"));
-        lib.linkSystemLibrary("SDL2");
-
-        b.installArtifact(lib);
-    } else {
-        const lib = b.addStaticLibrary(.{
-            .name = "sdl",
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        });
-        lib.addCSourceFiles(.{
-            .root = sdl_path,
-            .files = &generic_src_files,
-        });
-        lib.root_module.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
-
-        switch (target.result.os.tag) {
-            .windows => {
-                lib.addCSourceFiles(.{
-                    .root = sdl_path,
-                    .files = &windows_src_files,
-                });
-                lib.linkSystemLibrary("setupapi");
-                lib.linkSystemLibrary("winmm");
-                lib.linkSystemLibrary("gdi32");
-                lib.linkSystemLibrary("imm32");
-                lib.linkSystemLibrary("version");
-                lib.linkSystemLibrary("oleaut32");
-                lib.linkSystemLibrary("ole32");
-            },
-            .macos => {
-                // NOTE(jae): 2024-07-07
-                // Cross-compilation from Linux to Mac requires more effort currently (Zig 0.13.0)
-                // See: https://github.com/ziglang/zig/issues/1349
-
-                lib.addCSourceFiles(.{
-                    .root = sdl_path,
-                    .files = &darwin_src_files,
-                });
-                lib.addCSourceFiles(.{
-                    .root = sdl_path,
-                    .files = &objective_c_src_files,
-                    .flags = &.{"-fobjc-arc"},
-                });
-
-                lib.linkFramework("AudioToolbox");
-                lib.linkFramework("Carbon");
-                lib.linkFramework("Cocoa");
-                lib.linkFramework("CoreAudio");
-                lib.linkFramework("CoreHaptics");
-                lib.linkFramework("CoreVideo");
-                lib.linkFramework("ForceFeedback");
-                lib.linkFramework("GameController");
-                lib.linkFramework("IOKit");
-                lib.linkFramework("Metal");
-
-                lib.linkFramework("AppKit");
-                lib.linkFramework("CoreFoundation");
-                lib.linkFramework("Foundation");
-                lib.linkFramework("CoreGraphics");
-                lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
-                lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
-            },
-            else => {
-                const config_header = b.addConfigHeader(.{
-                    .style = .{ .cmake = sdl_include_path.path(b, "SDL_config.h.cmake") },
-                    .include_path = "SDL/SDL_config.h",
-                }, .{});
-                sdl_config_header = config_header;
-
-                lib.addConfigHeader(config_header);
-                lib.installConfigHeader(config_header);
-            },
-        }
-        // NOTE(jae): 2024-07-07
-        // This must come *after* addConfigHeader logic above for per-OS so that the include for SDL_config.h takes precedence
-        lib.addIncludePath(sdl_include_path);
-        // NOTE(jae): 2024-04-07
-        // Not installing header as we include/export it from the module
-        // lib.installHeadersDirectory("include", "SDL");
-        b.installArtifact(lib);
+        // const is_raspberry_pi = (std.mem.eql(u8, sdl_host_arg, "arm-linux-musleabihf") or std.mem.eql(u8, sdl_host_arg, "arm-linux-gnueabihf")) and
+        //     std.mem.eql(u8, sdl_cpu_arg, "arm1176jzf_s");
+        // if (is_raspberry_pi) {
+        //     // Disable for Raspberry Pi
+        //     // https://wiki.libsdl.org/SDL2/README/raspberrypi
+        //     cmake_setup.addArg("--disable-pulseaudio");
+        //     cmake_setup.addArg("--disable-esd");
+        //     // Disable for Raspberry Pi
+        //     // NOTE(jae): I was missing headers when compiling on my system so.. goodbye
+        //     cmake_setup.addArg("--disable-video-wayland");
+        //     cmake_setup.addArg("--disable-video-kmsdrm");
+        //     cmake_setup.addArg("--disable-sndio"); // sndio is the software layer of the OpenBSD operating system that manages sound cards and MIDI ports
+        // }
     }
 
     var module = b.addModule("sdl", .{
         .root_source_file = b.path("src/sdl.zig"),
     });
-    if (sdl_config_header) |config_header| {
-        module.addConfigHeader(config_header);
-    }
-    module.addIncludePath(sdl_include_path);
+    module.addIncludePath(sdl_api_include_path);
 }
 
-const generic_src_files = [_][]const u8{
-    "src/SDL.c",
-    "src/SDL_assert.c",
-    "src/SDL_dataqueue.c",
-    "src/SDL_error.c",
-    "src/SDL_guid.c",
-    "src/SDL_hints.c",
-    "src/SDL_list.c",
-    "src/SDL_log.c",
-    "src/SDL_utils.c",
-    "src/atomic/SDL_atomic.c",
-    "src/atomic/SDL_spinlock.c",
-    "src/audio/SDL_audio.c",
-    "src/audio/SDL_audiocvt.c",
-    "src/audio/SDL_audiodev.c",
-    "src/audio/SDL_audiotypecvt.c",
-    "src/audio/SDL_mixer.c",
-    "src/audio/SDL_wave.c",
-    "src/cpuinfo/SDL_cpuinfo.c",
-    "src/dynapi/SDL_dynapi.c",
-    "src/events/SDL_clipboardevents.c",
-    "src/events/SDL_displayevents.c",
-    "src/events/SDL_dropevents.c",
-    "src/events/SDL_events.c",
-    "src/events/SDL_gesture.c",
-    "src/events/SDL_keyboard.c",
-    "src/events/SDL_keysym_to_scancode.c",
-    "src/events/SDL_mouse.c",
-    "src/events/SDL_quit.c",
-    "src/events/SDL_scancode_tables.c",
-    "src/events/SDL_touch.c",
-    "src/events/SDL_windowevents.c",
-    "src/events/imKStoUCS.c",
-    "src/file/SDL_rwops.c",
-    "src/haptic/SDL_haptic.c",
-    "src/hidapi/SDL_hidapi.c",
+const generic_src_files = sdlsrc.c_files ++
+    sdlsrc.atomic.c_files ++
+    sdlsrc.audio.c_files ++
+    sdlsrc.camera.c_files ++
+    sdlsrc.core.c_files ++
+    sdlsrc.cpuinfo.c_files ++
+    sdlsrc.dialog.c_files ++
+    sdlsrc.dynapi.c_files ++
+    sdlsrc.events.c_files ++
+    sdlsrc.file.c_files ++
+    sdlsrc.filesystem.c_files ++
+    sdlsrc.gpu.c_files ++
+    sdlsrc.haptic.c_files ++
+    sdlsrc.hidapi.c_files ++
+    sdlsrc.joystick.c_files ++
+    sdlsrc.joystick.virtual.c_files ++
+    sdlsrc.joystick.hidapi.c_files ++
+    sdlsrc.libm.c_files ++
+    sdlsrc.locale.c_files ++
+    sdlsrc.main.c_files ++
+    sdlsrc.main.generic.c_files ++
+    sdlsrc.misc.c_files ++
+    sdlsrc.power.c_files ++
+    sdlsrc.process.c_files ++
+    sdlsrc.render.c_files ++
+    sdlsrc.render.gpu.c_files ++
+    sdlsrc.render.software.c_files ++
+    sdlsrc.sensor.c_files ++
+    sdlsrc.stdlib.c_files ++
+    sdlsrc.storage.c_files ++
+    sdlsrc.storage.generic.c_files ++
+    sdlsrc.thread.c_files ++
+    sdlsrc.time.c_files ++
+    sdlsrc.timer.c_files ++
+    sdlsrc.video.c_files ++
+    sdlsrc.video.yuv2rgb.c_files ++
+    dummy_src_files;
 
-    "src/joystick/SDL_gamecontroller.c",
-    "src/joystick/SDL_joystick.c",
-    "src/joystick/controller_type.c",
-    "src/joystick/virtual/SDL_virtualjoystick.c",
-    "src/joystick/SDL_steam_virtual_gamepad.c",
+const dummy_src_files = sdlsrc.audio.dummy.c_files ++
+    sdlsrc.audio.dummy.c_files ++
+    sdlsrc.camera.dummy.c_files ++
+    sdlsrc.dialog.dummy.c_files ++
+    sdlsrc.filesystem.dummy.c_files ++
+    sdlsrc.haptic.dummy.c_files ++
+    sdlsrc.joystick.dummy.c_files ++
+    sdlsrc.loadso.dummy.c_files ++
+    sdlsrc.misc.dummy.c_files ++
+    sdlsrc.process.dummy.c_files ++
+    sdlsrc.sensor.dummy.c_files ++
+    sdlsrc.video.dummy.c_files;
 
-    "src/libm/e_atan2.c",
-    "src/libm/e_exp.c",
-    "src/libm/e_fmod.c",
-    "src/libm/e_log.c",
-    "src/libm/e_log10.c",
-    "src/libm/e_pow.c",
-    "src/libm/e_rem_pio2.c",
-    "src/libm/e_sqrt.c",
-    "src/libm/k_cos.c",
-    "src/libm/k_rem_pio2.c",
-    "src/libm/k_sin.c",
-    "src/libm/k_tan.c",
-    "src/libm/s_atan.c",
-    "src/libm/s_copysign.c",
-    "src/libm/s_cos.c",
-    "src/libm/s_fabs.c",
-    "src/libm/s_floor.c",
-    "src/libm/s_scalbn.c",
-    "src/libm/s_sin.c",
-    "src/libm/s_tan.c",
-    "src/locale/SDL_locale.c",
-    "src/misc/SDL_url.c",
-    "src/power/SDL_power.c",
-    "src/render/SDL_d3dmath.c",
-    "src/render/SDL_render.c",
-    "src/render/SDL_yuv_sw.c",
-    "src/sensor/SDL_sensor.c",
-    "src/stdlib/SDL_crc16.c",
-    "src/stdlib/SDL_crc32.c",
-    "src/stdlib/SDL_getenv.c",
-    "src/stdlib/SDL_iconv.c",
-    "src/stdlib/SDL_malloc.c",
-    "src/stdlib/SDL_mslibc.c",
-    "src/stdlib/SDL_qsort.c",
-    "src/stdlib/SDL_stdlib.c",
-    "src/stdlib/SDL_string.c",
-    "src/stdlib/SDL_strtokr.c",
-    "src/thread/SDL_thread.c",
-    "src/timer/SDL_timer.c",
-    "src/video/SDL_RLEaccel.c",
-    "src/video/SDL_blit.c",
-    "src/video/SDL_blit_0.c",
-    "src/video/SDL_blit_1.c",
-    "src/video/SDL_blit_A.c",
-    "src/video/SDL_blit_N.c",
-    "src/video/SDL_blit_auto.c",
-    "src/video/SDL_blit_copy.c",
-    "src/video/SDL_blit_slow.c",
-    "src/video/SDL_bmp.c",
-    "src/video/SDL_clipboard.c",
-    "src/video/SDL_egl.c",
-    "src/video/SDL_fillrect.c",
-    "src/video/SDL_pixels.c",
-    "src/video/SDL_rect.c",
-    "src/video/SDL_shape.c",
-    "src/video/SDL_stretch.c",
-    "src/video/SDL_surface.c",
-    "src/video/SDL_video.c",
-    "src/video/SDL_vulkan_utils.c",
-    "src/video/SDL_yuv.c",
-
-    "src/video/yuv2rgb/yuv_rgb_std.c",
-    "src/video/yuv2rgb/yuv_rgb_sse.c",
-
-    "src/video/dummy/SDL_nullevents.c",
-    "src/video/dummy/SDL_nullframebuffer.c",
-    "src/video/dummy/SDL_nullvideo.c",
-
-    "src/render/software/SDL_blendfillrect.c",
-    "src/render/software/SDL_blendline.c",
-    "src/render/software/SDL_blendpoint.c",
-    "src/render/software/SDL_drawline.c",
-    "src/render/software/SDL_drawpoint.c",
-    "src/render/software/SDL_render_sw.c",
-    "src/render/software/SDL_rotate.c",
-    "src/render/software/SDL_triangle.c",
-
-    "src/audio/dummy/SDL_dummyaudio.c",
-
-    "src/joystick/hidapi/SDL_hidapi_combined.c",
-    "src/joystick/hidapi/SDL_hidapi_gamecube.c",
-    "src/joystick/hidapi/SDL_hidapi_luna.c",
-    "src/joystick/hidapi/SDL_hidapi_ps3.c",
-    "src/joystick/hidapi/SDL_hidapi_ps4.c",
-    "src/joystick/hidapi/SDL_hidapi_ps5.c",
-    "src/joystick/hidapi/SDL_hidapi_rumble.c",
-    "src/joystick/hidapi/SDL_hidapi_shield.c",
-    "src/joystick/hidapi/SDL_hidapi_stadia.c",
-    "src/joystick/hidapi/SDL_hidapi_steam.c",
-    "src/joystick/hidapi/SDL_hidapi_switch.c",
-    "src/joystick/hidapi/SDL_hidapi_wii.c",
-    "src/joystick/hidapi/SDL_hidapi_xbox360.c",
-    "src/joystick/hidapi/SDL_hidapi_xbox360w.c",
-    "src/joystick/hidapi/SDL_hidapi_xboxone.c",
-    "src/joystick/hidapi/SDL_hidapijoystick.c",
-    "src/joystick/hidapi/SDL_hidapi_steamdeck.c",
-};
-
-const windows_src_files = [_][]const u8{
-    "src/core/windows/SDL_hid.c",
-    "src/core/windows/SDL_immdevice.c",
-    "src/core/windows/SDL_windows.c",
-    "src/core/windows/SDL_xinput.c",
-    "src/filesystem/windows/SDL_sysfilesystem.c",
-    "src/haptic/windows/SDL_dinputhaptic.c",
-    "src/haptic/windows/SDL_windowshaptic.c",
-    "src/haptic/windows/SDL_xinputhaptic.c",
-    "src/hidapi/windows/hid.c",
-    "src/joystick/windows/SDL_dinputjoystick.c",
-    "src/joystick/windows/SDL_rawinputjoystick.c",
-    // This can be enabled when Zig updates to the next mingw-w64 release,
-    // which will make the headers gain `windows.gaming.input.h`.
-    // Also revert the patch 2c79fd8fd04f1e5045cbe5978943b0aea7593110.
-    "src/joystick/windows/SDL_windows_gaming_input.c", // note: previously didnt work
-    "src/joystick/windows/SDL_windowsjoystick.c",
-    "src/joystick/windows/SDL_xinputjoystick.c",
-
-    "src/loadso/windows/SDL_sysloadso.c",
-    "src/locale/windows/SDL_syslocale.c",
-    "src/main/windows/SDL_windows_main.c",
-    "src/misc/windows/SDL_sysurl.c",
-    "src/power/windows/SDL_syspower.c",
-    "src/sensor/windows/SDL_windowssensor.c",
-    "src/timer/windows/SDL_systimer.c",
-    "src/video/windows/SDL_windowsclipboard.c",
-    "src/video/windows/SDL_windowsevents.c",
-    "src/video/windows/SDL_windowsframebuffer.c",
-    "src/video/windows/SDL_windowskeyboard.c",
-    "src/video/windows/SDL_windowsmessagebox.c",
-    "src/video/windows/SDL_windowsmodes.c",
-    "src/video/windows/SDL_windowsmouse.c",
-    "src/video/windows/SDL_windowsopengl.c",
-    "src/video/windows/SDL_windowsopengles.c",
-    "src/video/windows/SDL_windowsshape.c",
-    "src/video/windows/SDL_windowsvideo.c",
-    "src/video/windows/SDL_windowsvulkan.c",
-    "src/video/windows/SDL_windowswindow.c",
-
-    "src/thread/windows/SDL_syscond_cv.c",
-    "src/thread/windows/SDL_sysmutex.c",
-    "src/thread/windows/SDL_syssem.c",
-    "src/thread/windows/SDL_systhread.c",
-    "src/thread/windows/SDL_systls.c",
+const windows_src_files = sdlsrc.audio.directsound.c_files ++
+    sdlsrc.audio.disk.c_files ++
+    sdlsrc.audio.wasapi.c_files ++
+    sdlsrc.camera.mediafoundation.c_files ++
+    sdlsrc.core.windows.c_files ++
+    sdlsrc.dialog.windows.c_files ++
+    sdlsrc.filesystem.windows.c_files ++
+    sdlsrc.gpu.d3d11.c_files ++
+    sdlsrc.gpu.d3d12.c_files ++
+    sdlsrc.gpu.vulkan.c_files ++
+    sdlsrc.haptic.windows.c_files ++
+    sdlsrc.hidapi.windows.c_files ++
+    sdlsrc.joystick.windows.c_files ++
+    sdlsrc.loadso.windows.c_files ++
+    sdlsrc.locale.windows.c_files ++
+    sdlsrc.main.windows.c_files ++
+    sdlsrc.misc.windows.c_files ++
+    sdlsrc.power.windows.c_files ++
+    sdlsrc.process.windows.c_files ++
+    sdlsrc.render.direct3d.c_files ++
+    sdlsrc.render.direct3d11.c_files ++
+    sdlsrc.render.direct3d12.c_files ++
+    sdlsrc.render.vulkan.c_files ++
+    sdlsrc.render.opengl.c_files ++
+    sdlsrc.render.opengles2.c_files ++
+    sdlsrc.sensor.windows.c_files ++
+    sdlsrc.storage.steam.c_files ++
+    // Only need these files from: sdlsrc.thread.generic.c_files
+    [_][]const u8{
+    "src/thread/generic/SDL_sysrwlock.c",
     "src/thread/generic/SDL_syscond.c",
+} ++
+    sdlsrc.thread.windows.c_files ++
+    sdlsrc.time.windows.c_files ++
+    sdlsrc.timer.windows.c_files ++
+    sdlsrc.video.offscreen.c_files ++
+    sdlsrc.video.windows.c_files;
 
-    "src/render/direct3d/SDL_render_d3d.c",
-    "src/render/direct3d/SDL_shaders_d3d.c",
-    "src/render/direct3d11/SDL_render_d3d11.c",
-    "src/render/direct3d11/SDL_shaders_d3d11.c",
-    "src/render/direct3d12/SDL_render_d3d12.c",
-    "src/render/direct3d12/SDL_shaders_d3d12.c",
+const darwin_src_files = sdlsrc.audio.disk.c_files ++
+    sdlsrc.gpu.vulkan.c_files ++
+    sdlsrc.haptic.darwin.c_files ++
+    sdlsrc.joystick.darwin.c_files ++
+    sdlsrc.power.macos.c_files ++
+    sdlsrc.time.unix.c_files ++
+    sdlsrc.timer.unix.c_files ++
+    sdlsrc.filesystem.posix.c_files ++
+    sdlsrc.storage.steam.c_files ++
+    sdlsrc.loadso.dlopen.c_files ++
+    sdlsrc.process.posix.c_files ++
+    sdlsrc.render.opengl.c_files ++
+    sdlsrc.render.opengles2.c_files ++
+    sdlsrc.thread.pthread.c_files ++
+    sdlsrc.video.offscreen.c_files;
 
-    "src/audio/directsound/SDL_directsound.c",
-    "src/audio/wasapi/SDL_wasapi.c",
-    "src/audio/wasapi/SDL_wasapi_win32.c",
-    "src/audio/winmm/SDL_winmm.c",
-    "src/audio/disk/SDL_diskaudio.c",
+const objective_c_src_files = [_][]const u8{} ++
+    sdlsrc.audio.coreaudio.objective_c_files ++
+    sdlsrc.camera.coremedia.objective_c_files ++
+    sdlsrc.filesystem.cocoa.objective_c_files ++
+    sdlsrc.gpu.metal.objective_c_files ++
+    sdlsrc.joystick.apple.objective_c_files ++
+    sdlsrc.locale.macos.objective_c_files ++
+    sdlsrc.misc.macos.objective_c_files ++
+    sdlsrc.power.uikit.objective_c_files ++
+    sdlsrc.render.metal.objective_c_files ++
+    sdlsrc.sensor.coremotion.objective_c_files ++
+    sdlsrc.video.cocoa.objective_c_files ++
+    sdlsrc.video.uikit.objective_c_files;
 
-    "src/render/opengl/SDL_render_gl.c",
-    "src/render/opengl/SDL_shaders_gl.c",
-    "src/render/opengles/SDL_render_gles.c",
-    "src/render/opengles2/SDL_render_gles2.c",
-    "src/render/opengles2/SDL_shaders_gles2.c",
-};
+const ios_src_files = sdlsrc.hidapi.ios.objective_c_files ++
+    // sdlsrc.main.ios.objective_c_files
+    sdlsrc.misc.ios.objective_c_files;
 
-const linux_src_files = [_][]const u8{
-    "src/core/linux/SDL_dbus.c",
-    "src/core/linux/SDL_evdev.c",
-    "src/core/linux/SDL_evdev_capabilities.c",
-    "src/core/linux/SDL_evdev_kbd.c",
-    "src/core/linux/SDL_fcitx.c",
-    "src/core/linux/SDL_ibus.c",
-    "src/core/linux/SDL_ime.c",
-    "src/core/linux/SDL_sandbox.c",
-    "src/core/linux/SDL_threadprio.c",
-    "src/core/linux/SDL_udev.c",
-
-    // "src/haptic/linux/SDL_syshaptic.c",
-    "src/haptic/dummy/SDL_syshaptic.c",
-
-    "src/hidapi/linux/hid.c",
-
-    "src/locale/unix/SDL_syslocale.c",
-
-    // "src/filesystem/unix/SDL_sysfilesystem.c",
-    "src/filesystem/dummy/SDL_sysfilesystem.c",
-
-    "src/misc/dummy/SDL_sysurl.c",
-
-    "src/joystick/linux/SDL_sysjoystick.c",
-    "src/joystick/dummy/SDL_sysjoystick.c", // required with default SDL_config.h
-
-    "src/power/linux/SDL_syspower.c",
-
-    "src/timer/unix/SDL_systimer.c",
-    "src/core/unix/SDL_poll.c",
-
-    "src/sensor/dummy/SDL_dummysensor.c",
-
-    "src/loadso/dlopen/SDL_sysloadso.c",
-
-    "src/thread/pthread/SDL_syscond.c",
-    "src/thread/pthread/SDL_sysmutex.c",
-    "src/thread/pthread/SDL_syssem.c",
-    "src/thread/pthread/SDL_systhread.c",
-    "src/thread/pthread/SDL_systls.c",
-
-    "src/video/wayland/SDL_waylandclipboard.c",
-    "src/video/wayland/SDL_waylanddatamanager.c",
-    "src/video/wayland/SDL_waylanddyn.c",
-    "src/video/wayland/SDL_waylandevents.c",
-    "src/video/wayland/SDL_waylandkeyboard.c",
-    "src/video/wayland/SDL_waylandmessagebox.c",
-    "src/video/wayland/SDL_waylandmouse.c",
-    "src/video/wayland/SDL_waylandopengles.c",
-    "src/video/wayland/SDL_waylandtouch.c",
-    "src/video/wayland/SDL_waylandvideo.c",
-    "src/video/wayland/SDL_waylandvulkan.c",
-    "src/video/wayland/SDL_waylandwindow.c",
-
-    "src/video/x11/SDL_x11clipboard.c",
-    "src/video/x11/SDL_x11dyn.c",
-    "src/video/x11/SDL_x11events.c",
-    "src/video/x11/SDL_x11framebuffer.c",
-    "src/video/x11/SDL_x11keyboard.c",
-    "src/video/x11/SDL_x11messagebox.c",
-    "src/video/x11/SDL_x11modes.c",
-    "src/video/x11/SDL_x11mouse.c",
-    "src/video/x11/SDL_x11opengl.c",
-    "src/video/x11/SDL_x11opengles.c",
-    "src/video/x11/SDL_x11shape.c",
-    "src/video/x11/SDL_x11touch.c",
-    "src/video/x11/SDL_x11video.c",
-    "src/video/x11/SDL_x11vulkan.c",
-    "src/video/x11/SDL_x11window.c",
-    "src/video/x11/SDL_x11xfixes.c",
-    "src/video/x11/SDL_x11xinput2.c",
-    "src/video/x11/edid-parse.c",
-
-    "src/audio/alsa/SDL_alsa_audio.c",
-    "src/audio/jack/SDL_jackaudio.c",
-    "src/audio/pulseaudio/SDL_pulseaudio.c",
-};
-
-const darwin_src_files = [_][]const u8{
-    "src/haptic/darwin/SDL_syshaptic.c",
-    "src/joystick/darwin/SDL_iokitjoystick.c",
-    "src/power/macosx/SDL_syspower.c",
-    "src/timer/unix/SDL_systimer.c",
-    "src/loadso/dlopen/SDL_sysloadso.c",
-    "src/audio/disk/SDL_diskaudio.c",
-    "src/render/opengl/SDL_render_gl.c",
-    "src/render/opengl/SDL_shaders_gl.c",
-    "src/render/opengles/SDL_render_gles.c",
-    "src/render/opengles2/SDL_render_gles2.c",
-    "src/render/opengles2/SDL_shaders_gles2.c",
-    "src/sensor/dummy/SDL_dummysensor.c",
-
-    "src/thread/pthread/SDL_syscond.c",
-    "src/thread/pthread/SDL_sysmutex.c",
-    "src/thread/pthread/SDL_syssem.c",
-    "src/thread/pthread/SDL_systhread.c",
-    "src/thread/pthread/SDL_systls.c",
-};
-
-const objective_c_src_files = [_][]const u8{
-    "src/audio/coreaudio/SDL_coreaudio.m",
-    "src/file/cocoa/SDL_rwopsbundlesupport.m",
-    "src/filesystem/cocoa/SDL_sysfilesystem.m",
-    "src/joystick/iphoneos/SDL_mfijoystick.m",
-    //"src/hidapi/testgui/mac_support_cocoa.m",
-    // This appears to be for SDL3 only.
-    //"src/joystick/apple/SDL_mfijoystick.m",
-    "src/locale/macosx/SDL_syslocale.m",
-    "src/misc/macosx/SDL_sysurl.m",
-    "src/power/uikit/SDL_syspower.m",
-    "src/render/metal/SDL_render_metal.m",
-    "src/sensor/coremotion/SDL_coremotionsensor.m",
-    "src/video/cocoa/SDL_cocoaclipboard.m",
-    "src/video/cocoa/SDL_cocoaevents.m",
-    "src/video/cocoa/SDL_cocoakeyboard.m",
-    "src/video/cocoa/SDL_cocoamessagebox.m",
-    "src/video/cocoa/SDL_cocoametalview.m",
-    "src/video/cocoa/SDL_cocoamodes.m",
-    "src/video/cocoa/SDL_cocoamouse.m",
-    "src/video/cocoa/SDL_cocoaopengl.m",
-    "src/video/cocoa/SDL_cocoaopengles.m",
-    "src/video/cocoa/SDL_cocoashape.m",
-    "src/video/cocoa/SDL_cocoavideo.m",
-    "src/video/cocoa/SDL_cocoavulkan.m",
-    "src/video/cocoa/SDL_cocoawindow.m",
-    "src/video/uikit/SDL_uikitappdelegate.m",
-    "src/video/uikit/SDL_uikitclipboard.m",
-    "src/video/uikit/SDL_uikitevents.m",
-    "src/video/uikit/SDL_uikitmessagebox.m",
-    "src/video/uikit/SDL_uikitmetalview.m",
-    "src/video/uikit/SDL_uikitmodes.m",
-    "src/video/uikit/SDL_uikitopengles.m",
-    "src/video/uikit/SDL_uikitopenglview.m",
-    "src/video/uikit/SDL_uikitvideo.m",
-    "src/video/uikit/SDL_uikitview.m",
-    "src/video/uikit/SDL_uikitviewcontroller.m",
-    "src/video/uikit/SDL_uikitvulkan.m",
-    "src/video/uikit/SDL_uikitwindow.m",
-};
-
-const ios_src_files = [_][]const u8{
-    "src/hidapi/ios/hid.m",
-    "src/misc/ios/SDL_sysurl.m",
-    "src/joystick/iphoneos/SDL_mfijoystick.m",
-};
-
+// TODO(jae): 2024-10-27
+// Update this to work
 const emscripten_src_files = [_][]const u8{
     "src/audio/emscripten/SDL_emscriptenaudio.c",
     "src/filesystem/emscripten/SDL_sysfilesystem.c",
@@ -627,255 +548,302 @@ const emscripten_src_files = [_][]const u8{
     "src/thread/pthread/SDL_systls.c",
 };
 
-const unknown_src_files = [_][]const u8{
-    "src/thread/generic/SDL_syscond.c",
-    "src/thread/generic/SDL_sysmutex.c",
-    "src/thread/generic/SDL_syssem.c",
-    "src/thread/generic/SDL_systhread.c",
-    "src/thread/generic/SDL_systls.c",
+const linux_src_files = sdlsrc.audio.aaudio.c_files ++
+    sdlsrc.audio.alsa.c_files ++
+    sdlsrc.audio.pulseaudio.c_files ++
+    sdlsrc.audio.jack.c_files ++
+    sdlsrc.audio.pulseaudio.c_files ++
+    sdlsrc.audio.sndio.c_files ++
+    // sdlsrc.camera.pipewire.c_files ++
+    sdlsrc.core.linux.c_files ++
+    sdlsrc.filesystem.unix.c_files ++
+    sdlsrc.gpu.vulkan.c_files ++
+    sdlsrc.haptic.linux.c_files ++
+    sdlsrc.joystick.linux.c_files ++
+    sdlsrc.loadso.dlopen.c_files ++
+    sdlsrc.locale.unix.c_files ++
+    // sdlsrc.main.gdk.c_files ++
+    sdlsrc.misc.unix.c_files ++
+    sdlsrc.power.linux.c_files ++
+    sdlsrc.process.posix.c_files ++
+    sdlsrc.render.vulkan.c_files ++
+    sdlsrc.render.opengl.c_files ++
+    sdlsrc.render.opengles2.c_files ++
+    sdlsrc.storage.steam.c_files ++
+    sdlsrc.timer.unix.c_files ++
+    sdlsrc.thread.generic.c_files ++
+    sdlsrc.video.x11.c_files ++
+    sdlsrc.video.wayland.c_files;
 
-    "src/audio/aaudio/SDL_aaudio.c",
-    "src/audio/android/SDL_androidaudio.c",
-    "src/audio/arts/SDL_artsaudio.c",
-    "src/audio/dsp/SDL_dspaudio.c",
-    // "src/audio/emscripten/SDL_emscriptenaudio.c",
-    "src/audio/esd/SDL_esdaudio.c",
-    "src/audio/fusionsound/SDL_fsaudio.c",
-    "src/audio/n3ds/SDL_n3dsaudio.c",
-    "src/audio/nacl/SDL_naclaudio.c",
-    "src/audio/nas/SDL_nasaudio.c",
-    "src/audio/netbsd/SDL_netbsdaudio.c",
-    "src/audio/openslES/SDL_openslES.c",
-    "src/audio/os2/SDL_os2audio.c",
-    "src/audio/paudio/SDL_paudio.c",
-    "src/audio/pipewire/SDL_pipewire.c",
-    "src/audio/ps2/SDL_ps2audio.c",
-    "src/audio/psp/SDL_pspaudio.c",
-    "src/audio/qsa/SDL_qsa_audio.c",
-    "src/audio/sndio/SDL_sndioaudio.c",
-    "src/audio/sun/SDL_sunaudio.c",
-    "src/audio/vita/SDL_vitaaudio.c",
+/// NOTE(jae): 2024-10-24
+/// This configuration was copy-pasted out of my SDL_build_config.h file after creating it
+/// via the Linux build instructions. While this won't necessarily be accurate to all targets
+/// I figure it's a good start.
+// const linuxConfig: SDLConfig = .{
+//     .HAVE_GCC_ATOMICS = true,
+//     // LibC headers
+//     .HAVE_LIBC = true,
+//     .HAVE_ALLOCA_H = true,
+//     .HAVE_FLOAT_H = true,
+//     .HAVE_ICONV_H = true,
+//     .HAVE_INTTYPES_H = true,
+//     .HAVE_LIMITS_H = true,
+//     .HAVE_MALLOC_H = true,
+//     .HAVE_MATH_H = true,
+//     .HAVE_MEMORY_H = true,
+//     .HAVE_SIGNAL_H = true,
+//     .HAVE_STDARG_H = true,
+//     .HAVE_STDBOOL_H = true,
+//     .HAVE_STDDEF_H = true,
+//     .HAVE_STDINT_H = true,
+//     .HAVE_STDIO_H = true,
+//     .HAVE_STDLIB_H = true,
+//     .HAVE_STRINGS_H = true,
+//     .HAVE_STRING_H = true,
+//     .HAVE_SYS_TYPES_H = true,
+//     .HAVE_WCHAR_H = true,
+//
+//     // C library functions
+//     .HAVE_DLOPEN = true,
+//     .HAVE_MALLOC = true,
+//     .HAVE_CALLOC = true,
+//     .HAVE_REALLOC = true,
+//     .HAVE_FREE = true,
+//     .HAVE_GETENV = true,
+//     .HAVE_SETENV = true,
+//     .HAVE_PUTENV = true,
+//     .HAVE_UNSETENV = true,
+//     .HAVE_ABS = true,
+//     .HAVE_BCOPY = true,
+//     .HAVE_MEMSET = true,
+//     .HAVE_MEMCPY = true,
+//     .HAVE_MEMMOVE = true,
+//     .HAVE_MEMCMP = true,
+//     .HAVE_WCSLEN = true,
+//     .HAVE_WCSNLEN = true,
+//     .HAVE_WCSLCPY = true,
+//     .HAVE_WCSLCAT = true,
+//     .HAVE_WCSDUP = true,
+//     .HAVE_WCSSTR = true,
+//     .HAVE_WCSCMP = true,
+//     .HAVE_WCSNCMP = true,
+//     .HAVE_WCSTOL = true,
+//     .HAVE_STRLEN = true,
+//     .HAVE_STRNLEN = true,
+//     .HAVE_STRLCPY = true,
+//     .HAVE_STRLCAT = true,
+//     .HAVE_STRPBRK = true,
+//     .HAVE_INDEX = true,
+//     .HAVE_RINDEX = true,
+//     .HAVE_STRCHR = true,
+//     .HAVE_STRRCHR = true,
+//     .HAVE_STRSTR = true,
+//     .HAVE_STRTOK_R = true,
+//     .HAVE_STRTOL = true,
+//     .HAVE_STRTOUL = true,
+//     .HAVE_STRTOLL = true,
+//     .HAVE_STRTOULL = true,
+//     .HAVE_STRTOD = true,
+//     .HAVE_ATOI = true,
+//     .HAVE_ATOF = true,
+//     .HAVE_STRCMP = true,
+//     .HAVE_STRNCMP = true,
+//     .HAVE_STRCASESTR = true,
+//     .HAVE_SSCANF = true,
+//     .HAVE_VSSCANF = true,
+//     .HAVE_VSNPRINTF = true,
+//     .HAVE_ACOS = true,
+//     .HAVE_ACOSF = true,
+//     .HAVE_ASIN = true,
+//     .HAVE_ASINF = true,
+//     .HAVE_ATAN = true,
+//     .HAVE_ATANF = true,
+//     .HAVE_ATAN2 = true,
+//     .HAVE_ATAN2F = true,
+//     .HAVE_CEIL = true,
+//     .HAVE_CEILF = true,
+//     .HAVE_COPYSIGN = true,
+//     .HAVE_COPYSIGNF = true,
+//     .HAVE_COS = true,
+//     .HAVE_COSF = true,
+//     .HAVE_EXP = true,
+//     .HAVE_EXPF = true,
+//     .HAVE_FABS = true,
+//     .HAVE_FABSF = true,
+//     .HAVE_FLOOR = true,
+//     .HAVE_FLOORF = true,
+//     .HAVE_FMOD = true,
+//     .HAVE_FMODF = true,
+//     .HAVE_ISINF = true,
+//     .HAVE_ISINFF = true,
+//     .HAVE_ISINF_FLOAT_MACRO = true,
+//     .HAVE_ISNAN = true,
+//     .HAVE_ISNANF = true,
+//     .HAVE_ISNAN_FLOAT_MACRO = true,
+//     .HAVE_LOG = true,
+//     .HAVE_LOGF = true,
+//     .HAVE_LOG10 = true,
+//     .HAVE_LOG10F = true,
+//     .HAVE_LROUND = true,
+//     .HAVE_LROUNDF = true,
+//     .HAVE_MODF = true,
+//     .HAVE_MODFF = true,
+//     .HAVE_POW = true,
+//     .HAVE_POWF = true,
+//     .HAVE_ROUND = true,
+//     .HAVE_ROUNDF = true,
+//     .HAVE_SCALBN = true,
+//     .HAVE_SCALBNF = true,
+//     .HAVE_SIN = true,
+//     .HAVE_SINF = true,
+//     .HAVE_SQRT = true,
+//     .HAVE_SQRTF = true,
+//     .HAVE_TAN = true,
+//     .HAVE_TANF = true,
+//     .HAVE_TRUNC = true,
+//     .HAVE_TRUNCF = true,
+//     .HAVE_FOPEN64 = true,
+//     .HAVE_FSEEKO = true,
+//     .HAVE_FSEEKO64 = true,
+//     .HAVE_MEMFD_CREATE = true,
+//     .HAVE_POSIX_FALLOCATE = true,
+//     .HAVE_SIGACTION = true,
+//     .HAVE_SA_SIGACTION = true,
+//     .HAVE_ST_MTIM = true,
+//     .HAVE_SETJMP = true,
+//     .HAVE_NANOSLEEP = true,
+//     .HAVE_GMTIME_R = true,
+//     .HAVE_LOCALTIME_R = true,
+//     .HAVE_NL_LANGINFO = true,
+//     .HAVE_SYSCONF = true,
+//     .HAVE_CLOCK_GETTIME = true,
+//     .HAVE_GETPAGESIZE = true,
+//     .HAVE_ICONV = true,
+//     .HAVE_PTHREAD_SETNAME_NP = true,
+//     .HAVE_SEM_TIMEDWAIT = true,
+//     .HAVE_GETAUXVAL = true,
+//     .HAVE_POLL = true,
+//     .HAVE__EXIT = true,
+//     // End of C library functions
+//
+//     .HAVE_DBUS_DBUS_H = true,
+//     .HAVE_FCITX = true,
+//     .HAVE_IBUS_IBUS_H = true,
+//     .HAVE_SYS_INOTIFY_H = true,
+//     .HAVE_INOTIFY_INIT = true,
+//     .HAVE_INOTIFY_INIT1 = true,
+//     .HAVE_INOTIFY = true,
+//     .HAVE_O_CLOEXEC = true,
+//
+//     .HAVE_LINUX_INPUT_H = true,
+//     .HAVE_LIBUDEV_H = true,
+//
+//     .HAVE_LIBDECOR_H = true,
+//     .SDL_LIBDECOR_VERSION_MAJOR = 0,
+//     .SDL_LIBDECOR_VERSION_MINOR = 2,
+//     .SDL_LIBDECOR_VERSION_PATCH = 2,
+//
+//     // .SDL_AUDIO_DRIVER_ALSA = true,
+//     // .SDL_AUDIO_DRIVER_ALSA_DYNAMIC = "libasound.so.2",
+//     .SDL_AUDIO_DRIVER_DISK = true,
+//     .SDL_AUDIO_DRIVER_DUMMY = true,
+//     // .SDL_AUDIO_DRIVER_JACK = true,
+//     // .SDL_AUDIO_DRIVER_JACK_DYNAMIC = "libjack.so.0",
+//
+//     // Enable various input drivers
+//     .SDL_INPUT_LINUXEV = true,
+//     .SDL_INPUT_LINUXKD = true,
+//     .SDL_JOYSTICK_HIDAPI = true,
+//     .SDL_JOYSTICK_LINUX = true,
+//     .SDL_JOYSTICK_VIRTUAL = true,
+//     .SDL_HAPTIC_LINUX = true,
+//     .SDL_UDEV_DYNAMIC = cMacroString("libudev.so.1"),
+//
+//     // Enable various process implementations
+//     .SDL_PROCESS_POSIX = true,
+//
+//     // Enable various sensor drivers
+//     .SDL_SENSOR_DUMMY = true,
+//
+//     // Enable various shared object loading systems
+//     .SDL_LOADSO_DLOPEN = true,
+//
+//     // Enable various threading systems
+//     .SDL_THREAD_PTHREAD = true,
+//     .SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = true,
+//
+//     // Enable various RTC systems
+//     .SDL_TIME_UNIX = true,
+//
+//     // Enable various timer systems
+//     .SDL_TIMER_UNIX = true,
+//
+//     // Enable various video drivers
+//     .SDL_VIDEO_DRIVER_DUMMY = true,
+//     // .SDL_VIDEO_DRIVER_KMSDRM = true, // TODO: Fix KMSDrm
+//     // .SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC = cMacroString("libdrm.so.2"),
+//     // .SDL_VIDEO_DRIVER_KMSDRM_DYNAMIC_GBM = cMacroString("libgbm.so.1"),
+//     // .SDL_VIDEO_DRIVER_OFFSCREEN = true,
+//     // .SDL_VIDEO_DRIVER_WAYLAND = true, // TODO: Fix Wayland
+//     // .SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC = cMacroString("libwayland-client.so.0"),
+//     // .SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_CURSOR = cMacroString("libwayland-cursor.so.0"),
+//     // .SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_EGL = cMacroString("libwayland-egl.so.1"),
+//     // .SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_LIBDECOR = cMacroString("libdecor-0.so.0"),
+//     // .SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_XKBCOMMON = cMacroString("libxkbcommon.so.0"),
+//     .SDL_VIDEO_DRIVER_X11 = true,
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC = cMacroString("libX11.so.6"),
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC_XEXT = cMacroString("libXext.so.6"), // TODO: Fix X11 ext
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC_XSS = cMacroString("libXss.so.1"), // TODO: Fix X11 xss
+//     // .SDL_VIDEO_DRIVER_X11_HAS_XKBLOOKUPKEYSYM = true,
+//     .SDL_VIDEO_DRIVER_X11_SUPPORTS_GENERIC_EVENTS = true,
+//     // .SDL_VIDEO_DRIVER_X11_XCURSOR = true, // TODO: Fix X11-cursor
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC_XCURSOR = cMacroString("libXcursor.so.1"),
+//     // .SDL_VIDEO_DRIVER_X11_XDBE = true, // TODO: Fix X11-dbe
+//     // .SDL_VIDEO_DRIVER_X11_XFIXES = true, // TODO: Fix X11-xfixes
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC_XFIXES = cMacroString("libXfixes.so.3"),
+//     // .SDL_VIDEO_DRIVER_X11_XINPUT2 = true,
+//     // .SDL_VIDEO_DRIVER_X11_XINPUT2_SUPPORTS_MULTITOUCH = true,
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC_XINPUT2 = cMacroString("libXi.so.6"),
+//     // .SDL_VIDEO_DRIVER_X11_XRANDR = true,
+//     // .SDL_VIDEO_DRIVER_X11_DYNAMIC_XRANDR = cMacroString("libXrandr.so.2"),
+//     // .SDL_VIDEO_DRIVER_X11_XSCRNSAVER = true,
+//     // .SDL_VIDEO_DRIVER_X11_XSHAPE = true,
+//
+//     .SDL_VIDEO_RENDER_GPU = true,
+//     .SDL_VIDEO_RENDER_VULKAN = true,
+//     .SDL_VIDEO_RENDER_OGL = true,
+//     .SDL_VIDEO_RENDER_OGL_ES2 = true,
+//
+//     // Enable OpenGL support
+//     .SDL_VIDEO_OPENGL = true,
+//     .SDL_VIDEO_OPENGL_ES = true,
+//     .SDL_VIDEO_OPENGL_ES2 = true,
+//     // .SDL_VIDEO_OPENGL_GLX = true, // TODO: add missing header
+//     // .SDL_VIDEO_OPENGL_EGL = true, // TODO: need EGL/egl.h - src/video/x11/SDL_x11window
+//
+//     // Enable Vulkan support
+//     .SDL_VIDEO_VULKAN = true,
+//
+//     // Enable GPU support
+//     .SDL_GPU_VULKAN = true,
+//
+//     // Enable system power support
+//     .SDL_POWER_LINUX = true,
+//
+//     // Whether SDL_DYNAMIC_API needs dlopen
+//     .DYNAPI_NEEDS_DLOPEN = true,
+//
+//     // Enable ime support
+//     .SDL_USE_IME = true,
+//
+//     // Configure use of intrinsics
+//     .SDL_DISABLE_LSX = true,
+//     .SDL_DISABLE_LASX = true,
+//     .SDL_DISABLE_NEON = true,
+// };
 
-    "src/core/android/SDL_android.c",
-    "src/core/freebsd/SDL_evdev_kbd_freebsd.c",
-    "src/core/openbsd/SDL_wscons_kbd.c",
-    "src/core/openbsd/SDL_wscons_mouse.c",
-    "src/core/os2/SDL_os2.c",
-    "src/core/os2/geniconv/geniconv.c",
-    "src/core/os2/geniconv/os2cp.c",
-    "src/core/os2/geniconv/os2iconv.c",
-    "src/core/os2/geniconv/sys2utf8.c",
-    "src/core/os2/geniconv/test.c",
-    "src/core/unix/SDL_poll.c",
-
-    "src/file/n3ds/SDL_rwopsromfs.c",
-
-    "src/filesystem/android/SDL_sysfilesystem.c",
-    // "src/filesystem/emscripten/SDL_sysfilesystem.c",
-    "src/filesystem/n3ds/SDL_sysfilesystem.c",
-    "src/filesystem/nacl/SDL_sysfilesystem.c",
-    "src/filesystem/os2/SDL_sysfilesystem.c",
-    "src/filesystem/ps2/SDL_sysfilesystem.c",
-    "src/filesystem/psp/SDL_sysfilesystem.c",
-    "src/filesystem/riscos/SDL_sysfilesystem.c",
-    "src/filesystem/unix/SDL_sysfilesystem.c",
-    "src/filesystem/vita/SDL_sysfilesystem.c",
-
-    "src/haptic/android/SDL_syshaptic.c",
-    "src/haptic/dummy/SDL_syshaptic.c",
-
-    "src/hidapi/libusb/hid.c",
-    "src/hidapi/mac/hid.c",
-
-    "src/joystick/android/SDL_sysjoystick.c",
-    "src/joystick/bsd/SDL_bsdjoystick.c",
-    "src/joystick/dummy/SDL_sysjoystick.c",
-    // "src/joystick/emscripten/SDL_sysjoystick.c",
-    "src/joystick/n3ds/SDL_sysjoystick.c",
-    "src/joystick/os2/SDL_os2joystick.c",
-    "src/joystick/ps2/SDL_sysjoystick.c",
-    "src/joystick/psp/SDL_sysjoystick.c",
-    "src/joystick/steam/SDL_steamcontroller.c",
-    "src/joystick/vita/SDL_sysjoystick.c",
-
-    "src/loadso/dummy/SDL_sysloadso.c",
-    "src/loadso/os2/SDL_sysloadso.c",
-
-    "src/locale/android/SDL_syslocale.c",
-    "src/locale/dummy/SDL_syslocale.c",
-    // "src/locale/emscripten/SDL_syslocale.c",
-    "src/locale/n3ds/SDL_syslocale.c",
-    "src/locale/unix/SDL_syslocale.c",
-    "src/locale/vita/SDL_syslocale.c",
-    "src/locale/winrt/SDL_syslocale.c",
-
-    "src/main/android/SDL_android_main.c",
-    "src/main/dummy/SDL_dummy_main.c",
-    "src/main/gdk/SDL_gdk_main.c",
-    "src/main/n3ds/SDL_n3ds_main.c",
-    "src/main/nacl/SDL_nacl_main.c",
-    "src/main/ps2/SDL_ps2_main.c",
-    "src/main/psp/SDL_psp_main.c",
-    "src/main/uikit/SDL_uikit_main.c",
-
-    "src/misc/android/SDL_sysurl.c",
-    "src/misc/dummy/SDL_sysurl.c",
-    // "src/misc/emscripten/SDL_sysurl.c",
-    "src/misc/riscos/SDL_sysurl.c",
-    "src/misc/unix/SDL_sysurl.c",
-    "src/misc/vita/SDL_sysurl.c",
-
-    "src/power/android/SDL_syspower.c",
-    // "src/power/emscripten/SDL_syspower.c",
-    "src/power/haiku/SDL_syspower.c",
-    "src/power/n3ds/SDL_syspower.c",
-    "src/power/psp/SDL_syspower.c",
-    "src/power/vita/SDL_syspower.c",
-
-    "src/sensor/android/SDL_androidsensor.c",
-    "src/sensor/n3ds/SDL_n3dssensor.c",
-    "src/sensor/vita/SDL_vitasensor.c",
-
-    "src/test/SDL_test_assert.c",
-    "src/test/SDL_test_common.c",
-    "src/test/SDL_test_compare.c",
-    "src/test/SDL_test_crc32.c",
-    "src/test/SDL_test_font.c",
-    "src/test/SDL_test_fuzzer.c",
-    "src/test/SDL_test_harness.c",
-    "src/test/SDL_test_imageBlit.c",
-    "src/test/SDL_test_imageBlitBlend.c",
-    "src/test/SDL_test_imageFace.c",
-    "src/test/SDL_test_imagePrimitives.c",
-    "src/test/SDL_test_imagePrimitivesBlend.c",
-    "src/test/SDL_test_log.c",
-    "src/test/SDL_test_md5.c",
-    "src/test/SDL_test_memory.c",
-    "src/test/SDL_test_random.c",
-
-    "src/thread/n3ds/SDL_syscond.c",
-    "src/thread/n3ds/SDL_sysmutex.c",
-    "src/thread/n3ds/SDL_syssem.c",
-    "src/thread/n3ds/SDL_systhread.c",
-    "src/thread/os2/SDL_sysmutex.c",
-    "src/thread/os2/SDL_syssem.c",
-    "src/thread/os2/SDL_systhread.c",
-    "src/thread/os2/SDL_systls.c",
-    "src/thread/ps2/SDL_syssem.c",
-    "src/thread/ps2/SDL_systhread.c",
-    "src/thread/psp/SDL_syscond.c",
-    "src/thread/psp/SDL_sysmutex.c",
-    "src/thread/psp/SDL_syssem.c",
-    "src/thread/psp/SDL_systhread.c",
-    "src/thread/vita/SDL_syscond.c",
-    "src/thread/vita/SDL_sysmutex.c",
-    "src/thread/vita/SDL_syssem.c",
-    "src/thread/vita/SDL_systhread.c",
-
-    "src/timer/dummy/SDL_systimer.c",
-    "src/timer/haiku/SDL_systimer.c",
-    "src/timer/n3ds/SDL_systimer.c",
-    "src/timer/os2/SDL_systimer.c",
-    "src/timer/ps2/SDL_systimer.c",
-    "src/timer/psp/SDL_systimer.c",
-    "src/timer/vita/SDL_systimer.c",
-
-    "src/video/android/SDL_androidclipboard.c",
-    "src/video/android/SDL_androidevents.c",
-    "src/video/android/SDL_androidgl.c",
-    "src/video/android/SDL_androidkeyboard.c",
-    "src/video/android/SDL_androidmessagebox.c",
-    "src/video/android/SDL_androidmouse.c",
-    "src/video/android/SDL_androidtouch.c",
-    "src/video/android/SDL_androidvideo.c",
-    "src/video/android/SDL_androidvulkan.c",
-    "src/video/android/SDL_androidwindow.c",
-    "src/video/directfb/SDL_DirectFB_WM.c",
-    "src/video/directfb/SDL_DirectFB_dyn.c",
-    "src/video/directfb/SDL_DirectFB_events.c",
-    "src/video/directfb/SDL_DirectFB_modes.c",
-    "src/video/directfb/SDL_DirectFB_mouse.c",
-    "src/video/directfb/SDL_DirectFB_opengl.c",
-    "src/video/directfb/SDL_DirectFB_render.c",
-    "src/video/directfb/SDL_DirectFB_shape.c",
-    "src/video/directfb/SDL_DirectFB_video.c",
-    "src/video/directfb/SDL_DirectFB_vulkan.c",
-    "src/video/directfb/SDL_DirectFB_window.c",
-    // "src/video/emscripten/SDL_emscriptenevents.c",
-    // "src/video/emscripten/SDL_emscriptenframebuffer.c",
-    // "src/video/emscripten/SDL_emscriptenmouse.c",
-    // "src/video/emscripten/SDL_emscriptenopengles.c",
-    // "src/video/emscripten/SDL_emscriptenvideo.c",
-    "src/video/kmsdrm/SDL_kmsdrmdyn.c",
-    "src/video/kmsdrm/SDL_kmsdrmevents.c",
-    "src/video/kmsdrm/SDL_kmsdrmmouse.c",
-    "src/video/kmsdrm/SDL_kmsdrmopengles.c",
-    "src/video/kmsdrm/SDL_kmsdrmvideo.c",
-    "src/video/kmsdrm/SDL_kmsdrmvulkan.c",
-    "src/video/n3ds/SDL_n3dsevents.c",
-    "src/video/n3ds/SDL_n3dsframebuffer.c",
-    "src/video/n3ds/SDL_n3dsswkb.c",
-    "src/video/n3ds/SDL_n3dstouch.c",
-    "src/video/n3ds/SDL_n3dsvideo.c",
-    "src/video/nacl/SDL_naclevents.c",
-    "src/video/nacl/SDL_naclglue.c",
-    "src/video/nacl/SDL_naclopengles.c",
-    "src/video/nacl/SDL_naclvideo.c",
-    "src/video/nacl/SDL_naclwindow.c",
-    "src/video/offscreen/SDL_offscreenevents.c",
-    "src/video/offscreen/SDL_offscreenframebuffer.c",
-    "src/video/offscreen/SDL_offscreenopengles.c",
-    "src/video/offscreen/SDL_offscreenvideo.c",
-    "src/video/offscreen/SDL_offscreenwindow.c",
-    "src/video/os2/SDL_os2dive.c",
-    "src/video/os2/SDL_os2messagebox.c",
-    "src/video/os2/SDL_os2mouse.c",
-    "src/video/os2/SDL_os2util.c",
-    "src/video/os2/SDL_os2video.c",
-    "src/video/os2/SDL_os2vman.c",
-    "src/video/pandora/SDL_pandora.c",
-    "src/video/pandora/SDL_pandora_events.c",
-    "src/video/ps2/SDL_ps2video.c",
-    "src/video/psp/SDL_pspevents.c",
-    "src/video/psp/SDL_pspgl.c",
-    "src/video/psp/SDL_pspmouse.c",
-    "src/video/psp/SDL_pspvideo.c",
-    "src/video/qnx/gl.c",
-    "src/video/qnx/keyboard.c",
-    "src/video/qnx/video.c",
-    "src/video/raspberry/SDL_rpievents.c",
-    "src/video/raspberry/SDL_rpimouse.c",
-    "src/video/raspberry/SDL_rpiopengles.c",
-    "src/video/raspberry/SDL_rpivideo.c",
-    "src/video/riscos/SDL_riscosevents.c",
-    "src/video/riscos/SDL_riscosframebuffer.c",
-    "src/video/riscos/SDL_riscosmessagebox.c",
-    "src/video/riscos/SDL_riscosmodes.c",
-    "src/video/riscos/SDL_riscosmouse.c",
-    "src/video/riscos/SDL_riscosvideo.c",
-    "src/video/riscos/SDL_riscoswindow.c",
-    "src/video/vita/SDL_vitaframebuffer.c",
-    "src/video/vita/SDL_vitagl_pvr.c",
-    "src/video/vita/SDL_vitagles.c",
-    "src/video/vita/SDL_vitagles_pvr.c",
-    "src/video/vita/SDL_vitakeyboard.c",
-    "src/video/vita/SDL_vitamessagebox.c",
-    "src/video/vita/SDL_vitamouse.c",
-    "src/video/vita/SDL_vitatouch.c",
-    "src/video/vita/SDL_vitavideo.c",
-    "src/video/vivante/SDL_vivanteopengles.c",
-    "src/video/vivante/SDL_vivanteplatform.c",
-    "src/video/vivante/SDL_vivantevideo.c",
-    "src/video/vivante/SDL_vivantevulkan.c",
-
-    "src/render/opengl/SDL_render_gl.c",
-    "src/render/opengl/SDL_shaders_gl.c",
-    "src/render/opengles/SDL_render_gles.c",
-    "src/render/opengles2/SDL_render_gles2.c",
-    "src/render/opengles2/SDL_shaders_gles2.c",
-    "src/render/ps2/SDL_render_ps2.c",
-    "src/render/psp/SDL_render_psp.c",
-    "src/render/vitagxm/SDL_render_vita_gxm.c",
-    "src/render/vitagxm/SDL_render_vita_gxm_memory.c",
-    "src/render/vitagxm/SDL_render_vita_gxm_tools.c",
-};
+/// Wraps the given value in quotes, this exists for SDL_*_DYNAMIC macros which
+/// in SDL_build_config.h.cmake require wrapping the interpolated value in quotes.
+fn cMacroString(comptime value: []const u8) []const u8 {
+    return "\"" ++ value ++ "\"";
+}

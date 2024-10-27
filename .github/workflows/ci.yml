@@ -22,7 +22,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: "ubuntu-22.04"
+          # note(jae): 2024-10-27
+          # Needed to bump to Ubuntu 24.04 otherwise WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION in the
+          # installed Wayland version wasn't high enough
+          - os: "ubuntu-24.04"
             suffix: "linux"
 
     runs-on: ${{matrix.os}}
@@ -38,8 +41,8 @@ jobs:
       with:
         version: "0.13.0"
 
-    # source: https://github.com/libsdl-org/SDL/blob/f32575dfabecac37892e3abfe31b08b9e348a9d7/docs/README-linux.md
-    - name: Install SDL2 Linux dependencies
+    # source: https://github.com/libsdl-org/SDL/blob/preview-3.1.3/docs/README-linux.md
+    - name: Install SDL3 Linux dependencies
       run: |
         sudo apt-get update && sudo apt-get install build-essential make \
         pkg-config libasound2-dev libpulse-dev \
