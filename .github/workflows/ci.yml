@@ -22,6 +22,9 @@ jobs:
     strategy:
       matrix:
         include:
+          # note(jae): 2024-10-27
+          # Needed to bump to Ubuntu 24.04 otherwise WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION in the
+          # installed Wayland version wasn't high enough
           - os: "ubuntu-24.04"
             suffix: "linux"
 
