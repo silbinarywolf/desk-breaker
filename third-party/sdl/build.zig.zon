@@ -2,16 +2,60 @@
     .name = "sdl",
     .version = "0.0.0",
     .dependencies = .{
-        .sdl = .{
+        .sdl3 = .{
             // NOTE(jae): 2024-06-30
             // Using ".zip" as "tar.gz" fails on Windows for Zig 0.13.0 due to symlink issue with something in the android folders
-            .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.30.5.zip",
-            .hash = "1220ac39a82dc0c20fd3cb3b02f3abfbaaf50fba8f58ac235e8921cfe9105925feda",
+            .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/preview-3.1.3.zip",
+            .hash = "12206a5bacedd2bdd3a56bf9c65d62a593fe0e05be586fb16ee4cc90468a97b95022",
         },
+        // NOTE(jae): 2024-10-27
+        // I attempted to collect the various Linux dependencies and make everything built through Zig but gave up.
+        // .dbus = .{
+        //     .url = "https://gitlab.freedesktop.org/dbus/dbus/-/archive/dbus-1.14.10/dbus-dbus-1.14.10.zip",
+        //     .hash = "12204e7298965c49466104e43b493e84b4504b4bb6196f1cf476ac444c8978cbf49c",
+        //     .lazy = true,
+        // },
+        // .xorgproto = .{
+        //     // X11/X.h, etc
+        //     .url = "https://gitlab.freedesktop.org/xorg/proto/xorgproto/-/archive/xorgproto-2024.1/xorgproto-xorgproto-2024.1.zip",
+        //     .hash = "12208ed1123d0a60b3f4607eafad3831c821ba8daba7b068b5e34fe3ccd3a356a22f",
+        //     .lazy = true,
+        // },
+        // .x11 = .{
+        //     // X11/Xlib.h, etc
+        //     .url = "https://gitlab.freedesktop.org/xorg/lib/libx11/-/archive/libX11-1.8.10/libx11-libX11-1.8.10.zip",
+        //     .hash = "1220e645e0edefbdf79701c44a667310b605d75475b773259f975bd43febb5115ee3",
+        //     .lazy = true,
+        // },
+        // .xext = .{
+        //     // X11/extensions/Xext.h, etc
+        //     .url = "https://gitlab.freedesktop.org/xorg/lib/libxext/-/archive/libXext-1.3.6/libxext-libXext-1.3.6.zip",
+        //     .hash = "1220870aa8a7f329bef92ab52639201a49d40c318005c7ce0f903198aa20bf450f1e",
+        //     .lazy = true,
+        // },
+        // .xcb = .{
+        //     // xcb/xcb.h - Used by X11 Linux Vulkan
+        //     .url = "https://gitlab.freedesktop.org/xorg/lib/libxcb/-/archive/libxcb-1.17.0/libxcb-libxcb-1.17.0.zip",
+        //     .hash = "1220fb27240bc74fc3f49f5d9e44a83fb8b3881571ade4e052a963c678556094879a",
+        //     .lazy = true,
+        // },
+        // .ibus = .{
+        //     // ibus.h - Used for IME text field
+        //     .url = "https://github.com/ibus/ibus/archive/refs/tags/1.5.30.zip",
+        //     .hash = "1220dbcbcee41f951dfe07509deb38099bdb772346760cab2889309c12a55b457e88",
+        //     .lazy = true,
+        // },
+        // .glib = .{
+        //     // Used by ibus
+        //     .url = "https://github.com/GNOME/glib/archive/refs/tags/glib-2.25.7.zip",
+        //     .hash = "1220f80d023ea4debe3dce31bc0233f35c249c5c4e1006a83f5dcc17a64f07327057",
+        //     .lazy = true,
+        // },
     },
     .paths = .{
         "build.zig",
         "build.zig.zon",
         "src",
+        "tools",
     },
 }

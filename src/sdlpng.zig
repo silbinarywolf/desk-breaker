@@ -10,7 +10,7 @@ const Image = struct {
     image: zigimg.ImageUnmanaged,
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-        sdl.SDL_FreeSurface(self.surface);
+        sdl.SDL_DestroySurface(self.surface);
         self.image.deinit(allocator);
         // self.* = undefined;
     }
@@ -147,17 +147,17 @@ fn sdlSurfaceFromImage(image: zigimg.ImageUnmanaged) error{ InvalidColorStorage,
         }
     };
 
-    const surface_ptr = sdl.SDL_CreateRGBSurfaceFrom(data, @as(c_int, @intCast(image.width)), @as(c_int, @intCast(image.height)), pixel_info.bits, pixel_info.pitch, pixel_info.pixelmask.red, pixel_info.pixelmask.green, pixel_info.pixelmask.blue, pixel_info.pixelmask.alpha);
+    const surface_ptr = sdl.SDL_CreateSurfaceFrom(@as(c_int, @intCast(image.width)), @as(c_int, @intCast(image.height)), sdl.SDL_GetPixelFormatForMasks(pixel_info.bits, pixel_info.pixelmask.red, pixel_info.pixelmask.green, pixel_info.pixelmask.blue, pixel_info.pixelmask.alpha), data, pixel_info.pitch);
     if (surface_ptr == null) {
         return error.CreateRgbSurface;
     }
-    errdefer sdl.SDL_FreeSurface(surface_ptr);
+    errdefer sdl.SDL_DestroySurface(surface_ptr);
     return surface_ptr;
 }
 
 fn sdlTextureFromImage(renderer: *sdl.SDL_Renderer, image: zigimg.ImageUnmanaged) !*sdl.SDL_Texture {
     const surface_ptr = try sdlSurfaceFromImage(image);
-    defer sdl.SDL_FreeSurface(surface_ptr);
+    defer sdl.SDL_DestroySurface(surface_ptr);
 
     const texture_ptr = sdl.SDL_CreateTextureFromSurface(renderer, surface_ptr) orelse {
         return error.FailedToCreateTexture;

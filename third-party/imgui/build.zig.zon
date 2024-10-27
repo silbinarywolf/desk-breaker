@@ -3,12 +3,12 @@
     .version = "0.0.0",
     .dependencies = .{
         .imgui = .{
-            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.90.8-docking.tar.gz",
-            .hash = "122065151b97161e25abb71c9df2fd9fba42aaca8c33d689a480b883d82411c8fabe",
+            .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.91.3-docking.tar.gz",
+            .hash = "122097eefc8aaa3c1c8e20c3fbeb0e965f988c28090438a57cc751a97578ef450003",
         },
         .cimgui = .{
-            .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.90.8dock.tar.gz",
-            .hash = "12207ee69164f88f4b41ee5d44edf3835ec4dab0c0cd885799da67d56668f4a3d46b",
+            .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.91.3dock.tar.gz",
+            .hash = "12204b1441f1407af838a3e6f8423ee9cb2cf7b07114ec077b1ec0a233d4b78672c9",
         },
         // .sdl = .{
         //     // NOTE(jae): 2024-06-30

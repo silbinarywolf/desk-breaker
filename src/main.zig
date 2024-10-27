@@ -20,14 +20,14 @@ const NextTimer = @import("state.zig").NextTimer;
 const log = std.log.default;
 const assert = std.debug.assert;
 
-const Vec2 = struct {
-    x: i32,
-    y: i32,
+const MousePos = struct {
+    x: f32,
+    y: f32,
 
-    pub fn diff(self: Vec2, other: Vec2) Vec2 {
+    pub fn diff(self: MousePos, other: MousePos) MousePos {
         return .{
-            .x = @intCast(@abs(self.x - other.x)),
-            .y = @intCast(@abs(self.y - other.y)),
+            .x = @abs(self.x - other.x),
+            .y = @abs(self.y - other.y),
         };
     }
 };
@@ -64,12 +64,7 @@ pub fn main() !void {
         else => return err,
     };
 
-    if (builtin.os.tag == .windows) {
-        // Force SDL_RaiseWindow to take focus, SDL 2.X.X only supports Windows for now, so only bother
-        // enabling this for Windows
-        _ = sdl.SDL_SetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW, "1");
-    }
-    if (sdl.SDL_Init(sdl.SDL_INIT_VIDEO) != 0) {
+    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
         log.err("unable to initialize SDL: {s}", .{sdl.SDL_GetError()});
         return error.SDLInitializationFailed;
     }
@@ -92,13 +87,11 @@ pub fn main() !void {
     var icon_png = try sdlpng.load_from_surface_from_buffer(allocator, @embedFile("icon.png"));
     defer icon_png.deinit(allocator);
 
-    const window_x: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
-    const window_y: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
+    // const window_x: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
+    // const window_y: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
     var app_window = blk: {
         const window = sdl.SDL_CreateWindow(
             "Desk Breaker",
-            window_x,
-            window_y,
             640,
             480,
             sdl.SDL_WINDOW_RESIZABLE, // sdl.SDL_WINDOW_HIDDEN,
@@ -113,7 +106,7 @@ pub fn main() !void {
     defer app_window.deinit();
 
     // Setup initial "previous mouse position"
-    var prev_mouse_pos: Vec2 = .{ .x = 0, .y = 0 };
+    var prev_mouse_pos: MousePos = .{ .x = 0, .y = 0 };
     _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
 
     var state: *State = try allocator.create(State);
@@ -135,6 +128,7 @@ pub fn main() !void {
     // state.user_settings.default_break_time = Duration.init(5 * time.ns_per_s);
 
     var has_quit = false;
+    var initial_frame_count: u16 = 0;
     while (!has_quit) {
         imgui.igSetCurrentContext(state.window.imgui_context);
         _ = state.temp_allocator.reset(.retain_capacity);
@@ -146,7 +140,11 @@ pub fn main() !void {
         while (true) {
             // Get next event
             {
-                const ev_res = if (!is_polling_events)
+                // Wait N frames before we do WaitEvent so that the initial rendering sets things up nicely
+                const start_frame_count: u16 = 250;
+
+                // Skip this on the first frame to avoid the 500ms delay on start-up
+                const ev_res = if (!is_polling_events and initial_frame_count >= start_frame_count)
                     // This either blocks until {N}ms passed or we get an event
                     // Conserves CPU. Opted for 500ms so it definitely refreshes every second
                     // for the live update on the home screen.
@@ -156,45 +154,29 @@ pub fn main() !void {
                     sdl.SDL_WaitEventTimeout(&sdl_event, 500)
                 else
                     sdl.SDL_PollEvent(&sdl_event);
-                if (ev_res == 0) {
+                if (!ev_res) {
                     break;
+                }
+                if (initial_frame_count < start_frame_count) {
+                    initial_frame_count += 1;
                 }
                 // If we received one event, start polling
                 is_polling_events = true;
             }
 
-            _ = imgui.ImGui_ImplSDL2_ProcessEvent(@ptrCast(&sdl_event));
+            _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
             switch (sdl_event.type) {
-                sdl.SDL_WINDOWEVENT => {
-                    const event = sdl_event.window;
-                    switch (event.event) {
-                        sdl.SDL_WINDOWEVENT_CLOSE => {
-                            // var screen = &state.break_screen;
-                            // if (sdl.SDL_GetWindowID(screen.window) == w.windowID) {
-                            //     // Close break screen
-                            //     screen.deinit();
-                            // }
-                            if (sdl.SDL_GetWindowID(state.window.window) == event.windowID) {
-                                // If closed the main app window, close entire app
-                                has_quit = true;
-                                break;
-                            }
-                        },
-                        // sdl.SDL_WINDOWEVENT_MINIMIZED => {
-                        //     if (sdl.SDL_GetWindowID(app_window.window) == w.windowID) {
-                        //         sdl.SDL_RaiseWindow(app_window.window);
-                        //     }
-                        // },
-                        else => {},
-                    }
+                sdl.SDL_EVENT_QUIT => {
+                    // If closed the main app window, close entire app
+                    has_quit = true;
+                    break;
                 },
-                sdl.SDL_MOUSEBUTTONUP => {
+                sdl.SDL_EVENT_MOUSE_BUTTON_UP => {
                     const event = sdl_event.button;
                     switch (event.button) {
                         sdl.SDL_BUTTON_LEFT => {
-                            if (event.state == sdl.SDL_RELEASED) {
-                                // If released mouse button after clicking/holding down "Exit"
-                                // button
+                            // event.state == sdl.SDL_RELEASED
+                            if (!event.down) {
                                 if (state.break_mode.held_down_timer != null) {
                                     state.break_mode.held_down_timer = null;
                                 }
@@ -203,11 +185,12 @@ pub fn main() !void {
                         else => {},
                     }
                 },
-                sdl.SDL_KEYUP => {
+                sdl.SDL_EVENT_KEY_UP => {
                     const event = sdl_event.key;
-                    switch (event.keysym.sym) {
+                    switch (event.key) {
                         sdl.SDLK_ESCAPE => {
-                            if (event.state == sdl.SDL_RELEASED) {
+                            // event.state == sdl.SDL_RELEASED
+                            if (!event.down) {
                                 // If released reset the held down timer
                                 if (state.break_mode.held_down_timer == null) {
                                     state.break_mode.held_down_timer = try time.Timer.start();
@@ -218,10 +201,6 @@ pub fn main() !void {
                         else => {},
                     }
                 },
-                sdl.SDL_QUIT => {
-                    has_quit = true;
-                    break;
-                },
                 else => {},
             }
         }
@@ -229,7 +208,7 @@ pub fn main() !void {
         // Detect activity and handle timers to pop-up break window
         {
             // Detect global mouse movement
-            var curr_mouse_pos: Vec2 = undefined;
+            var curr_mouse_pos: MousePos = undefined;
             _ = sdl.SDL_GetGlobalMouseState(&curr_mouse_pos.x, &curr_mouse_pos.y);
             defer prev_mouse_pos = curr_mouse_pos;
             const diff = curr_mouse_pos.diff(prev_mouse_pos);
@@ -293,8 +272,8 @@ pub fn main() !void {
         }
 
         // Set new ImGui Frame (as per example code: https://github.com/ocornut/imgui/blob/master/examples/example_sdl2_sdlrenderer2/main.cpp)
-        imgui.ImGui_ImplSDLRenderer2_NewFrame();
-        imgui.ImGui_ImplSDL2_NewFrame();
+        imgui.ImGui_ImplSDLRenderer3_NewFrame();
+        imgui.ImGui_ImplSDL3_NewFrame();
         imgui.igNewFrame();
 
         // If main app is:
@@ -308,8 +287,8 @@ pub fn main() !void {
             // _ = sdl.SDL_SetRenderDrawColor(renderer, 200, 200, 200, 0);
             // _ = sdl.SDL_RenderClear(renderer);
             imgui.igRender();
-            imgui.ImGui_ImplSDLRenderer2_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
-            _ = sdl.SDL_RenderFlush(renderer);
+            imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
+            _ = sdl.SDL_FlushRenderer(renderer);
             continue;
         }
 
@@ -402,16 +381,19 @@ pub fn main() !void {
                                     // - Windows: "0: MSI G241", "1: UGREEN"
                                     // - MacOS: "0: 0" and "1: 1"
                                     {
-                                        const display_count_or_err: u32 = @intCast(sdl.SDL_GetNumVideoDisplays());
+                                        // Reset list
                                         state.ui.options_metadata.display_names_buf.len = 0;
-                                        if (display_count_or_err >= 1) {
-                                            const display_count: u32 = @intCast(display_count_or_err);
-                                            for (0..display_count) |display_index| {
-                                                const name_c_str = sdl.SDL_GetDisplayName(@intCast(display_index));
+
+                                        var display_count: c_int = undefined;
+                                        const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
+                                        if (display_list_or_err != null) {
+                                            const display_list = display_list_or_err[0..@intCast(display_count)];
+                                            for (display_list, 0..) |display_id, i| {
+                                                const name_c_str = sdl.SDL_GetDisplayName(display_id);
                                                 if (name_c_str == null) {
                                                     continue;
                                                 }
-                                                try state.ui.options_metadata.display_names_buf.writer().print("{d}: {s}\x00", .{ display_index, name_c_str });
+                                                try state.ui.options_metadata.display_names_buf.writer().print("{d}: {s}\x00", .{ i, name_c_str });
                                             }
                                         }
                                     }
@@ -973,7 +955,10 @@ pub fn main() !void {
         }
 
         imgui.igRender();
-        imgui.ImGui_ImplSDLRenderer2_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
-        sdl.SDL_RenderPresent(renderer);
+        imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
+        if (!sdl.SDL_RenderPresent(renderer)) {
+            // TODO: Handle not rendering?
+            @panic("SDL_RenderPresent failed");
+        }
     }
 }

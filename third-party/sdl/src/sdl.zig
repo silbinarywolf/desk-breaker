@@ -1,5 +1,6 @@
 const c = @cImport({
-    @cInclude("SDL.h");
-    @cInclude("SDL_syswm.h");
+    @cInclude("SDL3/SDL.h");
+    // @cInclude("SDL.h"); // SDL2 only
+    // @cInclude("SDL_syswm.h"); // SDL2 only
 });
 pub usingnamespace c;

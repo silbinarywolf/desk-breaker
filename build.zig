@@ -32,7 +32,6 @@ pub fn build(b: *std.Build) !void {
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    // const os_tag = target.result.os.tag;
 
     // Build
     var exe: *std.Build.Step.Compile = b.addExecutable(.{
@@ -41,11 +40,6 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = optimize,
         .link_libc = false,
-        // TODO(jae): 2024-07-22
-        // Use Rufus as an example for setting up Windows manifest
-        // https://github.com/pbatard/rufus/blob/master/src/rufus.manifest
-        // and https://github.com/pbatard/rufus/blob/master/src/rufus.rc (for .ico)
-        // .win32_manifest =
         // NOTE(jae): 2024-07-06
         // Fails to compile on Zig 0.13.0 with single threaded true
         // when compiling C++
@@ -64,32 +58,32 @@ pub fn build(b: *std.Build) !void {
         exe.subsystem = .Windows;
     }
 
+    if (target.result.os.tag == .windows) {
+        exe.addWin32ResourceFile(.{
+            .file = b.path("src/deskbreaker.rc"),
+            // Anything that rc.exe accepts will work here
+            // https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
+            // This sets the default code page to UTF-8
+            .flags = &.{"/c65001"},
+        });
+    }
+
     // add sdl
     const sdl_module = blk: {
         const sdl_dep = b.dependency("sdl", .{
             .optimize = .ReleaseFast,
             .target = target,
         });
-        const sdl_lib = sdl_dep.artifact("sdl");
+        const sdl_lib = sdl_dep.artifact("SDL3");
         exe.linkLibrary(sdl_lib);
 
         // NOTE(jae): 2024-07-03
-        // Hack for Linux to use the SDL2 version compiled using native Linux toolszig
-        if (target.result.os.tag == .linux) {
+        // Hack for Linux to use the SDL3 version compiled using native Linux toolszig
+        if (target.result.os.tag == .linux and target.result.abi != .android) {
             for (sdl_lib.root_module.lib_paths.items) |lib_path| {
                 exe.addLibraryPath(lib_path);
             }
         }
-        // NOTE(jae): 2024-07-02
-        // Old logic that existed in: https://github.com/andrewrk/sdl-zig-demo
-        // if (target.query.isNativeOs() and target.result.os.tag == .linux) {
-        //     // The SDL package doesn't work for Linux yet, so we rely on system
-        //     // packages for now.
-        //     exe.linkSystemLibrary("SDL2");
-        //     exe.linkLibC();
-        // } else {
-        //     exe.linkLibrary(sdl_lib);
-        // }
 
         const sdl_module = sdl_dep.module("sdl");
         exe.root_module.addImport("sdl", sdl_module);
@@ -104,7 +98,7 @@ pub fn build(b: *std.Build) !void {
             }
             const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
             if (maybe_macos_sdk) |macos_sdk| {
-                const macos_sdk_path = macos_sdk.path("root");
+                const macos_sdk_path = macos_sdk.path("");
 
                 // add macos sdk to sdl
                 sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));

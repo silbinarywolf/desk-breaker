@@ -70,13 +70,13 @@ pub fn build(b: *std.Build) !void {
         // }
     }
 
-    // ImGui SDL2 backend files
+    // ImGui SDL3 backend files
     {
         lib.addCSourceFiles(.{
             .root = imgui,
             .files = &.{
-                "backends/imgui_impl_sdl2.cpp",
-                "backends/imgui_impl_sdlrenderer2.cpp",
+                "backends/imgui_impl_sdl3.cpp",
+                "backends/imgui_impl_sdlrenderer3.cpp",
             },
             .flags = &.{"-std=c++11"},
         });
