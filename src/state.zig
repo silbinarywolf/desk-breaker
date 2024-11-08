@@ -160,8 +160,20 @@ pub const NextTimer = struct {
 
 pub const State = struct {
     mode: Mode,
-    window: Window,
     window_state: WindowState = .{},
+
+    allocator: std.mem.Allocator,
+    /// stores printed text per-frame and other temporary things
+    temp_allocator: std.heap.ArenaAllocator,
+
+    icon: *sdl.SDL_Surface,
+
+    // Windows
+
+    /// main application window
+    window: *Window,
+    popup_windows: std.ArrayListUnmanaged(Window) = .{},
+    taking_break_windows: std.ArrayListUnmanaged(Window) = .{},
 
     // user settings
     user_settings: UserSettings,
@@ -195,8 +207,18 @@ pub const State = struct {
     // ui state (temporary state when editing)
     ui: UiState = .{},
 
-    /// stores printed text per-frame and other temporary things
-    temp_allocator: std.heap.ArenaAllocator,
+    pub fn deinit(state: *State) void {
+        for (state.popup_windows.items) |*window| {
+            window.deinit();
+        }
+        state.popup_windows.deinit(state.allocator);
+        for (state.taking_break_windows.items) |*window| {
+            window.deinit();
+        }
+        state.taking_break_windows.deinit(state.allocator);
+        state.user_settings.deinit();
+        state.temp_allocator.deinit();
+    }
 
     /// tprint will allocate temporary text into a buffer that will stop existing next render frame
     pub fn tprint(self: *State, comptime fmt: []const u8, args: anytype) std.fmt.AllocPrintError![:0]u8 {
@@ -323,7 +345,7 @@ pub const State = struct {
         state.snooze_times += 1;
     }
 
-    pub fn change_mode(state: *State, new_mode: Mode) void {
+    pub fn change_mode(state: *State, new_mode: Mode) !void {
         if (state.mode == new_mode) {
             return;
         }
@@ -360,7 +382,56 @@ pub const State = struct {
                 }
             },
             .incoming_break => {
-                if (!state.window.enter_incoming_break(state.user_settings.display_index)) {
+                const should_change_state = blk: {
+                    const display_index = state.user_settings.display_index;
+
+                    // Don't work if we can't get display dimensions
+                    var display: sdl.SDL_Rect = undefined;
+                    if (!sdl.SDL_GetDisplayUsableBounds(getDisplayIdFromIndex(display_index), &display)) {
+                        log.err("incoming_break: unable to query display usable bounds: {s}", .{sdl.SDL_GetError()});
+                        return error.SdlFailed;
+                    }
+
+                    const use_popout_window = true;
+                    if (use_popout_window) {
+                        const width: c_int = 200;
+                        const height: c_int = 200;
+
+                        const popup_window = Window.init(.{
+                            .title = "Incoming Break",
+                            .icon = state.icon,
+                            .focusable = false,
+                            .borderless = true,
+                            .always_on_top = true,
+                            .x = display.x + display.w - width,
+                            .y = display.y + display.h - height,
+                            .width = width,
+                            .height = height,
+                        }) catch |err| {
+                            log.err("incoming_break: failed to init window after creation: {}", .{err});
+                            return err;
+                        };
+                        try state.popup_windows.append(state.allocator, popup_window);
+                    } else {
+                        // Old deprecated code
+
+                        const window = state.window.window;
+                        // NOTE(jae): 2024-11-03
+                        // Restore window logic should happen before we set the window size/etc otherwise ive seen an issue
+                        RestoreWindow_NoActivateFocus(window); // unminimize it
+
+                        _ = sdl.SDL_SetWindowResizable(window, false);
+                        _ = sdl.SDL_SetWindowBordered(window, false);
+
+                        const width: c_int = 200;
+                        const height: c_int = 200;
+                        _ = sdl.SDL_SetWindowSize(window, width, height);
+                        _ = sdl.SDL_SetWindowPosition(window, display.x + display.w - width, display.y + display.h - height);
+                        _ = sdl.SDL_SetWindowAlwaysOnTop(window, true); // where the window doesn't move position and size doesn't change in SDL3
+                    }
+                    break :blk true;
+                };
+                if (!should_change_state) {
                     // Don't change state if we can't query display
                     return;
                 }
@@ -368,7 +439,60 @@ pub const State = struct {
             },
             .taking_break => {
                 log.info("change_mode: taking break", .{});
-                state.window.enter_break_mode(state.user_settings.display_index);
+
+                const use_popout_window = true;
+                if (use_popout_window) {
+                    const display_index = state.user_settings.display_index;
+
+                    // Don't work if we can't get display dimensions
+                    var display: sdl.SDL_Rect = undefined;
+                    if (!sdl.SDL_GetDisplayUsableBounds(getDisplayIdFromIndex(display_index), &display)) {
+                        // Fallback if cannot query display
+                        display.x = 0;
+                        display.y = 0;
+                        display.w = 640;
+                        display.h = 480;
+                    }
+
+                    const taking_break_window = Window.init(.{
+                        .title = "Take a break",
+                        .icon = state.icon,
+                        .borderless = true,
+                        .always_on_top = true,
+                        .mouse_grabbed = true,
+                        .x = display.x,
+                        .y = display.y,
+                        .width = display.w,
+                        .height = display.h,
+                    }) catch |err| {
+                        log.err("taking_break: failed to init window after creation: {}", .{err});
+                        return err;
+                    };
+                    try state.taking_break_windows.append(state.allocator, taking_break_window);
+                } else {
+                    const display_index = state.user_settings.display_index;
+                    const window = state.window;
+
+                    _ = sdl.SDL_SetWindowResizable(window, false);
+                    _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
+                    _ = sdl.SDL_SetWindowBordered(window, false); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
+
+                    var display: sdl.SDL_Rect = undefined;
+                    if (sdl.SDL_GetDisplayUsableBounds(getDisplayIdFromIndex(display_index), &display)) {
+                        log.info("change_mode: got display: {}", .{display});
+                        _ = sdl.SDL_SetWindowPosition(window, display.x, display.y);
+                        _ = sdl.SDL_SetWindowSize(window, display.w, display.h);
+                    } else {
+                        // Fallback if cannot query display
+                        _ = sdl.SDL_SetWindowPosition(window, 0, 0);
+                        _ = sdl.SDL_SetWindowSize(window, 640, 480);
+                    }
+
+                    _ = sdl.SDL_SetWindowMouseGrab(window, true); // lock mouse to window
+                    _ = sdl.SDL_SetWindowKeyboardGrab(window, true); // lock keyboard to window
+
+                    RaiseAndActivateFocus(window); // unminimize and set input focus
+                }
 
                 // Setup break time
                 var break_time_duration = state.user_settings.break_time_or_default();
@@ -416,28 +540,122 @@ const WindowState = struct {
     is_minimized: bool = false,
 };
 
-pub const Window = struct {
-    window: ?*sdl.SDL_Window = null,
-    renderer: ?*sdl.SDL_Renderer = null,
-    imgui_context: ?*imgui.ImGuiContext = null,
-    display_index: u32 = 0,
+pub const WindowOptions = struct {
+    title: [:0]const u8 = &[0:0]u8{},
+    x: ?i64 = null,
+    y: ?i64 = null,
+    width: ?i64 = null,
+    height: ?i64 = null,
+    resizeable: bool = false,
+    focusable: bool = true,
+    borderless: bool = false,
+    always_on_top: bool = false,
+    /// Starts window with grabbed mouse focus
+    mouse_grabbed: bool = false,
+    icon: ?*sdl.SDL_Surface = null,
+};
 
-    pub fn init(font_atlas: *imgui.ImFontAtlas, icon: *sdl.SDL_Surface, maybe_window: ?*sdl.SDL_Window) !Window {
-        const window: *sdl.SDL_Window = maybe_window orelse {
-            log.err("unable to create window: {s}", .{sdl.SDL_GetError()});
-            return error.SDLWindowInitializationFailed;
+pub const Window = struct {
+    window: *sdl.SDL_Window,
+    window_properties: u32,
+    renderer: *sdl.SDL_Renderer,
+    imgui_context: *imgui.ImGuiContext,
+    imgui_font_atlas: *imgui.ImFontAtlas,
+
+    pub fn init(options: WindowOptions) !@This() {
+        const props = sdl.SDL_CreateProperties();
+        if (props == 0) {
+            log.err("SDL_CreateProperties failed: {s}", .{sdl.SDL_GetError()});
+            return error.SdlFailed;
+        }
+        errdefer sdl.SDL_DestroyProperties(props);
+        if (options.title.len > 0) {
+            if (!sdl.SDL_SetStringProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TITLE_STRING, options.title)) return error.SdlSetPropertyFailed;
+        }
+        if (options.resizeable) {
+            if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        }
+        if (!options.focusable) {
+            // SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, defaults to true
+            if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, false)) return error.SdlSetPropertyFailed;
+        }
+        if (options.borderless) {
+            // SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, defaults to true
+            if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        }
+        if (options.always_on_top) {
+            if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_ALWAYS_ON_TOP_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        }
+        if (options.mouse_grabbed) {
+            if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_MOUSE_GRABBED_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        }
+        if (options.x) |x| {
+            if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_X_NUMBER, x)) return error.SdlSetPropertyFailed;
+        }
+        if (options.y) |y| {
+            if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_Y_NUMBER, y)) return error.SdlSetPropertyFailed;
+        }
+        if (options.width) |width| {
+            if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width)) return error.SdlSetPropertyFailed;
+        }
+        if (options.height) |height| {
+            if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height)) return error.SdlSetPropertyFailed;
+        }
+
+        const window = sdl.SDL_CreateWindowWithProperties(props) orelse {
+            log.err("SDL_CreateWindowWithProperties failed: {s}", .{sdl.SDL_GetError()});
+            return error.SdlFailed;
         };
-        _ = sdl.SDL_SetWindowIcon(window, icon);
+        if (options.icon) |icon| {
+            if (!sdl.SDL_SetWindowIcon(window, icon)) {
+                log.err("unable to set window icon: {s}", .{sdl.SDL_GetError()});
+                return error.SDLFailed;
+            }
+        }
         // TODO(jae): 2024-08-20
         // Add option to use hardware accelerated instead
         const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, sdl.SDL_SOFTWARE_RENDERER) orelse {
             log.err("unable to create renderer: {s}", .{sdl.SDL_GetError()});
-            return error.SDLRendererInitializationFailed;
+            return error.SDLFailed;
         };
         errdefer sdl.SDL_DestroyRenderer(renderer);
 
-        const imgui_context = imgui.igCreateContext(font_atlas);
+        // Reset to previous context after setup
+        const previous_imgui_context = imgui.igGetCurrentContext();
+        defer {
+            if (previous_imgui_context) |prev_imgui_context| {
+                imgui.igSetCurrentContext(prev_imgui_context);
+            }
+        }
+
+        // NOTE(jae): 2024-11-07
+        // Using embedded font data that isn't owned by the atlas
+        var font_config = &imgui.ImFontConfig_ImFontConfig()[0];
+        defer imgui.ImFontConfig_destroy(font_config);
+        font_config.FontDataOwnedByAtlas = false;
+
+        // NOTE(jae): 2024-06-11
+        // Each context needs its own font atlas or issues occur with rendering
+        const font_data = @embedFile("fonts/Lato-Regular.ttf");
+        const imgui_font_atlas: *imgui.ImFontAtlas = imgui.ImFontAtlas_ImFontAtlas();
+        errdefer imgui.ImFontAtlas_destroy(imgui_font_atlas);
+        _ = imgui.ImFontAtlas_AddFontFromMemoryTTF(
+            imgui_font_atlas,
+            @constCast(@ptrCast(font_data[0..].ptr)),
+            font_data.len,
+            28,
+            font_config,
+            null,
+        );
+
+        const imgui_context = imgui.igCreateContext(imgui_font_atlas) orelse {
+            log.err("unable to create imgui context: {s}", .{sdl.SDL_GetError()});
+            return error.ImguiFailed;
+        };
         errdefer imgui.igDestroyContext(imgui_context);
+
+        // NOTE(jae): This call is needed for multiple windows, ie. creation of the second window
+        imgui.igSetCurrentContext(imgui_context);
 
         const imgui_io = &imgui.igGetIO()[0];
         imgui_io.IniFilename = null; // disable imgui.ini
@@ -449,24 +667,60 @@ pub const Window = struct {
         _ = imgui.ImGui_ImplSDLRenderer3_Init(@ptrCast(renderer));
         errdefer imgui.ImGui_ImplSDLRenderer3_Shutdown();
 
+        // If new context created that isn't the first, setup new frame
+        if (previous_imgui_context != null) {
+            imgui.ImGui_ImplSDLRenderer3_NewFrame();
+            imgui.ImGui_ImplSDL3_NewFrame();
+            imgui.igNewFrame();
+        }
+
+        // TODO(jae): 2024-11-07
+        // Figure out how to force mouse onto break window
+        // if (force_focus) {
+        //     const oldActivateWhenRaised = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED);
+        //     const oldActivateWhenShown = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN);
+        //     const oldForceRaiseWindow = sdl.SDL_GetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW);
+        //     _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, "1");
+        //     _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "1");
+        //     _ = sdl.SDL_SetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW, "1");
+        //
+        //     _ = sdl.SDL_HideWindow(window);
+        //     _ = sdl.SDL_ShowWindow(window);
+        //
+        //     defer {
+        //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, oldActivateWhenRaised);
+        //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, oldActivateWhenShown);
+        //         _ = sdl.SDL_SetHint(sdl.SDL_HINT_FORCE_RAISEWINDOW, oldForceRaiseWindow);
+        //     }
+        // }
+
         return .{
             .window = window,
+            .window_properties = props,
             .renderer = renderer,
             .imgui_context = imgui_context,
+            .imgui_font_atlas = imgui_font_atlas,
         };
     }
 
     pub fn deinit(self: *Window) void {
-        if (self.imgui_context) |imgui_context| {
-            imgui.igDestroyContext(imgui_context);
+        {
+            const previous_imgui_context = imgui.igGetCurrentContext();
+            defer {
+                if (previous_imgui_context) |prev_imgui_context| {
+                    imgui.igSetCurrentContext(prev_imgui_context);
+                }
+            }
+            imgui.igSetCurrentContext(self.imgui_context);
+            imgui.ImGui_ImplSDLRenderer3_Shutdown();
+            imgui.ImGui_ImplSDL3_Shutdown();
         }
-        if (self.renderer) |renderer| {
-            sdl.SDL_DestroyRenderer(renderer);
-        }
-        if (self.window) |window| {
-            sdl.SDL_DestroyWindow(window);
-        }
-        self.* = .{};
+        imgui.igDestroyContext(self.imgui_context);
+        imgui.ImFontAtlas_destroy(self.imgui_font_atlas);
+        sdl.SDL_DestroyRenderer(self.renderer);
+        sdl.SDL_DestroyWindow(self.window);
+        sdl.SDL_DestroyProperties(self.window_properties);
+        self.* = undefined;
     }
 
     fn get_state(self: *const Window) WindowState {
@@ -496,31 +750,18 @@ pub const Window = struct {
         }
     }
 
-    fn get_display_id_from_index(display_index: u32) sdl.SDL_DisplayID {
-        var display_count: c_int = undefined;
-        const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
-        if (display_list_or_err == null) {
-            return 0;
-        }
-        if (display_count == 0) {
-            return 0;
-        }
-        const display_list = display_list_or_err[0..@intCast(display_count)];
-        if (display_index < display_list.len) {
-            // Use found display
-            return display_list[display_index];
-        }
-        // If cannot find display by index, use first item
-        return display_list[0];
-    }
-
     fn enter_incoming_break(self: *Window, display_index: u32) bool {
         // Don't work if we can't get display dimensions
         var display: sdl.SDL_Rect = undefined;
-        if (!sdl.SDL_GetDisplayUsableBounds(get_display_id_from_index(display_index), &display)) {
+        if (!sdl.SDL_GetDisplayUsableBounds(getDisplayIdFromIndex(display_index), &display)) {
             return false;
         }
-        const window = self.window orelse unreachable;
+        const window = self.window;
+
+        // NOTE(jae): 2024-11-03
+        // Restore window logic should happen before we set the window size/etc otherwise ive seen an issue
+        // where the window doesn't move position and size doesn't change in SDL3
+        RestoreWindow_NoActivateFocus(window); // unminimize it
 
         _ = sdl.SDL_SetWindowResizable(window, false);
         _ = sdl.SDL_SetWindowBordered(window, false);
@@ -530,33 +771,7 @@ pub const Window = struct {
         _ = sdl.SDL_SetWindowSize(window, width, height);
         _ = sdl.SDL_SetWindowPosition(window, display.x + display.w - width, display.y + display.h - height);
         _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
-
-        RestoreWindow_NoActivateFocus(window); // unminimize it
         return true;
-    }
-
-    fn enter_break_mode(self: *Window, display_index: u32) void {
-        const window = self.window orelse unreachable;
-
-        _ = sdl.SDL_SetWindowResizable(window, false);
-        _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
-        _ = sdl.SDL_SetWindowBordered(window, false); // For Windows/Kbuntu, must be after SetWindowPosition/SetWindowSize
-
-        var display: sdl.SDL_Rect = undefined;
-        if (sdl.SDL_GetDisplayUsableBounds(get_display_id_from_index(display_index), &display)) {
-            log.info("change_mode: got display: {}", .{display});
-            _ = sdl.SDL_SetWindowPosition(window, display.x, display.y);
-            _ = sdl.SDL_SetWindowSize(window, display.w, display.h);
-        } else {
-            // Fallback if cannot query display
-            _ = sdl.SDL_SetWindowPosition(window, 0, 0);
-            _ = sdl.SDL_SetWindowSize(window, 640, 480);
-        }
-
-        _ = sdl.SDL_SetWindowMouseGrab(window, true); // lock mouse to window
-        _ = sdl.SDL_SetWindowKeyboardGrab(window, true); // lock keyboard to window
-
-        RaiseAndActivateFocus(window); // unminimize and set input focus
     }
 
     fn exit_break_mode(self: *Window) void {
@@ -565,11 +780,29 @@ pub const Window = struct {
         _ = sdl.SDL_SetWindowMouseGrab(window, false); // free mouse lock from window
         _ = sdl.SDL_SetWindowKeyboardGrab(window, false); // lock keyboard to window
 
-        _ = sdl.SDL_SetWindowAlwaysOnTop(window, true);
+        _ = sdl.SDL_SetWindowAlwaysOnTop(window, false);
         _ = sdl.SDL_SetWindowBordered(window, true);
         _ = sdl.SDL_SetWindowResizable(window, true);
     }
 };
+
+fn getDisplayIdFromIndex(display_index: u32) sdl.SDL_DisplayID {
+    var display_count: c_int = undefined;
+    const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
+    if (display_list_or_err == null) {
+        return 0;
+    }
+    if (display_count == 0) {
+        return 0;
+    }
+    const display_list = display_list_or_err[0..@intCast(display_count)];
+    if (display_index < display_list.len) {
+        // Use found display
+        return display_list[display_index];
+    }
+    // If cannot find display by index, use first item
+    return display_list[0];
+}
 
 fn RestoreWindow_NoActivateFocus(window: *sdl.SDL_Window) void {
     const oldActivateWhenRaised = sdl.SDL_GetHint(sdl.SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED);
@@ -607,6 +840,8 @@ fn RaiseAndActivateFocus(window: *sdl.SDL_Window) void {
 
     const isMinimized = sdl.SDL_GetWindowFlags(window) & sdl.SDL_WINDOW_MINIMIZED != 0;
     if (isMinimized) {
+        // NOTE(jae): 2024-11-03
+        // Issue on Windows where this takes focus unfortunately
         _ = sdl.SDL_RestoreWindow(window); // unminimize
     } else {
         _ = sdl.SDL_RaiseWindow(window);
