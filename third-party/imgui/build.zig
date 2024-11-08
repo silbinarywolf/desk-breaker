@@ -109,10 +109,20 @@ pub fn build(b: *std.Build) !void {
     }
     b.installArtifact(lib);
 
-    const module = b.addModule("imgui", .{
-        .root_source_file = b.path("src/imgui.zig"),
+    // SDL Translate C-code
+    var c_translate = b.addTranslateC(.{
+        // NOTE(jae): 2024-11-05
+        // Translating C-header API only so we use host so that Android builds
+        // will compile correctly.
+        .target = b.host,
+        .optimize = .ReleaseFast,
+        .root_source_file = b.path("src/imgui.h"),
     });
-    module.addSystemIncludePath(cimgui_include_path);
-    module.addIncludePath(zig_cimgui_headers_path);
-    module.addIncludePath(zig_imgui_backend_include_path);
+    c_translate.addIncludeDir(cimgui_include_path.getPath(b));
+    c_translate.addIncludeDir(zig_cimgui_headers_path.getPath(b));
+    c_translate.addIncludeDir(zig_imgui_backend_include_path.getPath(b));
+
+    _ = b.addModule("imgui", .{
+        .root_source_file = c_translate.getOutput(),
+    });
 }

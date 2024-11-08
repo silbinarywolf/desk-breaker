@@ -26,7 +26,12 @@ pub fn build(b: *std.Build) !void {
 
     const use_cmake = target.result.os.tag == .linux and target.result.abi != .android;
     if (!use_cmake) {
-        const lib = b.addStaticLibrary(.{
+        const lib = if (target.result.abi != .android) b.addStaticLibrary(.{
+            .name = "SDL3",
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }) else b.addSharedLibrary(.{
             .name = "SDL3",
             .target = target,
             .optimize = optimize,
@@ -47,202 +52,257 @@ pub fn build(b: *std.Build) !void {
         // Used for SDL_egl.h and SDL_opengles2.h
         lib.root_module.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
 
-        switch (target.result.os.tag) {
-            .windows => {
-                lib.root_module.addCMacro("HAVE_MODF", "1");
+        if (target.result.abi == .android) {
+            lib.root_module.addCSourceFiles(.{
+                .root = sdl_path,
+                .files = &android_src_files,
+            });
 
-                lib.addCSourceFiles(.{
+            const has_hidapi = true;
+            if (has_hidapi) {
+                lib.root_module.addCSourceFiles(.{
                     .root = sdl_path,
-                    .files = &windows_src_files,
+                    .files = &android_src_cpp_files,
+                    .flags = &.{"-std=c++11"},
                 });
-                lib.addWin32ResourceFile(.{
-                    // SDL version
-                    .file = sdl_path.path(b, sdlsrc.core.windows.win32_resource_files[0]),
-                });
-                lib.addWin32ResourceFile(.{
-                    // HIDAPI version
-                    .file = sdl_path.path(b, sdlsrc.hidapi.windows.win32_resource_files[0]),
-                    .include_paths = &.{
-                        sdl_path.path(b, "src/hidapi/hidapi"),
-                    },
-                });
-                lib.linkSystemLibrary("setupapi");
-                lib.linkSystemLibrary("winmm");
-                lib.linkSystemLibrary("gdi32");
-                lib.linkSystemLibrary("imm32");
-                lib.linkSystemLibrary("version");
-                lib.linkSystemLibrary("oleaut32"); // SDL_windowssensor.c, symbol "SysFreeString"
-                lib.linkSystemLibrary("ole32");
-            },
-            .macos => {
-                // NOTE(jae): 2024-07-07
-                // Cross-compilation from Linux to Mac requires more effort currently (Zig 0.13.0)
-                // See: https://github.com/ziglang/zig/issues/1349
+                lib.linkLibCpp();
+            }
 
-                lib.addCSourceFiles(.{
-                    .root = sdl_path,
-                    .files = &darwin_src_files,
-                });
-                lib.addCSourceFiles(.{
-                    .root = sdl_path,
-                    .files = &objective_c_src_files,
-                    .flags = &.{"-fobjc-arc"},
-                });
+            // This is needed for "src/render/opengles/SDL_render_gles.c" to compile
+            lib.root_module.addCMacro("GL_GLEXT_PROTOTYPES", "1");
 
-                lib.linkFramework("AVFoundation"); // Camera
-                lib.linkFramework("AudioToolbox");
-                lib.linkFramework("Carbon");
-                lib.linkFramework("Cocoa");
-                lib.linkFramework("CoreAudio");
-                lib.linkFramework("CoreMedia");
-                lib.linkFramework("CoreHaptics");
-                lib.linkFramework("CoreVideo");
-                lib.linkFramework("ForceFeedback");
-                lib.linkFramework("GameController");
-                lib.linkFramework("IOKit");
-                lib.linkFramework("Metal");
+            // https://github.com/libsdl-org/SDL/blob/release-2.30.6/Android.mk#L82C62-L82C69
+            lib.linkSystemLibrary("dl");
+            lib.linkSystemLibrary("GLESv1_CM");
+            lib.linkSystemLibrary("GLESv2");
+            lib.linkSystemLibrary("OpenSLES");
+            lib.linkSystemLibrary("log");
+            lib.linkSystemLibrary("android");
 
-                lib.linkFramework("AppKit");
-                lib.linkFramework("CoreFoundation");
-                lib.linkFramework("Foundation");
-                lib.linkFramework("CoreGraphics");
-                lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
-                lib.linkFramework("QuartzCore"); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
-                lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
-            },
-            .linux => {
-                if (target.result.abi == .android) {
-                    @panic("TODO: Add android build");
-                }
-                @panic("Only building with cmake is supported for now");
-                // NOTE(jae): 2024-10-26
-                // WARNING: Tried to get this working by pulling down dependencies, etc
-                // but ended up being too much of a timesink to keep bothering.
-                //
-                // lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
-                // const config_header = b.addConfigHeader(.{
-                //     .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
-                //     .include_path = "SDL_build_config.h",
-                // }, linuxConfig);
-                // sdl_config_header = config_header;
-                // lib.addConfigHeader(config_header);
-                // lib.installConfigHeader(config_header);
-                //
-                // if (b.lazyDependency("xorgproto", .{})) |xorgproto_dep| {
-                //     // Add X11/X.h
-                //     const xorgproto_include = xorgproto_dep.path("include");
-                //     lib.addIncludePath(xorgproto_include);
-                // }
-                // if (b.lazyDependency("x11", .{})) |x11_dep| {
-                //     // X11/Xlib.h
-                //     const x11_include = x11_dep.path("include");
-                //     lib.addIncludePath(x11_include);
-                //
-                //     lib.addConfigHeader(b.addConfigHeader(.{
-                //         .style = .{ .cmake = x11_include.path(b, "X11/XlibConf.h.in") },
-                //         .include_path = "X11/XlibConf.h",
-                //     }, .{
-                //         // Threading support
-                //         .XTHREADS = true,
-                //         // Use multi-threaded libc functions
-                //         .XUSE_MTSAFE_API = true,
-                //     }));
-                // }
-                //
-                // if (b.lazyDependency("xext", .{})) |xext_dep| {
-                //     // X11/extensions/Xext.h
-                //     const xext_include = xext_dep.path("include");
-                //     lib.addIncludePath(xext_include);
-                // }
-                //
-                // if (b.lazyDependency("dbus", .{})) |dbus_dep| {
-                //     const dbus_include = dbus_dep.path("");
-                //     lib.addIncludePath(dbus_include);
-                //     lib.addConfigHeader(b.addConfigHeader(.{
-                //         .style = .{ .cmake = dbus_include.path(b, "dbus/dbus-arch-deps.h.in") },
-                //         .include_path = "dbus/dbus-arch-deps.h",
-                //     }, .{
-                //         .DBUS_VERSION = "1.14.10",
-                //         .DBUS_INT16_TYPE = "short",
-                //         .DBUS_INT32_TYPE = "int",
-                //         .DBUS_INT64_TYPE = "long",
-                //         .DBUS_INT64_CONSTANT = "(val##L)",
-                //         .DBUS_UINT64_CONSTANT = "(val##UL)",
-                //         .DBUS_MAJOR_VERSION = 1,
-                //         .DBUS_MINOR_VERSION = 14,
-                //         .DBUS_MICRO_VERSION = 10,
-                //     }));
-                // }
-                //
-                // // Included by:
-                // // - src/video/x11/SDL_x11vulkan.c
-                // // - src/video/khronos/vulkan.h
-                // if (b.lazyDependency("xcb", .{})) |xcb_dep| {
-                //     const xcb_header_writefiles = b.addNamedWriteFiles("xcb_headers");
-                //     const xcb_include = xcb_dep.path("src");
-                //     _ = xcb_header_writefiles.addCopyDirectory(xcb_include, "xcb", .{
-                //         .include_extensions = &.{".h"},
-                //     });
-                //     // Add xcbproto - generated xproto.h header
-                //     _ = xcb_header_writefiles.addCopyDirectory(b.path("third-party/xcbproto/src"), "xcb", .{
-                //         .include_extensions = &.{".h"},
-                //     });
-                //     lib.addIncludePath(xcb_header_writefiles.getDirectory());
-                // }
-                //
-                // if (b.lazyDependency("ibus", .{})) |ibus_dep| {
-                //     //if (b.lazyDependency("glib", .{})) |glib_dep| {
-                //     const glib_include = b.path(b.pathJoin(&.{ "third-party", "glib-types" })); // glib_dep.path("");
-                //     const ibus_include = ibus_dep.path("src");
-                //
-                //     // lib.addIncludePath(.{
-                //     //     .cwd_relative = "/usr/lib/x86_64-linux-gnu/glib-2.0/include",
-                //     // });
-                //     // lib.addIncludePath(.{
-                //     //     .cwd_relative = "/usr/include/glib-2.0",
-                //     // });
-                //     // lib.addIncludePath(glib_include); // glib/galloca.h
-                //     // lib.addIncludePath(glib_include.path(b, "glib")); // "glib.h"
-                //     lib.addIncludePath(glib_include);
-                //     lib.addIncludePath(ibus_include);
-                //
-                //     lib.addConfigHeader(b.addConfigHeader(.{
-                //         .style = .{ .cmake = ibus_include.path(b, "ibusversion.h.in") },
-                //         .include_path = "ibusversion.h",
-                //     }, .{
-                //         .IBUS_MAJOR_VERSION = 1,
-                //         .IBUS_MINOR_VERSION = 5,
-                //         .IBUS_MICRO_VERSION = 30,
-                //     }));
-                //     // }
-                // }
-                // lib.addIncludePath(b.path("third-party/libudev"));
-                // lib.addCSourceFiles(.{
-                //     .root = sdl_path,
-                //     .files = &linux_src_files,
-                //     .flags = &.{
-                //         // X11/Xproto.h include for xcb/xcb.h complains because it's not xproto.h (lowercase x)
-                //         // "-Wno-nonportable-include-path",
-                //     },
-                // });
-                // lib.addCSourceFiles(.{
-                //     .root = sdl_path,
-                //     .files = &sdlsrc.hidapi.linux.c_files,
-                //     .flags = &.{
-                //         // "-std=c17",
-                //     },
-                // });
-            },
-            else => {
-                lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
-                const config_header = b.addConfigHeader(.{
-                    .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
-                    .include_path = "SDL_build_config.h",
-                }, SDLConfig{});
+            // SDLActivity.java's getMainFunction defines the entrypoint as "SDL_main"
+            // So your main / root file will need something like this for Android
+            //
+            // fn android_sdl_main() callconv(.C) void {
+            //    _ = std.start.callMain();
+            // }
+            // comptime {
+            //    if (builtin.abi == .android) @export(android_sdl_main, .{ .name = "SDL_main", .linkage = .strong });
+            // }
 
-                lib.addConfigHeader(config_header);
-                lib.installConfigHeader(config_header);
-            },
+            // Add Java files to dependency
+            const java_dir = sdl_dep.path("android-project/app/src/main/java/org/libsdl/app");
+            const java_files: []const []const u8 = &.{
+                "SDL.java",
+                "SDLActivity.java",
+                "SDLAudioManager.java",
+                "SDLControllerManager.java",
+                "SDLDummyEdit.java",
+                "SDLInputConnection.java",
+                "SDLSurface.java",
+                "HIDDevice.java",
+                "HIDDeviceBLESteamController.java",
+                "HIDDeviceManager.java",
+                "HIDDeviceUSB.java",
+            };
+            const java_write_files = b.addNamedWriteFiles("sdljava");
+            for (java_files) |java_file_basename| {
+                _ = java_write_files.addCopyFile(java_dir.path(b, java_file_basename), java_file_basename);
+            }
+        } else {
+            switch (target.result.os.tag) {
+                .windows => {
+                    lib.root_module.addCMacro("HAVE_MODF", "1");
+
+                    lib.addCSourceFiles(.{
+                        .root = sdl_path,
+                        .files = &windows_src_files,
+                    });
+                    lib.addWin32ResourceFile(.{
+                        // SDL version
+                        .file = sdl_path.path(b, sdlsrc.core.windows.win32_resource_files[0]),
+                    });
+                    lib.addWin32ResourceFile(.{
+                        // HIDAPI version
+                        .file = sdl_path.path(b, sdlsrc.hidapi.windows.win32_resource_files[0]),
+                        .include_paths = &.{
+                            sdl_path.path(b, "src/hidapi/hidapi"),
+                        },
+                    });
+                    lib.linkSystemLibrary("setupapi");
+                    lib.linkSystemLibrary("winmm");
+                    lib.linkSystemLibrary("gdi32");
+                    lib.linkSystemLibrary("imm32");
+                    lib.linkSystemLibrary("version");
+                    lib.linkSystemLibrary("oleaut32"); // SDL_windowssensor.c, symbol "SysFreeString"
+                    lib.linkSystemLibrary("ole32");
+                },
+                .macos => {
+                    // NOTE(jae): 2024-07-07
+                    // Cross-compilation from Linux to Mac requires more effort currently (Zig 0.13.0)
+                    // See: https://github.com/ziglang/zig/issues/1349
+
+                    lib.addCSourceFiles(.{
+                        .root = sdl_path,
+                        .files = &darwin_src_files,
+                    });
+                    lib.addCSourceFiles(.{
+                        .root = sdl_path,
+                        .files = &objective_c_src_files,
+                        .flags = &.{"-fobjc-arc"},
+                    });
+
+                    lib.linkFramework("AVFoundation"); // Camera
+                    lib.linkFramework("AudioToolbox");
+                    lib.linkFramework("Carbon");
+                    lib.linkFramework("Cocoa");
+                    lib.linkFramework("CoreAudio");
+                    lib.linkFramework("CoreMedia");
+                    lib.linkFramework("CoreHaptics");
+                    lib.linkFramework("CoreVideo");
+                    lib.linkFramework("ForceFeedback");
+                    lib.linkFramework("GameController");
+                    lib.linkFramework("IOKit");
+                    lib.linkFramework("Metal");
+
+                    lib.linkFramework("AppKit");
+                    lib.linkFramework("CoreFoundation");
+                    lib.linkFramework("Foundation");
+                    lib.linkFramework("CoreGraphics");
+                    lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
+                    lib.linkFramework("QuartzCore"); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
+                    lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
+                },
+                .linux => {
+                    @panic("Only building with cmake is supported for now");
+                    // NOTE(jae): 2024-10-26
+                    // WARNING: Tried to get this working by pulling down dependencies, etc
+                    // but ended up being too much of a timesink to keep bothering.
+                    //
+                    // lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                    // const config_header = b.addConfigHeader(.{
+                    //     .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
+                    //     .include_path = "SDL_build_config.h",
+                    // }, linuxConfig);
+                    // sdl_config_header = config_header;
+                    // lib.addConfigHeader(config_header);
+                    // lib.installConfigHeader(config_header);
+                    //
+                    // if (b.lazyDependency("xorgproto", .{})) |xorgproto_dep| {
+                    //     // Add X11/X.h
+                    //     const xorgproto_include = xorgproto_dep.path("include");
+                    //     lib.addIncludePath(xorgproto_include);
+                    // }
+                    // if (b.lazyDependency("x11", .{})) |x11_dep| {
+                    //     // X11/Xlib.h
+                    //     const x11_include = x11_dep.path("include");
+                    //     lib.addIncludePath(x11_include);
+                    //
+                    //     lib.addConfigHeader(b.addConfigHeader(.{
+                    //         .style = .{ .cmake = x11_include.path(b, "X11/XlibConf.h.in") },
+                    //         .include_path = "X11/XlibConf.h",
+                    //     }, .{
+                    //         // Threading support
+                    //         .XTHREADS = true,
+                    //         // Use multi-threaded libc functions
+                    //         .XUSE_MTSAFE_API = true,
+                    //     }));
+                    // }
+                    //
+                    // if (b.lazyDependency("xext", .{})) |xext_dep| {
+                    //     // X11/extensions/Xext.h
+                    //     const xext_include = xext_dep.path("include");
+                    //     lib.addIncludePath(xext_include);
+                    // }
+                    //
+                    // if (b.lazyDependency("dbus", .{})) |dbus_dep| {
+                    //     const dbus_include = dbus_dep.path("");
+                    //     lib.addIncludePath(dbus_include);
+                    //     lib.addConfigHeader(b.addConfigHeader(.{
+                    //         .style = .{ .cmake = dbus_include.path(b, "dbus/dbus-arch-deps.h.in") },
+                    //         .include_path = "dbus/dbus-arch-deps.h",
+                    //     }, .{
+                    //         .DBUS_VERSION = "1.14.10",
+                    //         .DBUS_INT16_TYPE = "short",
+                    //         .DBUS_INT32_TYPE = "int",
+                    //         .DBUS_INT64_TYPE = "long",
+                    //         .DBUS_INT64_CONSTANT = "(val##L)",
+                    //         .DBUS_UINT64_CONSTANT = "(val##UL)",
+                    //         .DBUS_MAJOR_VERSION = 1,
+                    //         .DBUS_MINOR_VERSION = 14,
+                    //         .DBUS_MICRO_VERSION = 10,
+                    //     }));
+                    // }
+                    //
+                    // // Included by:
+                    // // - src/video/x11/SDL_x11vulkan.c
+                    // // - src/video/khronos/vulkan.h
+                    // if (b.lazyDependency("xcb", .{})) |xcb_dep| {
+                    //     const xcb_header_writefiles = b.addNamedWriteFiles("xcb_headers");
+                    //     const xcb_include = xcb_dep.path("src");
+                    //     _ = xcb_header_writefiles.addCopyDirectory(xcb_include, "xcb", .{
+                    //         .include_extensions = &.{".h"},
+                    //     });
+                    //     // Add xcbproto - generated xproto.h header
+                    //     _ = xcb_header_writefiles.addCopyDirectory(b.path("third-party/xcbproto/src"), "xcb", .{
+                    //         .include_extensions = &.{".h"},
+                    //     });
+                    //     lib.addIncludePath(xcb_header_writefiles.getDirectory());
+                    // }
+                    //
+                    // if (b.lazyDependency("ibus", .{})) |ibus_dep| {
+                    //     //if (b.lazyDependency("glib", .{})) |glib_dep| {
+                    //     const glib_include = b.path(b.pathJoin(&.{ "third-party", "glib-types" })); // glib_dep.path("");
+                    //     const ibus_include = ibus_dep.path("src");
+                    //
+                    //     // lib.addIncludePath(.{
+                    //     //     .cwd_relative = "/usr/lib/x86_64-linux-gnu/glib-2.0/include",
+                    //     // });
+                    //     // lib.addIncludePath(.{
+                    //     //     .cwd_relative = "/usr/include/glib-2.0",
+                    //     // });
+                    //     // lib.addIncludePath(glib_include); // glib/galloca.h
+                    //     // lib.addIncludePath(glib_include.path(b, "glib")); // "glib.h"
+                    //     lib.addIncludePath(glib_include);
+                    //     lib.addIncludePath(ibus_include);
+                    //
+                    //     lib.addConfigHeader(b.addConfigHeader(.{
+                    //         .style = .{ .cmake = ibus_include.path(b, "ibusversion.h.in") },
+                    //         .include_path = "ibusversion.h",
+                    //     }, .{
+                    //         .IBUS_MAJOR_VERSION = 1,
+                    //         .IBUS_MINOR_VERSION = 5,
+                    //         .IBUS_MICRO_VERSION = 30,
+                    //     }));
+                    //     // }
+                    // }
+                    // lib.addIncludePath(b.path("third-party/libudev"));
+                    // lib.addCSourceFiles(.{
+                    //     .root = sdl_path,
+                    //     .files = &linux_src_files,
+                    //     .flags = &.{
+                    //         // X11/Xproto.h include for xcb/xcb.h complains because it's not xproto.h (lowercase x)
+                    //         // "-Wno-nonportable-include-path",
+                    //     },
+                    // });
+                    // lib.addCSourceFiles(.{
+                    //     .root = sdl_path,
+                    //     .files = &sdlsrc.hidapi.linux.c_files,
+                    //     .flags = &.{
+                    //         // "-std=c17",
+                    //     },
+                    // });
+                },
+                else => {
+                    lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                    const config_header = b.addConfigHeader(.{
+                        .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
+                        .include_path = "SDL_build_config.h",
+                    }, SDLConfig{});
+
+                    lib.addConfigHeader(config_header);
+                    lib.installConfigHeader(config_header);
+                },
+            }
         }
         // NOTE(jae): 2024-07-07
         // This must come *after* addConfigHeader logic above for per-OS so that the include for SDL_build_config.h takes precedence
@@ -390,8 +450,19 @@ pub fn build(b: *std.Build) !void {
         // }
     }
 
+    // SDL Translate C-code
+    var c_translate = b.addTranslateC(.{
+        // NOTE(jae): 2024-11-05
+        // Translating C-header API only so we use host so that Android builds
+        // will compile correctly.
+        .target = b.host,
+        .optimize = .ReleaseFast,
+        .root_source_file = b.path("src/sdl.h"),
+    });
+    c_translate.addIncludeDir(sdl_api_include_path.getPath(b));
+
     var module = b.addModule("sdl", .{
-        .root_source_file = b.path("src/sdl.zig"),
+        .root_source_file = c_translate.getOutput(),
     });
     module.addIncludePath(sdl_api_include_path);
 }
@@ -431,10 +502,10 @@ const generic_src_files = sdlsrc.c_files ++
     sdlsrc.time.c_files ++
     sdlsrc.timer.c_files ++
     sdlsrc.video.c_files ++
-    sdlsrc.video.yuv2rgb.c_files ++
-    dummy_src_files;
+    sdlsrc.video.yuv2rgb.c_files;
 
-const dummy_src_files = sdlsrc.audio.dummy.c_files ++
+/// Dummy source files, Android build does not use these
+const dummy_src_files =
     sdlsrc.audio.dummy.c_files ++
     sdlsrc.camera.dummy.c_files ++
     sdlsrc.dialog.dummy.c_files ++
@@ -483,7 +554,8 @@ const windows_src_files = sdlsrc.audio.directsound.c_files ++
     sdlsrc.time.windows.c_files ++
     sdlsrc.timer.windows.c_files ++
     sdlsrc.video.offscreen.c_files ++
-    sdlsrc.video.windows.c_files;
+    sdlsrc.video.windows.c_files ++
+    dummy_src_files;
 
 const darwin_src_files = sdlsrc.audio.disk.c_files ++
     sdlsrc.gpu.vulkan.c_files ++
@@ -499,7 +571,8 @@ const darwin_src_files = sdlsrc.audio.disk.c_files ++
     sdlsrc.render.opengl.c_files ++
     sdlsrc.render.opengles2.c_files ++
     sdlsrc.thread.pthread.c_files ++
-    sdlsrc.video.offscreen.c_files;
+    sdlsrc.video.offscreen.c_files ++
+    dummy_src_files;
 
 const objective_c_src_files = [_][]const u8{} ++
     sdlsrc.audio.coreaudio.objective_c_files ++
@@ -518,6 +591,31 @@ const objective_c_src_files = [_][]const u8{} ++
 const ios_src_files = sdlsrc.hidapi.ios.objective_c_files ++
     // sdlsrc.main.ios.objective_c_files
     sdlsrc.misc.ios.objective_c_files;
+
+const android_src_files = sdlsrc.core.android.c_files ++
+    sdlsrc.audio.openslES.c_files ++
+    sdlsrc.audio.aaudio.c_files ++
+    sdlsrc.camera.android.c_files ++
+    sdlsrc.filesystem.android.c_files ++
+    sdlsrc.filesystem.posix.c_files ++
+    sdlsrc.gpu.vulkan.c_files ++
+    sdlsrc.haptic.android.c_files ++
+    sdlsrc.joystick.android.c_files ++
+    sdlsrc.locale.android.c_files ++
+    sdlsrc.misc.android.c_files ++
+    sdlsrc.power.android.c_files ++
+    sdlsrc.process.dummy.c_files ++
+    sdlsrc.render.vulkan.c_files ++
+    sdlsrc.render.opengl.c_files ++
+    sdlsrc.render.opengles2.c_files ++
+    sdlsrc.sensor.android.c_files ++
+    sdlsrc.time.unix.c_files ++
+    sdlsrc.timer.unix.c_files ++
+    sdlsrc.loadso.dlopen.c_files ++
+    sdlsrc.thread.pthread.c_files ++
+    sdlsrc.video.android.c_files;
+
+const android_src_cpp_files = sdlsrc.hidapi.android.cpp_files;
 
 // TODO(jae): 2024-10-27
 // Update this to work
@@ -573,7 +671,8 @@ const linux_src_files = sdlsrc.audio.aaudio.c_files ++
     sdlsrc.timer.unix.c_files ++
     sdlsrc.thread.generic.c_files ++
     sdlsrc.video.x11.c_files ++
-    sdlsrc.video.wayland.c_files;
+    sdlsrc.video.wayland.c_files ++
+    dummy_src_files;
 
 /// NOTE(jae): 2024-10-24
 /// This configuration was copy-pasted out of my SDL_build_config.h file after creating it

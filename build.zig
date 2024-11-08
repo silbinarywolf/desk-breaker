@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+// const android = @import("zig-android-sdk");
 
 const app_name = "Desk Breaker";
 const recommended_zig_version = "0.13.0";
@@ -30,155 +31,217 @@ pub fn build(b: *std.Build) !void {
         exe_name = b.fmt("{s}-{s}", .{ exe_name, exe_postfix });
     }
 
-    const target = b.standardTargetOptions(.{});
+    const root_target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Build
-    var exe: *std.Build.Step.Compile = b.addExecutable(.{
-        .name = exe_name,
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = false,
-        // NOTE(jae): 2024-07-06
-        // Fails to compile on Zig 0.13.0 with single threaded true
-        // when compiling C++
-        // .single_threaded = true,
-        // NOTE(jae): 2024-05-12
-        // Testing with the Zig x86 compiler
-        // .use_llvm = false,
-        // .use_lld = true,
-    });
-    switch (target.result.os.tag) {
-        .macos => exe.stack_size = 1024 * 1024,
-        .windows => exe.stack_size = 2048 * 1024,
-        else => {}, // use default for untested OS
-    }
-    if (target.result.os.tag == .windows and exe.subsystem == null) {
-        exe.subsystem = .Windows;
-    }
+    var root_target_single = [_]std.Build.ResolvedTarget{root_target};
+    const targets: []std.Build.ResolvedTarget = root_target_single[0..];
 
-    if (target.result.os.tag == .windows) {
-        exe.addWin32ResourceFile(.{
-            .file = b.path("src/deskbreaker.rc"),
-            // Anything that rc.exe accepts will work here
-            // https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
-            // This sets the default code page to UTF-8
-            .flags = &.{"/c65001"},
-        });
-    }
+    // const android_targets = android.standardTargets(b, root_target);
+    // const targets: []std.Build.ResolvedTarget = if (android_targets.len == 0)
+    //     root_target_single[0..]
+    // else
+    //     android_targets;
+    // If building with Android, initialize the tools / build
+    // const android_apk: ?*android.APK = blk: {
+    //     if (android_targets.len == 0) {
+    //         break :blk null;
+    //     }
+    //     const android_tools = android.Tools.create(b, .{
+    //         .api_level = .android15,
+    //         .build_tools_version = "35.0.0",
+    //         .ndk_version = "27.0.12077973",
+    //     });
+    //     const apk = android.APK.create(b, android_tools);
+    //
+    //     const key_store_file = android_tools.createKeyStore(android.CreateKey.example());
+    //     apk.setKeyStore(key_store_file);
+    //     apk.setAndroidManifest(b.path("android/AndroidManifest.xml"));
+    //     apk.addResourceDirectory(b.path("android/res"));
+    //
+    //     // Add Java files
+    //     apk.addJavaSourceFile(.{ .file = b.path("android/src/DeskBreakerSDLActivity.java") });
+    //
+    //     // Add SDL3's Java files like SDL.java, SDLActivity.java, HIDDevice.java, etc
+    //     const sdl_dep = b.dependency("sdl", .{
+    //         .optimize = .ReleaseFast,
+    //         .target = android_targets[0],
+    //     });
+    //     const sdl_java_files = sdl_dep.namedWriteFiles("sdljava");
+    //     for (sdl_java_files.files.items) |file| {
+    //         apk.addJavaSourceFile(.{ .file = file.contents.copy });
+    //     }
+    //     break :blk apk;
+    // };
 
-    // add sdl
-    const sdl_module = blk: {
-        const sdl_dep = b.dependency("sdl", .{
-            .optimize = .ReleaseFast,
+    for (targets) |target| {
+        var exe: *std.Build.Step.Compile = if (target.result.isAndroid()) b.addSharedLibrary(.{
+            .name = exe_name,
+            .root_source_file = b.path("src/main.zig"),
             .target = target,
+            .optimize = optimize,
+        }) else b.addExecutable(.{
+            .name = exe_name,
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            // NOTE(jae): 2024-07-06
+            // Fails to compile on Zig 0.13.0 with single threaded true
+            // when compiling C++
+            // .single_threaded = true,
+            // NOTE(jae): 2024-05-12
+            // Testing with the Zig x86 compiler
+            // .use_llvm = false,
+            // .use_lld = true,
         });
-        const sdl_lib = sdl_dep.artifact("SDL3");
-        exe.linkLibrary(sdl_lib);
 
-        // NOTE(jae): 2024-07-03
-        // Hack for Linux to use the SDL3 version compiled using native Linux toolszig
-        if (target.result.os.tag == .linux and target.result.abi != .android) {
-            for (sdl_lib.root_module.lib_paths.items) |lib_path| {
-                exe.addLibraryPath(lib_path);
-            }
+        switch (target.result.os.tag) {
+            .macos => exe.stack_size = 1024 * 1024,
+            .windows => exe.stack_size = 2048 * 1024,
+            else => {}, // use default for untested OS
+        }
+        if (target.result.os.tag == .windows and exe.subsystem == null) {
+            exe.subsystem = .Windows;
         }
 
-        const sdl_module = sdl_dep.module("sdl");
-        exe.root_module.addImport("sdl", sdl_module);
-
-        // NOTE(jae): 2024-07-31
-        // Experiment with MacOS cross-compilation
-        // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
-        // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
-        if (target.result.os.tag == .macos) {
-            if (b.host.result.os.tag == .windows) {
-                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
-            }
-            const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
-            if (maybe_macos_sdk) |macos_sdk| {
-                const macos_sdk_path = macos_sdk.path("");
-
-                // add macos sdk to sdl
-                sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-
-                // add to exe
-                exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-            }
+        if (target.result.os.tag == .windows) {
+            exe.addWin32ResourceFile(.{
+                .file = b.path("src/deskbreaker.rc"),
+                // Anything that rc.exe accepts will work here
+                // https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
+                // This sets the default code page to UTF-8
+                .flags = &.{"/c65001"},
+            });
         }
 
-        break :blk sdl_module;
-    };
+        // add sdl
+        const sdl_module = blk: {
+            const sdl_dep = b.dependency("sdl", .{
+                .optimize = .ReleaseFast,
+                .target = target,
+            });
+            const sdl_lib = sdl_dep.artifact("SDL3");
+            exe.linkLibrary(sdl_lib);
 
-    // add freetype
-    const freetype_lib = blk: {
-        var freetype_dep = b.dependency("freetype", .{
-            .target = target,
-            .optimize = .ReleaseFast,
-        });
-        const freetype_lib = freetype_dep.artifact("freetype");
-        exe.root_module.linkLibrary(freetype_lib);
-        exe.root_module.addImport("freetype", freetype_dep.module("freetype"));
-        break :blk freetype_lib;
-    };
+            // NOTE(jae): 2024-07-03
+            // Hack for Linux to use the SDL3 version compiled using native Linux toolszig
+            if (target.result.os.tag == .linux and target.result.abi != .android) {
+                for (sdl_lib.root_module.lib_paths.items) |lib_path| {
+                    exe.addLibraryPath(lib_path);
+                }
+            }
 
-    // add imgui
-    {
-        const imgui_enable_freetype = true;
-        var imgui_dep = b.dependency("imgui", .{
-            .target = target,
-            .optimize = .ReleaseFast,
-            .enable_freetype = imgui_enable_freetype,
-        });
-        const imgui_lib = imgui_dep.artifact("imgui");
-        exe.root_module.linkLibrary(imgui_lib);
-        exe.root_module.addImport("imgui", imgui_dep.module("imgui"));
+            const sdl_module = sdl_dep.module("sdl");
+            exe.root_module.addImport("sdl", sdl_module);
 
-        // Add <ft2build.h> to ImGui so it can compile with Freetype support
-        if (imgui_enable_freetype) {
-            for (freetype_lib.root_module.include_dirs.items) |freetype_include_dir| {
-                switch (freetype_include_dir) {
+            // NOTE(jae): 2024-07-31
+            // Experiment with MacOS cross-compilation
+            // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
+            // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+            if (target.result.os.tag == .macos) {
+                if (b.host.result.os.tag == .windows) {
+                    @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
+                }
+                const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
+                if (maybe_macos_sdk) |macos_sdk| {
+                    const macos_sdk_path = macos_sdk.path("");
+
+                    // add macos sdk to sdl
+                    sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                    sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                    sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
+
+                    // add to exe
+                    exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                    exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                    exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
+                }
+            }
+
+            break :blk sdl_module;
+        };
+
+        // add freetype
+        const freetype_lib = blk: {
+            var freetype_dep = b.dependency("freetype", .{
+                .target = target,
+                .optimize = .ReleaseFast,
+            });
+            const freetype_lib = freetype_dep.artifact("freetype");
+            exe.root_module.linkLibrary(freetype_lib);
+            exe.root_module.addImport("freetype", freetype_dep.module("freetype"));
+            break :blk freetype_lib;
+        };
+
+        // add imgui
+        {
+            const imgui_enable_freetype = true;
+            var imgui_dep = b.dependency("imgui", .{
+                .target = target,
+                .optimize = .ReleaseFast,
+                .enable_freetype = imgui_enable_freetype,
+            });
+            const imgui_lib = imgui_dep.artifact("imgui");
+            exe.root_module.linkLibrary(imgui_lib);
+            exe.root_module.addImport("imgui", imgui_dep.module("imgui"));
+
+            // Add <ft2build.h> to ImGui so it can compile with Freetype support
+            if (imgui_enable_freetype) {
+                for (freetype_lib.root_module.include_dirs.items) |freetype_include_dir| {
+                    switch (freetype_include_dir) {
+                        .path => |p| imgui_lib.addIncludePath(p),
+                        else => std.debug.panic("unhandled path from Freetype: {s}", .{@tagName(freetype_include_dir)}),
+                    }
+                }
+            }
+            // Add <SDL.h> to ImGui so it can compile with Freetype support
+            for (sdl_module.include_dirs.items) |sdl_include_dir| {
+                switch (sdl_include_dir) {
                     .path => |p| imgui_lib.addIncludePath(p),
-                    else => std.debug.panic("unhandled path from Freetype: {s}", .{@tagName(freetype_include_dir)}),
+                    .config_header_step => |ch| imgui_lib.addConfigHeader(ch),
+                    // NOTE(jae): 2024-07-31: added to ignore Mac system includes used by SDL2 build
+                    .path_system, .framework_path_system => continue,
+                    else => std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
                 }
             }
         }
-        // Add <SDL.h> to ImGui so it can compile with Freetype support
-        for (sdl_module.include_dirs.items) |sdl_include_dir| {
-            switch (sdl_include_dir) {
-                .path => |p| imgui_lib.addIncludePath(p),
-                .config_header_step => |ch| imgui_lib.addConfigHeader(ch),
-                // NOTE(jae): 2024-07-31: added to ignore Mac system includes used by SDL2 build
-                .path_system, .framework_path_system => continue,
-                else => std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
-            }
+
+        // add zigimg
+        {
+            const zigimg_dep = b.dependency("zigimg", .{
+                .target = target,
+                .optimize = .ReleaseFast,
+            });
+            exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
+        }
+
+        if (target.result.isAndroid()) {
+            @panic("not using Android SDK");
+            // const apk: *android.APK = android_apk orelse @panic("Android APK should be initialized");
+            // const android_dep = b.dependency("zig-android-sdk", .{
+            //     .optimize = optimize,
+            //     .target = target,
+            // });
+            // exe.root_module.addImport("android", android_dep.module("android"));
+            //
+            // apk.addArtifact(exe);
+        } else {
+            const run_step = b.step("run", "Run the application");
+            const run_cmd = b.addRunArtifact(exe);
+            run_step.dependOn(&run_cmd.step);
+
+            const installed_exe = b.addInstallArtifact(exe, .{});
+            b.getInstallStep().dependOn(&installed_exe.step);
         }
     }
+    // if (android_apk) |apk| {
+    //     apk.installApk();
+    // }
 
-    // add zigimg
-    {
-        const zigimg_dep = b.dependency("zigimg", .{
-            .target = target,
-            .optimize = .ReleaseFast,
-        });
-        exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
-    }
-    const installed_exe = b.addInstallArtifact(exe, .{});
-    b.getInstallStep().dependOn(&installed_exe.step);
-
-    const run_step = b.step("run", "Run the application");
-    const run_cmd = b.addRunArtifact(exe);
-    run_step.dependOn(&run_cmd.step);
-
-    const test_step = b.step("test", "Rus the test suite");
+    const test_step = b.step("test", "Run the test suite");
     const test_cmd = b.addRunArtifact(b.addTest(.{
         .root_source_file = b.path("src/testsuite.zig"),
-        .target = target,
+        .target = root_target,
         .optimize = optimize,
     }));
     test_step.dependOn(&test_cmd.step);

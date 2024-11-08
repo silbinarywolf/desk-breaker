@@ -38,7 +38,13 @@ pub const UserConfig = struct {
 };
 
 pub fn save_config_file(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {
-    const path = try get_data_dir_path(allocator);
+    const path = get_data_dir_path(allocator) catch |err| switch (err) {
+        error.AppDataDirUnavailable => {
+            // If unavailable like on Android, do nothing
+            return;
+        },
+        else => return err,
+    };
     defer allocator.free(path);
 
     var dir = blk: {
@@ -90,7 +96,13 @@ pub fn save_config_file(allocator: std.mem.Allocator, user_settings: *const User
 }
 
 pub fn load_config_file(allocator: std.mem.Allocator, user_settings: *UserSettings) !void {
-    const path = try get_data_dir_path(allocator);
+    const path = get_data_dir_path(allocator) catch |err| switch (err) {
+        error.AppDataDirUnavailable => {
+            // If unavailable like on Android, do nothing
+            return;
+        },
+        else => return err,
+    };
     defer allocator.free(path);
 
     var dir = try std.fs.openDirAbsolute(path, .{});
@@ -126,7 +138,7 @@ fn load_user_config(allocator: std.mem.Allocator, config_file_data: []const u8) 
 /// If "portable_mode_enabled" exists alongside binary then save in "%EXE_DIR%/userdata"
 /// returns slice that is owned by the caller and should be freed by them
 pub fn get_data_dir_path(allocator: mem.Allocator) ![]const u8 {
-    const out_buf = try allocator.alloc(u8, std.fs.MAX_PATH_BYTES);
+    const out_buf = try allocator.alloc(u8, std.fs.max_path_bytes);
     defer allocator.free(out_buf);
     const path = try std.fs.selfExeDirPath(out_buf);
 

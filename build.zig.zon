@@ -16,6 +16,13 @@
             .url = "https://github.com/zigimg/zigimg/archive/d9dbbe22b5f7b5f1f4772169ed93ffeed8e8124d.tar.gz",
             .hash = "122013646f7038ecc71ddf8a0d7de346d29a6ec40140af57f838b0a975c69af512b0",
         },
+        // NOTE(jae): 2024-11-05
+        // Used as experiment to run Desk Breaker on Android
+        // .@"zig-android-sdk" = .{
+        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/4d3613943692a979fba47f6a66b5236a84a2a97c.tar.gz",
+        //     .hash = "12206ac089f1f74b08c0d64179203ef6417159376f89f9fd68e6fe844bd15d20559f",
+        //     .lazy = true,
+        // },
         // NOTE(jae): 2024-07-31
         // Experiment with MacOS cross-compilation
         .@"macos-sdk" = .{
