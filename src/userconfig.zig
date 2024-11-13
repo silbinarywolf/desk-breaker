@@ -5,28 +5,19 @@ const mem = std.mem;
 const testing = std.testing;
 
 const UserSettings = @import("state.zig").UserSettings;
-const Timer = @import("state.zig").Timer;
+const StateTimer = @import("state.zig").Timer;
 const TimerKind = @import("state.zig").TimerKind;
 const Duration = @import("time.zig").Duration;
 
-const UserTimer = struct {
-    kind: TimerKind,
+const UserConfigCurrentVersion = 2;
 
-    // Common
-    name: []const u8,
-
-    // Timer
-    timer_duration: ?Duration = null,
-
-    // Alarm
-    // alarm_time: ?Time = null,
-
-    // // ActivityBreak
-    // time_till_break: Duration = Duration.init(30 * time.ns_per_min),
-    // break_time: Duration = Duration.init(5 * time.ns_per_min),
+/// UserConfigPartialVersion is used to deserialize just the "version" field first
+const UserConfigPartialVersion = struct {
+    version: u32,
 };
 
-pub const UserConfig = struct {
+/// UserConfig version 1
+pub const Version1 = struct {
     version: u32 = 1,
     display_index: u32 = 0,
     activity_timer: struct {
@@ -34,106 +25,158 @@ pub const UserConfig = struct {
         time_till_break: ?Duration = null,
         break_time: ?Duration = null,
     },
-    timers: []UserTimer,
+    timers: []UserConfig.Timer,
 };
 
-pub fn save_config_file(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {
-    const path = get_data_dir_path(allocator) catch |err| switch (err) {
-        error.AppDataDirUnavailable => {
-            // If unavailable like on Android, do nothing
-            return;
-        },
-        else => return err,
-    };
-    defer allocator.free(path);
+pub const UserConfig = struct {
+    pub const Timer = struct {
+        kind: TimerKind,
 
-    var dir = blk: {
-        const userdata_dir = std.fs.openDirAbsolute(path, .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                try std.fs.makeDirAbsolute(path);
-                break :blk try std.fs.openDirAbsolute(path, .{});
+        // Common
+        name: []const u8,
+
+        // Timer
+        timer_duration: ?Duration = null,
+
+        // Alarm
+        // alarm_time: ?Time = null,
+
+        // // ActivityBreak
+        // time_till_break: Duration = Duration.init(30 * time.ns_per_min),
+        // break_time: Duration = Duration.init(5 * time.ns_per_min),
+    };
+
+    pub const Settings = struct {
+        /// this is the monitor to display on
+        display_index: u32 = 0,
+        is_activity_break_enabled: bool = true,
+        time_till_break: ?Duration = null,
+        break_time: ?Duration = null,
+        // the amount of warning you get before the fullscreen popup appears
+        incoming_break: ?Duration = null,
+    };
+
+    version: u32 = UserConfigCurrentVersion,
+    settings: Settings = .{},
+    timers: []Timer,
+
+    pub fn load(allocator: std.mem.Allocator, user_settings: *UserSettings) !void {
+        const path = get_data_dir_path(allocator) catch |err| switch (err) {
+            error.AppDataDirUnavailable => {
+                // If unavailable like on Android, do nothing
+                return;
             },
             else => return err,
         };
-        break :blk userdata_dir;
-    };
-    defer dir.close();
+        defer allocator.free(path);
 
-    // Build user config
-    var timers = try std.ArrayList(UserTimer).initCapacity(allocator, user_settings.timers.items.len);
-    for (user_settings.timers.items) |*t| {
-        switch (t.kind) {
-            .timer => {
-                try timers.append(.{
-                    .kind = t.kind,
-                    .name = t.name.slice(),
-                    .timer_duration = t.timer_duration,
-                });
+        var dir = try std.fs.openDirAbsolute(path, .{});
+        defer dir.close();
+
+        const config_file_data = try dir.readFileAlloc(allocator, "config.json", 1024 * 1024 * 1024);
+        defer allocator.free(config_file_data);
+
+        const file_version = verblk: {
+            const version_parsed = try std.json.parseFromSlice(UserConfigPartialVersion, allocator, config_file_data, .{
+                .ignore_unknown_fields = true,
+            });
+            defer version_parsed.deinit();
+            break :verblk version_parsed.value.version;
+        };
+
+        switch (file_version) {
+            1 => {
+                // Old format
+                const userconfig_parsed = try std.json.parseFromSlice(Version1, allocator, config_file_data, .{});
+                defer userconfig_parsed.deinit();
+                const userconfig = &userconfig_parsed.value;
+
+                user_settings.settings.display_index = userconfig.display_index;
+                user_settings.settings.is_activity_break_enabled = userconfig.activity_timer.is_enabled;
+                user_settings.settings.break_time = userconfig.activity_timer.break_time;
+                user_settings.settings.time_till_break = userconfig.activity_timer.time_till_break;
+
+                user_settings.timers.clearRetainingCapacity();
+                for (userconfig.timers) |*t| {
+                    try user_settings.timers.append(.{
+                        .kind = t.kind,
+                        .name = try StateTimer.Name.fromSlice(t.name),
+                        .timer_duration = t.timer_duration,
+                    });
+                }
             },
-            .alarm => {
-                @panic("TODO: handle saving alarm");
+            UserConfigCurrentVersion => {
+                const userconfig_parsed = try std.json.parseFromSlice(UserConfig, allocator, config_file_data, .{});
+                defer userconfig_parsed.deinit();
+                const userconfig = &userconfig_parsed.value;
+
+                user_settings.settings = userconfig.settings;
+                user_settings.timers.clearRetainingCapacity();
+                for (userconfig.timers) |*t| {
+                    try user_settings.timers.append(.{
+                        .kind = t.kind,
+                        .name = try StateTimer.Name.fromSlice(t.name),
+                        .timer_duration = t.timer_duration,
+                    });
+                }
             },
+            else => return error.InvalidConfigVersion,
         }
     }
-    var user_config: UserConfig = .{
-        .activity_timer = .{
-            .is_enabled = user_settings.is_activity_break_enabled,
-            .break_time = user_settings.break_time,
-            .time_till_break = user_settings.time_till_break,
-        },
-        .display_index = user_settings.display_index,
-        .timers = timers.items,
-    };
-    const json_data = try std.json.stringifyAlloc(allocator, &user_config, .{
-        .whitespace = .indent_tab,
-        .emit_null_optional_fields = false,
-    });
-    defer allocator.free(json_data);
-    try dir.writeFile(.{
-        .sub_path = "config.json",
-        .data = json_data,
-    });
-}
 
-pub fn load_config_file(allocator: std.mem.Allocator, user_settings: *UserSettings) !void {
-    const path = get_data_dir_path(allocator) catch |err| switch (err) {
-        error.AppDataDirUnavailable => {
-            // If unavailable like on Android, do nothing
-            return;
-        },
-        else => return err,
-    };
-    defer allocator.free(path);
+    pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {
+        const path = get_data_dir_path(allocator) catch |err| switch (err) {
+            error.AppDataDirUnavailable => {
+                // If unavailable like on Android, do nothing
+                return;
+            },
+            else => return err,
+        };
+        defer allocator.free(path);
 
-    var dir = try std.fs.openDirAbsolute(path, .{});
-    defer dir.close();
+        var dir = blk: {
+            const userdata_dir = std.fs.openDirAbsolute(path, .{}) catch |err| switch (err) {
+                error.FileNotFound => {
+                    try std.fs.makeDirAbsolute(path);
+                    break :blk try std.fs.openDirAbsolute(path, .{});
+                },
+                else => return err,
+            };
+            break :blk userdata_dir;
+        };
+        defer dir.close();
 
-    const config_file_data = try dir.readFileAlloc(allocator, "config.json", 1024 * 1024 * 1024);
-    defer allocator.free(config_file_data);
-
-    const userconfig_parsed = try load_user_config(allocator, config_file_data);
-    defer userconfig_parsed.deinit();
-
-    const userconfig = &userconfig_parsed.value;
-    user_settings.is_activity_break_enabled = userconfig.activity_timer.is_enabled;
-    user_settings.break_time = userconfig.activity_timer.break_time;
-    user_settings.time_till_break = userconfig.activity_timer.time_till_break;
-    user_settings.display_index = userconfig.display_index;
-
-    user_settings.timers.clearRetainingCapacity();
-    for (userconfig.timers) |*t| {
-        try user_settings.timers.append(.{
-            .kind = t.kind,
-            .name = try Timer.Name.fromSlice(t.name),
-            .timer_duration = t.timer_duration,
+        // Build user config
+        var timers = try std.ArrayList(Timer).initCapacity(allocator, user_settings.timers.items.len);
+        for (user_settings.timers.items) |*t| {
+            switch (t.kind) {
+                .timer => {
+                    try timers.append(.{
+                        .kind = t.kind,
+                        .name = t.name.slice(),
+                        .timer_duration = t.timer_duration,
+                    });
+                },
+                .alarm => {
+                    @panic("TODO: handle saving alarm");
+                },
+            }
+        }
+        var user_config: UserConfig = .{
+            .settings = user_settings.settings,
+            .timers = timers.items,
+        };
+        const json_data = try std.json.stringifyAlloc(allocator, &user_config, .{
+            .whitespace = .indent_tab,
+            .emit_null_optional_fields = false,
+        });
+        defer allocator.free(json_data);
+        try dir.writeFile(.{
+            .sub_path = "config.json",
+            .data = json_data,
         });
     }
-}
-
-fn load_user_config(allocator: std.mem.Allocator, config_file_data: []const u8) !std.json.Parsed(UserConfig) {
-    const config_data = try std.json.parseFromSlice(UserConfig, allocator, config_file_data, .{});
-    return config_data;
-}
+};
 
 /// If "portable_mode_enabled" exists alongside binary then save in "%EXE_DIR%/userdata"
 /// returns slice that is owned by the caller and should be freed by them

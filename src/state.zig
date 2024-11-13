@@ -6,6 +6,7 @@ const mem = std.mem;
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 
+const UserConfig = @import("userconfig.zig").UserConfig;
 const Duration = @import("time.zig").Duration;
 const Alarm = @import("time.zig").Alarm;
 const Lexer = @import("lexer.zig").Lexer;
@@ -50,7 +51,7 @@ pub const Timer = struct {
     // Alarm
     // alarm_time: ?Time = null,
 
-    // // ActivityBreak
+    // ActivityBreak
     // time_till_break: Duration = Duration.init(30 * time.ns_per_min),
     // break_time: Duration = Duration.init(5 * time.ns_per_min),
 
@@ -69,12 +70,9 @@ pub const UserSettings = struct {
     default_snooze: Duration = Duration.init(10 * time.ns_per_min),
     default_break_time: Duration = Duration.init(5 * time.ns_per_min),
     default_exit_time: Duration = Duration.init(10 * time.ns_per_s),
+    default_incoming_break: Duration = Duration.init(20 * time.ns_per_s),
 
-    is_activity_break_enabled: bool = true,
-    time_till_break: ?Duration = null,
-    break_time: ?Duration = null,
-    /// this is the monitor to display on
-    display_index: u32 = 0,
+    settings: UserConfig.Settings,
     timers: std.ArrayList(Timer),
 
     pub fn deinit(self: *@This()) void {
@@ -82,7 +80,7 @@ pub const UserSettings = struct {
     }
 
     pub fn time_till_break_or_default(self: *const @This()) Duration {
-        return self.time_till_break orelse self.default_time_till_break;
+        return self.settings.time_till_break orelse self.default_time_till_break;
     }
 
     pub fn snooze_duration_or_default(self: *const @This()) Duration {
@@ -91,11 +89,16 @@ pub const UserSettings = struct {
     }
 
     pub fn break_time_or_default(self: *const @This()) Duration {
-        return self.break_time orelse self.default_break_time;
+        return self.settings.break_time orelse self.default_break_time;
     }
 
     pub fn exit_time_or_default(self: *const @This()) Duration {
         return self.default_exit_time;
+    }
+
+    /// The amount of warning you get before the break takes up the full screen in nanoseconds
+    pub fn incoming_break_or_default(self: *const @This()) Duration {
+        return self.settings.incoming_break orelse self.default_incoming_break;
     }
 };
 
@@ -140,9 +143,11 @@ const UiState = struct {
         is_activity_break_enabled: bool = false,
         time_till_break: UiDuration = std.mem.zeroes(UiDuration),
         break_time: UiDuration = std.mem.zeroes(UiDuration),
+        incoming_break: UiDuration = std.mem.zeroes(UiDuration),
         errors: struct {
             time_till_break: []const u8 = &[0]u8{},
             break_time: []const u8 = &[0]u8{},
+            incoming_break: []const u8 = &[0]u8{},
         } = .{},
     } = .{},
     options_metadata: struct {
@@ -249,7 +254,7 @@ pub const State = struct {
             if (can_trigger_activity_break) {
                 switch (state.mode) {
                     .regular, .incoming_break => {
-                        if (state.user_settings.is_activity_break_enabled) {
+                        if (state.user_settings.settings.is_activity_break_enabled) {
                             const time_active_in_ns = state.activity_timer.read();
                             next_timer = NextTimer{
                                 .id = NextTimer.ActivityTimer,
@@ -383,7 +388,7 @@ pub const State = struct {
             },
             .incoming_break => {
                 const should_change_state = blk: {
-                    const display_index = state.user_settings.display_index;
+                    const display_index = state.user_settings.settings.display_index;
 
                     // Don't work if we can't get display dimensions
                     var display: sdl.SDL_Rect = undefined;
@@ -442,7 +447,7 @@ pub const State = struct {
 
                 const use_popout_window = true;
                 if (use_popout_window) {
-                    const display_index = state.user_settings.display_index;
+                    const display_index = state.user_settings.settings.display_index;
 
                     // Don't work if we can't get display dimensions
                     var display: sdl.SDL_Rect = undefined;
@@ -569,6 +574,7 @@ pub const Window = struct {
             return error.SdlFailed;
         }
         errdefer sdl.SDL_DestroyProperties(props);
+
         if (options.title.len > 0) {
             if (!sdl.SDL_SetStringProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TITLE_STRING, options.title)) return error.SdlSetPropertyFailed;
         }
@@ -792,6 +798,7 @@ fn getDisplayIdFromIndex(display_index: u32) sdl.SDL_DisplayID {
     if (display_list_or_err == null) {
         return 0;
     }
+    defer sdl.SDL_free(display_list_or_err);
     if (display_count == 0) {
         return 0;
     }

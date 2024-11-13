@@ -123,6 +123,8 @@ pub fn build(b: *std.Build) !void {
     c_translate.addIncludeDir(zig_imgui_backend_include_path.getPath(b));
 
     _ = b.addModule("imgui", .{
+        .target = target,
+        .optimize = optimize,
         .root_source_file = c_translate.getOutput(),
     });
 }

@@ -319,6 +319,14 @@ pub fn build(b: *std.Build) !void {
         //
         // So to avoid that complexity for now, we just follow the SDL3 install instructions and
         // execute "cmake", though we set the "CC" environment variable so it uses the Zig C compiler.
+        //
+        // sudo apt-get update && sudo apt-get install build-essential make \
+        //   pkg-config libasound2-dev libpulse-dev \
+        //   libaudio-dev libjack-dev libsndio-dev libx11-dev libxext-dev \
+        //   libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+        //   libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+        //   libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev fcitx-libs-dev \
+        //   libpipewire-0.3-dev libwayland-dev libdecor-0-dev
         const lib = b.addStaticLibrary(.{
             .name = "SDL3",
             // NOTE(jae): 2024-07-02
@@ -380,6 +388,9 @@ pub fn build(b: *std.Build) !void {
         cmake_setup.addArg("-DSDL_STATIC=ON");
         cmake_setup.addArg("-DSDL_DISABLE_INSTALL_DOCS=ON");
         cmake_setup.addArg("-DSDL_TESTS=OFF");
+        // Building Wayland is a pain in the ass across different Linux OSes, not doing.
+        // cmake_setup.addArg("-DSDL_WAYLAND=OFF");
+        cmake_setup.addArg("-DSDL_VENDOR_INFO=Zig");
         cmake_setup.addArg("-DCMAKE_INSTALL_BINDIR=bin");
         cmake_setup.addArg("-DCMAKE_INSTALL_DATAROOTDIR=share");
         cmake_setup.addArg("-DCMAKE_INSTALL_INCLUDEDIR=include");
@@ -462,6 +473,8 @@ pub fn build(b: *std.Build) !void {
     c_translate.addIncludeDir(sdl_api_include_path.getPath(b));
 
     var module = b.addModule("sdl", .{
+        .target = target,
+        .optimize = optimize,
         .root_source_file = c_translate.getOutput(),
     });
     module.addIncludePath(sdl_api_include_path);
