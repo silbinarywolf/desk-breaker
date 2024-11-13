@@ -23,6 +23,10 @@ pub const Duration = struct {
         };
     }
 
+    pub fn milliseconds(self: *const Duration) u64 {
+        return self.nanoseconds / time.ns_per_ms;
+    }
+
     pub fn format(
         self: Duration,
         comptime fmt: []const u8,

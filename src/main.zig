@@ -6,9 +6,10 @@ const imgui = @import("imgui");
 const android = @import("android");
 const winregistry = @import("winregistry.zig");
 
-const userconfig = @import("userconfig.zig");
+const UserConfig = @import("userconfig.zig").UserConfig;
 
 const sdlpng = @import("sdlpng.zig");
+const CLibAllocation = @import("c_lib_alloc.zig").CLibAllocation;
 const Duration = @import("time.zig").Duration;
 const Alarm = @import("time.zig").Alarm;
 
@@ -73,15 +74,17 @@ pub fn main() !void {
         _ = gpa_allocator.deinit();
     }
 
-    // TODO(jae): 2024-07-28
-    // - Make SDL use our allocator
-    // - Make ImGui use our allocator
+    // Setup custom allocators for SDL and Imgui
+    // - We can use the GeneralPurposeAllocator to catch memory leaks
+    const c_lib_alloc = try CLibAllocation.init(allocator);
+    defer c_lib_alloc.deinit();
 
     // Load your settings
     var user_settings: UserSettings = .{
+        .settings = .{},
         .timers = std.ArrayList(Timer).init(allocator),
     };
-    userconfig.load_config_file(allocator, &user_settings) catch |err| switch (err) {
+    UserConfig.load(allocator, &user_settings) catch |err| switch (err) {
         error.FileNotFound => {
             // do nothing if there is no config file
         },
@@ -97,8 +100,6 @@ pub fn main() !void {
     var icon_png = try sdlpng.load_from_surface_from_buffer(allocator, @embedFile("icon.png"));
     defer icon_png.deinit(allocator);
 
-    // const window_x: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
-    // const window_y: c_int = @intCast(sdl.SDL_WINDOWPOS_CENTERED_DISPLAY(user_settings.display_index));
     var app_window = try Window.init(.{
         .title = "Desk Breaker",
         .width = 640,
@@ -156,8 +157,8 @@ pub fn main() !void {
                         const window_flags = sdl.SDL_GetWindowFlags(state.window.window);
                         const is_main_window_minimized_or_occluded = (window_flags & sdl.SDL_WINDOW_MINIMIZED != 0) or
                             (window_flags & sdl.SDL_WINDOW_OCCLUDED != 0);
-                        log.debug("frames_without_app_input: {}, is minimized or occluded: {}", .{ frames_without_app_input, is_main_window_minimized_or_occluded });
 
+                        // log.debug("frames_without_app_input: {}, is minimized or occluded: {}", .{ frames_without_app_input, is_main_window_minimized_or_occluded });
                         if (is_polling_events) {
                             // Poll events and be responsive
                             break :blk sdl.SDL_PollEvent(&sdl_event);
@@ -169,10 +170,11 @@ pub fn main() !void {
                             state.taking_break_windows.items.len == 0;
                         if (is_powersaving_mode) {
                             if (state.time_till_next_timer_complete()) |timer| {
-                                const safe_delay = 30 * time.ns_per_s;
+                                const safe_delay_in_ms: u64 = 5000;
+                                const safe_delay = state.user_settings.incoming_break_or_default().nanoseconds + (safe_delay_in_ms * time.ns_per_ms);
                                 if (timer.time_till_next_break.nanoseconds >= safe_delay) {
                                     // 5000ms timeout so we can at least occassionally detect global mouse position
-                                    break :blk sdl.SDL_WaitEventTimeout(&sdl_event, 5000);
+                                    break :blk sdl.SDL_WaitEventTimeout(&sdl_event, safe_delay_in_ms);
                                 }
                             }
                         }
@@ -328,13 +330,10 @@ pub fn main() !void {
             // Detect when to change mode
             switch (state.mode) {
                 .regular, .incoming_break => {
-                    // TODO(jae): Make this configurable
-                    // Also make safe_delay event code above consider this amount
-                    const incoming_break_duration = 10 * time.ns_per_s;
                     if (state.time_till_next_timer_complete()) |next_timer| {
                         if (next_timer.time_till_next_break.nanoseconds <= 0) {
                             try state.change_mode(.taking_break);
-                        } else if (next_timer.time_till_next_break.nanoseconds <= incoming_break_duration) {
+                        } else if (next_timer.time_till_next_break.nanoseconds <= state.user_settings.incoming_break_or_default().nanoseconds) {
                             try state.change_mode(.incoming_break);
                         } else {
                             // If cancelled timer in main window
@@ -419,13 +418,17 @@ pub fn main() !void {
                             state.ui.options = .{
                                 // ... resets all options ui state ...
                                 // set this
-                                .is_activity_break_enabled = state.user_settings.is_activity_break_enabled,
-                                .display_index = state.user_settings.display_index,
+                                .is_activity_break_enabled = state.user_settings.settings.is_activity_break_enabled,
+                                .display_index = state.user_settings.settings.display_index,
+                                // set below...
+                                // .time_till_break =
+                                // .break_time =
+                                // .incoming_break =
                             };
                             const ui_options = &state.ui.options;
-
-                            if (state.user_settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
-                            if (state.user_settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
+                            if (state.user_settings.settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
+                            if (state.user_settings.settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
+                            if (state.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
 
                             // OS-specific
                             switch (builtin.os.tag) {
@@ -456,6 +459,7 @@ pub fn main() !void {
 
                                 var display_count: c_int = undefined;
                                 const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
+                                defer sdl.SDL_free(display_list_or_err);
                                 if (display_list_or_err != null) {
                                     const display_list = display_list_or_err[0..@intCast(display_count)];
                                     for (display_list, 0..) |display_id, i| {
@@ -572,7 +576,7 @@ pub fn main() !void {
                             imgui.igText(try state.tprint("Snooze timer over in: {s}", .{
                                 state.user_settings.snooze_duration_or_default().diff(snooze_timer.read()),
                             }));
-                        } else if (state.user_settings.is_activity_break_enabled) {
+                        } else if (state.user_settings.settings.is_activity_break_enabled) {
                             const time_till_activity_break_format = "Time till activity break: {s}";
                             if (state.is_user_mouse_active) {
                                 imgui.igText(try state.tprint(time_till_activity_break_format, .{
@@ -692,7 +696,7 @@ pub fn main() !void {
                             state.ui.kind = .none;
 
                             // save
-                            try userconfig.save_config_file(state.temp_allocator.allocator(), &state.user_settings);
+                            try UserConfig.save(state.temp_allocator.allocator(), &state.user_settings);
                         }
                     }
                     imgui.igSameLine(0, 8);
@@ -710,7 +714,7 @@ pub fn main() !void {
                             state.ui.kind = .none;
 
                             // save
-                            try userconfig.save_config_file(state.temp_allocator.allocator(), &state.user_settings);
+                            try UserConfig.save(state.temp_allocator.allocator(), &state.user_settings);
                         }
                     }
                 },
@@ -781,6 +785,21 @@ pub fn main() !void {
                         _ = imgui.igText(try state.tprint("{s}", .{ui_options.errors.break_time}));
                     }
 
+                    if (imgui.igInputTextWithHint(
+                        "Incoming break",
+                        try state.tprint("default: {sh}", .{state.user_settings.default_incoming_break}),
+                        ui_options.incoming_break[0..].ptr,
+                        ui_options.incoming_break.len,
+                        0,
+                        null,
+                        null,
+                    )) {
+                        ui_options.errors.incoming_break = ""; // reset error message if changed
+                    }
+                    if (ui_options.errors.incoming_break.len > 0) {
+                        _ = imgui.igText(try state.tprint("{s}", .{ui_options.errors.incoming_break}));
+                    }
+
                     if (imgui.igButton("Save", .{})) {
                         // Get time till break
                         const time_till_break_str = ui_options.time_till_break[0..std.mem.len(ui_options.time_till_break[0..].ptr)];
@@ -797,6 +816,15 @@ pub fn main() !void {
                         const break_time: ?Duration = blk: {
                             const d = Duration.parseOptionalString(break_time_str) catch {
                                 ui_options.errors.break_time = "invalid value, expect format: 1h 30m 45s";
+                                break :blk null;
+                            };
+                            break :blk d;
+                        };
+
+                        // Get incoming break
+                        const incoming_break: ?Duration = blk: {
+                            const d = Duration.parseOptionalString(std.mem.span(ui_options.incoming_break[0..].ptr)) catch {
+                                ui_options.errors.incoming_break = "invalid value, expect format: 1h 30m 45s";
                                 break :blk null;
                             };
                             break :blk d;
@@ -826,13 +854,16 @@ pub fn main() !void {
                         const has_error = ui_options.errors.time_till_break.len > 0 and ui_options.errors.break_time.len > 0;
                         if (!has_error) {
                             // update from fields / text
-                            state.user_settings.is_activity_break_enabled = ui_options.is_activity_break_enabled;
-                            state.user_settings.time_till_break = time_till_break;
-                            state.user_settings.break_time = break_time;
-                            state.user_settings.display_index = ui_options.display_index;
+                            state.user_settings.settings = .{
+                                .is_activity_break_enabled = ui_options.is_activity_break_enabled,
+                                .time_till_break = time_till_break,
+                                .break_time = break_time,
+                                .incoming_break = incoming_break,
+                                .display_index = ui_options.display_index,
+                            };
 
                             // save
-                            try userconfig.save_config_file(state.temp_allocator.allocator(), &state.user_settings);
+                            try UserConfig.save(state.temp_allocator.allocator(), &state.user_settings);
 
                             // close
                             state.ui.kind = .none;
