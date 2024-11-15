@@ -80,16 +80,15 @@ pub fn main() !void {
     defer c_lib_alloc.deinit();
 
     // Load your settings
-    var user_settings: UserSettings = .{
-        .settings = .{},
-        .timers = std.ArrayList(Timer).init(allocator),
-    };
-    UserConfig.load(allocator, &user_settings) catch |err| switch (err) {
-        error.FileNotFound => {
-            // do nothing if there is no config file
-        },
+    var user_settings: *UserSettings = try allocator.create(UserSettings);
+    defer allocator.destroy(user_settings);
+
+    user_settings.* = UserConfig.load(allocator) catch |err| switch (err) {
+        // If no file found, use default
+        error.FileNotFound => UserSettings.init(allocator),
         else => return err,
     };
+    defer user_settings.deinit(allocator);
 
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
         log.err("unable to initialize SDL: {s}", .{sdl.SDL_GetError()});
@@ -424,11 +423,13 @@ pub fn main() !void {
                                 // .time_till_break =
                                 // .break_time =
                                 // .incoming_break =
+                                // .incoming_break_message =
                             };
                             const ui_options = &state.ui.options;
                             if (state.user_settings.settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
                             if (state.user_settings.settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
                             if (state.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
+                            if (state.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{state.user_settings.settings.incoming_break_message});
 
                             // OS-specific
                             switch (builtin.os.tag) {
@@ -696,7 +697,7 @@ pub fn main() !void {
                             state.ui.kind = .none;
 
                             // save
-                            try UserConfig.save(state.temp_allocator.allocator(), &state.user_settings);
+                            try UserConfig.save(state.temp_allocator.allocator(), state.user_settings);
                         }
                     }
                     imgui.igSameLine(0, 8);
@@ -714,7 +715,7 @@ pub fn main() !void {
                             state.ui.kind = .none;
 
                             // save
-                            try UserConfig.save(state.temp_allocator.allocator(), &state.user_settings);
+                            try UserConfig.save(state.temp_allocator.allocator(), state.user_settings);
                         }
                     }
                 },
@@ -785,19 +786,44 @@ pub fn main() !void {
                         _ = imgui.igText(try state.tprint("{s}", .{ui_options.errors.break_time}));
                     }
 
-                    if (imgui.igInputTextWithHint(
-                        "Incoming break",
-                        try state.tprint("default: {sh}", .{state.user_settings.default_incoming_break}),
-                        ui_options.incoming_break[0..].ptr,
-                        ui_options.incoming_break.len,
-                        0,
-                        null,
-                        null,
-                    )) {
-                        ui_options.errors.incoming_break = ""; // reset error message if changed
+                    // Incoming break
+                    {
+                        const default_value = state.user_settings.default_incoming_break;
+                        const current_value = &ui_options.incoming_break;
+                        const error_message = &ui_options.errors.incoming_break;
+                        if (imgui.igInputTextWithHint(
+                            "Incoming break",
+                            try state.tprint("default: {sh}", .{default_value}),
+                            current_value[0..].ptr,
+                            current_value.len,
+                            0,
+                            null,
+                            null,
+                        )) {
+                            error_message.* = ""; // reset error message if changed
+                        }
+                        if (error_message.len > 0) {
+                            _ = imgui.igText(try state.tprint("{s}", .{error_message}));
+                        }
                     }
-                    if (ui_options.errors.incoming_break.len > 0) {
-                        _ = imgui.igText(try state.tprint("{s}", .{ui_options.errors.incoming_break}));
+
+                    {
+                        const current_value = &ui_options.incoming_break_message;
+                        const error_message = &ui_options.errors.incoming_break_message;
+                        if (imgui.igInputTextWithHint(
+                            "Incoming break msg",
+                            "default: (none)",
+                            current_value[0..].ptr,
+                            current_value.len,
+                            0,
+                            null,
+                            null,
+                        )) {
+                            error_message.* = ""; // reset error message if changed
+                        }
+                        if (error_message.len > 0) {
+                            _ = imgui.igText(try state.tprint("{s}", .{error_message}));
+                        }
                     }
 
                     if (imgui.igButton("Save", .{})) {
@@ -830,6 +856,9 @@ pub fn main() !void {
                             break :blk d;
                         };
 
+                        // Get incoming break message
+                        const incoming_break_message = std.mem.span(ui_options.incoming_break_message[0..].ptr);
+
                         if (ui_options.os_startup) |os_startup| {
                             switch (builtin.os.tag) {
                                 .windows => {
@@ -853,17 +882,20 @@ pub fn main() !void {
 
                         const has_error = ui_options.errors.time_till_break.len > 0 and ui_options.errors.break_time.len > 0;
                         if (!has_error) {
+                            allocator.free(state.user_settings.settings.incoming_break_message);
+
                             // update from fields / text
                             state.user_settings.settings = .{
                                 .is_activity_break_enabled = ui_options.is_activity_break_enabled,
                                 .time_till_break = time_till_break,
                                 .break_time = break_time,
                                 .incoming_break = incoming_break,
+                                .incoming_break_message = try allocator.dupe(u8, incoming_break_message),
                                 .display_index = ui_options.display_index,
                             };
 
                             // save
-                            try UserConfig.save(state.temp_allocator.allocator(), &state.user_settings);
+                            try UserConfig.save(state.temp_allocator.allocator(), state.user_settings);
 
                             // close
                             state.ui.kind = .none;
@@ -915,8 +947,15 @@ pub fn main() !void {
                 }
             }
 
-            imgui.igText(heading_text);
-            imgui.igText(try state.tprint("{s}", .{next_timer.time_till_next_break}));
+            imgui.igTextWrapped(heading_text);
+            imgui.igTextWrapped(try state.tprint("{s}", .{next_timer.time_till_next_break}));
+
+            const user_defined_incoming_break_message = state.user_settings.settings.incoming_break_message;
+            if (user_defined_incoming_break_message.len > 0) {
+                imgui.igNewLine();
+                imgui.igTextWrapped(try state.tprint("{s}", .{state.user_settings.settings.incoming_break_message}));
+            }
+
             if (next_timer.id == NextTimer.ActivityTimer or
                 next_timer.id == NextTimer.SnoozeTimer)
             {

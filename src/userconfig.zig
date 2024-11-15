@@ -46,6 +46,7 @@ pub const UserConfig = struct {
         // break_time: Duration = Duration.init(5 * time.ns_per_min),
     };
 
+    /// This maps to data saved into config.json
     pub const Settings = struct {
         /// this is the monitor to display on
         display_index: u32 = 0,
@@ -54,17 +55,24 @@ pub const UserConfig = struct {
         break_time: ?Duration = null,
         // the amount of warning you get before the fullscreen popup appears
         incoming_break: ?Duration = null,
+        // customized incoming break message underneath the pending timer
+        incoming_break_message: []const u8 = &[0]u8{},
+
+        pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+            allocator.free(self.incoming_break_message);
+            self.* = undefined;
+        }
     };
 
     version: u32 = UserConfigCurrentVersion,
     settings: Settings = .{},
     timers: []Timer,
 
-    pub fn load(allocator: std.mem.Allocator, user_settings: *UserSettings) !void {
+    pub fn load(allocator: std.mem.Allocator) !UserSettings {
         const path = get_data_dir_path(allocator) catch |err| switch (err) {
             error.AppDataDirUnavailable => {
                 // If unavailable like on Android, do nothing
-                return;
+                return UserSettings.init(allocator);
             },
             else => return err,
         };
@@ -91,12 +99,15 @@ pub const UserConfig = struct {
                 defer userconfig_parsed.deinit();
                 const userconfig = &userconfig_parsed.value;
 
-                user_settings.settings.display_index = userconfig.display_index;
-                user_settings.settings.is_activity_break_enabled = userconfig.activity_timer.is_enabled;
-                user_settings.settings.break_time = userconfig.activity_timer.break_time;
-                user_settings.settings.time_till_break = userconfig.activity_timer.time_till_break;
-
-                user_settings.timers.clearRetainingCapacity();
+                var user_settings: UserSettings = .{
+                    .settings = .{
+                        .display_index = userconfig.display_index,
+                        .is_activity_break_enabled = userconfig.activity_timer.is_enabled,
+                        .break_time = userconfig.activity_timer.break_time,
+                        .time_till_break = userconfig.activity_timer.time_till_break,
+                    },
+                    .timers = try std.ArrayList(StateTimer).initCapacity(allocator, userconfig.timers.len),
+                };
                 for (userconfig.timers) |*t| {
                     try user_settings.timers.append(.{
                         .kind = t.kind,
@@ -104,14 +115,22 @@ pub const UserConfig = struct {
                         .timer_duration = t.timer_duration,
                     });
                 }
+                return user_settings;
             },
             UserConfigCurrentVersion => {
                 const userconfig_parsed = try std.json.parseFromSlice(UserConfig, allocator, config_file_data, .{});
                 defer userconfig_parsed.deinit();
                 const userconfig = &userconfig_parsed.value;
 
-                user_settings.settings = userconfig.settings;
-                user_settings.timers.clearRetainingCapacity();
+                var user_settings: UserSettings = .{
+                    .settings = userconfig.settings,
+                    .timers = try std.ArrayList(StateTimer).initCapacity(allocator, userconfig.timers.len),
+                };
+
+                // Copy memory from JSON memory
+                user_settings.settings.incoming_break_message = try allocator.dupe(u8, userconfig.settings.incoming_break_message);
+
+                // Copy timers
                 for (userconfig.timers) |*t| {
                     try user_settings.timers.append(.{
                         .kind = t.kind,
@@ -119,9 +138,11 @@ pub const UserConfig = struct {
                         .timer_duration = t.timer_duration,
                     });
                 }
+                return user_settings;
             },
             else => return error.InvalidConfigVersion,
         }
+        unreachable;
     }
 
     pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {

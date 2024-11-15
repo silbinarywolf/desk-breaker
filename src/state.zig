@@ -75,7 +75,15 @@ pub const UserSettings = struct {
     settings: UserConfig.Settings,
     timers: std.ArrayList(Timer),
 
-    pub fn deinit(self: *@This()) void {
+    pub fn init(allocator: std.mem.Allocator) @This() {
+        return .{
+            .settings = .{},
+            .timers = std.ArrayList(Timer).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+        self.settings.deinit(allocator);
         self.timers.deinit();
     }
 
@@ -112,6 +120,9 @@ pub const Mode = enum {
 /// "365d 24h 60m 60s"
 const UiDuration = [64:0]u8;
 
+/// [128:0]u8
+const UiMessage = [128:0]u8;
+
 /// UiTimer is temporary user-interface data when creating and editing a timer
 const UiTimer = struct {
     id: i32 = -1, // -1 = new
@@ -144,10 +155,12 @@ const UiState = struct {
         time_till_break: UiDuration = std.mem.zeroes(UiDuration),
         break_time: UiDuration = std.mem.zeroes(UiDuration),
         incoming_break: UiDuration = std.mem.zeroes(UiDuration),
+        incoming_break_message: [128:0]u8 = std.mem.zeroes([128:0]u8),
         errors: struct {
             time_till_break: []const u8 = &[0]u8{},
             break_time: []const u8 = &[0]u8{},
             incoming_break: []const u8 = &[0]u8{},
+            incoming_break_message: []const u8 = &[0]u8{},
         } = .{},
     } = .{},
     options_metadata: struct {
@@ -180,8 +193,8 @@ pub const State = struct {
     popup_windows: std.ArrayListUnmanaged(Window) = .{},
     taking_break_windows: std.ArrayListUnmanaged(Window) = .{},
 
-    // user settings
-    user_settings: UserSettings,
+    // user settings are not owned by this struct and must be freed by the creator.
+    user_settings: *UserSettings,
 
     time_since_last_input: ?time.Timer = null,
 
@@ -221,7 +234,8 @@ pub const State = struct {
             window.deinit();
         }
         state.taking_break_windows.deinit(state.allocator);
-        state.user_settings.deinit();
+        // NOTE(jae): 2024-11-15: user_settings is freed outside of this
+        // state.user_settings.deinit(state.allocator);
         state.temp_allocator.deinit();
     }
 
