@@ -57,6 +57,8 @@ pub const UserConfig = struct {
         incoming_break: ?Duration = null,
         // customized incoming break message underneath the pending timer
         incoming_break_message: []const u8 = &[0]u8{},
+        // maximum times you can hit snooze in a row
+        max_snoozes_in_a_row: ?u32 = null,
 
         pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
             allocator.free(self.incoming_break_message);

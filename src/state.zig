@@ -104,6 +104,11 @@ pub const UserSettings = struct {
         return self.default_exit_time;
     }
 
+    /// Get the max allowed snoozes in a row
+    pub fn max_snoozes_in_a_row_or_default(self: *const @This()) u32 {
+        return self.settings.max_snoozes_in_a_row orelse 3;
+    }
+
     /// The amount of warning you get before the break takes up the full screen in nanoseconds
     pub fn incoming_break_or_default(self: *const @This()) Duration {
         return self.settings.incoming_break orelse self.default_incoming_break;
@@ -156,11 +161,13 @@ const UiState = struct {
         break_time: UiDuration = std.mem.zeroes(UiDuration),
         incoming_break: UiDuration = std.mem.zeroes(UiDuration),
         incoming_break_message: [128:0]u8 = std.mem.zeroes([128:0]u8),
+        max_snoozes_in_a_row: [128:0]u8 = std.mem.zeroes([128:0]u8),
         errors: struct {
             time_till_break: []const u8 = &[0]u8{},
             break_time: []const u8 = &[0]u8{},
             incoming_break: []const u8 = &[0]u8{},
             incoming_break_message: []const u8 = &[0]u8{},
+            max_snoozes_in_a_row: []const u8 = &[0]u8{},
         } = .{},
     } = .{},
     options_metadata: struct {
@@ -208,6 +215,7 @@ pub const State = struct {
 
     /// amount of times snooze button was hit
     snooze_times: u32 = 0,
+    snooze_times_in_a_row: u32 = 0,
 
     // break
     break_mode: struct {
@@ -316,11 +324,9 @@ pub const State = struct {
 
     /// can_snooze is true if it's an activity timer but not a special alarm
     pub fn can_snooze(state: *State) bool {
-        const is_snoozeable: bool = state.mode == .taking_break or state.mode == .incoming_break;
-        assert(is_snoozeable);
-
-        // Don't show snooze button if not taking break
-        if (!is_snoozeable) {
+        // Disallow snooze button if hit max snooze limit
+        const max_snoozes_in_a_row = state.user_settings.max_snoozes_in_a_row_or_default();
+        if (max_snoozes_in_a_row > 0 and state.snooze_times_in_a_row >= max_snoozes_in_a_row) {
             return false;
         }
 
@@ -362,6 +368,7 @@ pub const State = struct {
         state.activity_timer.reset();
         state.snooze_activity_break_timer = time.Timer.start() catch unreachable;
         state.snooze_times += 1;
+        state.snooze_times_in_a_row += 1;
     }
 
     pub fn change_mode(state: *State, new_mode: Mode) !void {
