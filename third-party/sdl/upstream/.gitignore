@@ -1,0 +1,56 @@
+/sdl3/*
+/sdl3/build-scripts/*
+
+# Clang configuration
+# !/sdl3/.clang-*
+# !/sdl3/.editorconfig
+
+# Keep C/C++/Objective-C/Java source code
+!/sdl3/src
+!/sdl3/include
+!/sdl3/android-project
+
+# Ignore any non-code within /sdl3/src
+/sdl3/src/**/*.*
+!/sdl3/src/**/*.c
+!/sdl3/src/**/*.h
+!/sdl3/src/**/*.cc
+!/sdl3/src/**/*.cpp
+!/sdl3/src/**/*.m
+!/sdl3/src/**/*.masm
+!/sdl3/src/**/*.rc
+!/sdl3/src/**/*.hlsl
+!/sdl3/src/**/*.hlsli
+!/sdl3/src/**/*.metal
+!/sdl3/src/**/*.vert
+!/sdl3/src/**/*.frag
+!/sdl3/src/**/build-shaders.sh
+!/sdl3/src/**/compile_shaders.bat
+!/sdl3/src/**/build-metal-shaders.sh
+/sdl3/src/**/bootstrap
+
+# Keep wayland protocols
+!/sdl3/wayland-protocols
+
+# Keep Cmake for compiling to Linux with cmake
+!/sdl3/CMakeLists.txt
+!/sdl3/cmake
+/sdl3/cmake/android
+/sdl3/cmake/test
+/sdl3/cmake/*.py
+
+# Keep Java source code
+# ie. android-project/app/src/main/java/org/libsdl/app/*.java
+/sdl3/android-project/*
+!/sdl3/android-project/app
+/sdl3/android-project/app/*
+!/sdl3/android-project/app/src
+/sdl3/android-project/app/src/main/*
+!/sdl3/android-project/app/src/main/java
+
+# Keep LICENSE
+!/sdl3/LICENSE.txt
+# !/sdl3/CREDITS.md
+# !/sdl3/INSTALL.md
+# !/sdl3/README.md
+# !/sdl3/README-SDL.txt
