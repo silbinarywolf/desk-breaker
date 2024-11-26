@@ -2,20 +2,22 @@
     .name = "imgui",
     .version = "0.0.0",
     .dependencies = .{
-        .imgui = .{
+        .@"imgui-remote" = .{
             .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.91.3-docking.tar.gz",
             .hash = "122097eefc8aaa3c1c8e20c3fbeb0e965f988c28090438a57cc751a97578ef450003",
+            .lazy = true,
         },
-        .cimgui = .{
+        .@"imgui-local" = .{
+            .path = "upstream/imgui",
+        },
+        .@"cimgui-remote" = .{
             .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.91.3dock.tar.gz",
             .hash = "12204b1441f1407af838a3e6f8423ee9cb2cf7b07114ec077b1ec0a233d4b78672c9",
+            .lazy = true,
         },
-        // .sdl = .{
-        //     // NOTE(jae): 2024-06-30
-        //     // Using ".zip" as "tar.gz" fails on Windows for Zig 0.13.0 due to symlink issue with something in the android folders
-        //     .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.30.4.zip",
-        //     .hash = "122086865a4d5e822c068528a4170cb7da52afad38e8232afa3e74789c4d52d27791",
-        // },
+        .@"cimgui-local" = .{
+            .path = "upstream/cimgui",
+        },
     },
     .paths = .{
         "build.zig",
