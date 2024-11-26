@@ -1,15 +1,34 @@
 const std = @import("std");
+const Dependency = std.Build.Dependency;
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const imgui_dep = b.dependency("imgui", .{});
+    const imgui_dep: *Dependency = blk: {
+        const local_dep = b.dependency("imgui-local", .{});
+        std.fs.accessAbsolute(local_dep.path("imgui.cpp").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                break :blk b.lazyDependency("imgui-remote", .{}) orelse return error.MissingDependency;
+            },
+            else => return err,
+        };
+        break :blk local_dep;
+    };
     const imgui = imgui_dep.path("");
     const imgui_include_path = imgui;
     const zig_imgui_backend_include_path = b.path("imgui_backend_headers");
 
-    const cimgui_dep = b.dependency("cimgui", .{});
+    const cimgui_dep: *Dependency = blk: {
+        const local_dep = b.dependency("cimgui-local", .{});
+        std.fs.accessAbsolute(local_dep.path("cimgui.cpp").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                break :blk b.lazyDependency("cimgui-remote", .{}) orelse return error.MissingDependency;
+            },
+            else => return err,
+        };
+        break :blk local_dep;
+    };
     const cimgui = cimgui_dep.path("");
     const cimgui_include_path = cimgui;
 

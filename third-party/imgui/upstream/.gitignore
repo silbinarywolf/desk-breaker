@@ -1,0 +1,27 @@
+# ImGui version is stored at line 35 in imgui.h -- ie. #define IMGUI_VERSION "1.9x.x"
+/imgui/*
+!/imgui/.editorconfig
+!/imgui/.gitattributes
+!/imgui/*.c
+!/imgui/*.cpp
+!/imgui/*.h
+!/imgui/LICENSE.txt
+
+# ImGui - only keep SDL3 renderer
+!/imgui/backends
+/imgui/backends/*
+!/imgui/backends/imgui_impl_sdl3.cpp
+!/imgui/backends/imgui_impl_sdl3.h
+!/imgui/backends/imgui_impl_sdlrenderer3.cpp
+!/imgui/backends/imgui_impl_sdlrenderer3.h
+
+!/imgui/misc
+/imgui/misc/*
+!/imgui/misc/freetype
+
+# CImGui
+/cimgui/*
+!/cimgui/*.c
+!/cimgui/*.cpp
+!/cimgui/*.h
+!/cimgui/LICENSE

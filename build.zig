@@ -208,10 +208,20 @@ pub fn build(b: *std.Build) !void {
 
         // add zigimg
         {
-            const zigimg_dep = b.dependency("zigimg", .{
+            const zigimg_dep_options = .{
                 .target = target,
                 .optimize = .ReleaseFast,
-            });
+            };
+            const zigimg_dep: *std.Build.Dependency = blk: {
+                const local_dep = b.dependency("zigimg-local", zigimg_dep_options);
+                std.fs.accessAbsolute(local_dep.path("build.zig").getPath(b), .{}) catch |err| switch (err) {
+                    error.FileNotFound => {
+                        break :blk b.lazyDependency("zigimg-remote", zigimg_dep_options) orelse return;
+                    },
+                    else => return err,
+                };
+                break :blk local_dep;
+            };
             exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
         }
 

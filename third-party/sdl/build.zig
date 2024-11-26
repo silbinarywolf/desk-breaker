@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const Dependency = std.Build.Dependency;
 const SDLBuildGenerator = @import("tools/gen_sdlbuild.zig").SDLBuildGenerator;
 const SDLConfig = @import("src/build/sdlbuild.zig").SDLConfig;
 const sdlsrc = @import("src/build/sdlbuild.zig");
@@ -9,8 +10,18 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sdl_dep = b.dependency("sdl3", .{});
+    const sdl_dep: *Dependency = blk: {
+        const sdl_local_dep = b.dependency("sdl3-local", .{});
+        std.fs.accessAbsolute(sdl_local_dep.path("src/SDL.c").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                break :blk b.lazyDependency("sdl3-remote", .{}) orelse return error.MissingDependency;
+            },
+            else => return err,
+        };
+        break :blk sdl_local_dep;
+    };
     const sdl_path = sdl_dep.path("");
+
     const sdl_api_include_path = sdl_path.path(b, "include");
     const sdl_build_config_include_path = sdl_api_include_path.path(b, "build_config");
 
@@ -390,6 +401,8 @@ pub fn build(b: *std.Build) !void {
         cmake_setup.addArg("-DSDL_TESTS=OFF");
         // Building Wayland is a pain in the ass across different Linux OSes, not doing.
         // cmake_setup.addArg("-DSDL_WAYLAND=OFF");
+        // Gets removed by Steam install and so I uncomment this for local Linux dev
+        // cmake_setup.addArg("-DSDL_JACK=OFF");
         cmake_setup.addArg("-DSDL_VENDOR_INFO=Zig");
         cmake_setup.addArg("-DCMAKE_INSTALL_BINDIR=bin");
         cmake_setup.addArg("-DCMAKE_INSTALL_DATAROOTDIR=share");
