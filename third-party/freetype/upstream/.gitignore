@@ -7,6 +7,7 @@
 /freetype/src/**/*.*
 !/freetype/src/**/*.c
 !/freetype/src/**/*.h
+!/freetype/src/**/*.rc
 !/freetype/devel
 !/freetype/builds
 /freetype/builds/*.*
