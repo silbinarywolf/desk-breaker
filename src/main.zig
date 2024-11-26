@@ -352,6 +352,7 @@ pub fn main() !void {
                     const time_active_in_ns = state.break_mode.timer.read();
                     const time_till_break_over = state.break_mode.duration.diff(time_active_in_ns);
                     if (time_till_break_over.nanoseconds <= 0) {
+                        state.snooze_times_in_a_row = 0;
                         try state.change_mode(.regular);
                     }
                 },
@@ -424,12 +425,14 @@ pub fn main() !void {
                                 // .break_time =
                                 // .incoming_break =
                                 // .incoming_break_message =
+                                // .max_snoozes_in_a_row =
                             };
                             const ui_options = &state.ui.options;
                             if (state.user_settings.settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
                             if (state.user_settings.settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
                             if (state.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
                             if (state.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{state.user_settings.settings.incoming_break_message});
+                            if (state.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{max_snoozes});
 
                             // OS-specific
                             switch (builtin.os.tag) {
@@ -723,6 +726,9 @@ pub fn main() !void {
                     const ui_options = &state.ui.options;
                     const ui_metadata = &state.ui.options_metadata;
 
+                    imgui.igPushItemWidth(300);
+                    defer imgui.igPopItemWidth();
+
                     if (ui_options.os_startup) |os_startup| {
                         var is_enabled = os_startup;
                         if (imgui.igCheckbox("Open on startup", &is_enabled)) {
@@ -803,7 +809,7 @@ pub fn main() !void {
                             error_message.* = ""; // reset error message if changed
                         }
                         if (error_message.len > 0) {
-                            _ = imgui.igText(try state.tprint("{s}", .{error_message}));
+                            _ = imgui.igText(try state.tprint("{s}", .{error_message.*}));
                         }
                     }
 
@@ -811,7 +817,7 @@ pub fn main() !void {
                         const current_value = &ui_options.incoming_break_message;
                         const error_message = &ui_options.errors.incoming_break_message;
                         if (imgui.igInputTextWithHint(
-                            "Incoming break msg",
+                            "Incoming break message",
                             "default: (none)",
                             current_value[0..].ptr,
                             current_value.len,
@@ -822,7 +828,26 @@ pub fn main() !void {
                             error_message.* = ""; // reset error message if changed
                         }
                         if (error_message.len > 0) {
-                            _ = imgui.igText(try state.tprint("{s}", .{error_message}));
+                            _ = imgui.igText(try state.tprint("{s}", .{error_message.*}));
+                        }
+                    }
+
+                    {
+                        const current_value = &ui_options.max_snoozes_in_a_row;
+                        const error_message = &ui_options.errors.max_snoozes_in_a_row;
+                        if (imgui.igInputTextWithHint(
+                            "Max snoozes in a row",
+                            "default: 3 - 0 = disable",
+                            current_value[0..].ptr,
+                            current_value.len,
+                            imgui.ImGuiInputTextFlags_CharsDecimal,
+                            null,
+                            null,
+                        )) {
+                            error_message.* = ""; // reset error message if changed
+                        }
+                        if (error_message.len > 0) {
+                            _ = imgui.igText(try state.tprint("{s}", .{error_message.*}));
                         }
                     }
 
@@ -859,6 +884,25 @@ pub fn main() !void {
                         // Get incoming break message
                         const incoming_break_message = std.mem.span(ui_options.incoming_break_message[0..].ptr);
 
+                        // Get max snoozes in a row
+                        const max_snoozes_in_a_row: ?u32 = blk: {
+                            const value_as_string = std.mem.span(ui_options.max_snoozes_in_a_row[0..].ptr);
+                            if (value_as_string.len == 0) {
+                                break :blk null;
+                            }
+                            const error_message = &ui_options.errors.max_snoozes_in_a_row;
+                            break :blk std.fmt.parseInt(u32, value_as_string, 10) catch |err| switch (err) {
+                                error.InvalidCharacter => {
+                                    error_message.* = "invalid character (must be blank or a number)";
+                                    break :blk null;
+                                },
+                                error.Overflow => {
+                                    error_message.* = "invalid amount (must be empty, or above 0)";
+                                    break :blk null;
+                                },
+                            };
+                        };
+
                         if (ui_options.os_startup) |os_startup| {
                             switch (builtin.os.tag) {
                                 .windows => {
@@ -880,18 +924,24 @@ pub fn main() !void {
                             }
                         }
 
-                        const has_error = ui_options.errors.time_till_break.len > 0 and ui_options.errors.break_time.len > 0;
+                        // Check each field in errors (currently just assume '[]const u8' type)
+                        var has_error = false;
+                        inline for (std.meta.fields(@TypeOf(ui_options.errors))) |f| {
+                            const errorField = @field(ui_options.errors, f.name);
+                            has_error = has_error or errorField.len > 0;
+                        }
                         if (!has_error) {
                             allocator.free(state.user_settings.settings.incoming_break_message);
 
                             // update from fields / text
                             state.user_settings.settings = .{
+                                .display_index = ui_options.display_index,
                                 .is_activity_break_enabled = ui_options.is_activity_break_enabled,
                                 .time_till_break = time_till_break,
                                 .break_time = break_time,
                                 .incoming_break = incoming_break,
                                 .incoming_break_message = try allocator.dupe(u8, incoming_break_message),
-                                .display_index = ui_options.display_index,
+                                .max_snoozes_in_a_row = max_snoozes_in_a_row,
                             };
 
                             // save
@@ -959,9 +1009,11 @@ pub fn main() !void {
             if (next_timer.id == NextTimer.ActivityTimer or
                 next_timer.id == NextTimer.SnoozeTimer)
             {
-                if (imgui.igButton("Snooze", .{})) {
-                    state.snooze();
-                    try state.change_mode(.regular);
+                if (state.can_snooze()) {
+                    if (imgui.igButton("Snooze", .{})) {
+                        state.snooze();
+                        try state.change_mode(.regular);
+                    }
                 }
             }
         }
@@ -1102,6 +1154,7 @@ pub fn main() !void {
                 has_triggered_exiting_break_mode = true;
             }
             if (has_triggered_exiting_break_mode) {
+                // NOTE(jae): 2024-11-25: should this also reset "state.snooze_times_in_a_row"? :thinking_emoji:
                 try state.change_mode(.regular);
             }
         }
