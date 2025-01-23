@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -38,7 +38,7 @@ static const char *text_mime_types[] = {
 };
 
 // Get any application owned window handle for clipboard association
-static Window GetWindow(SDL_VideoDevice *_this)
+Window GetWindow(SDL_VideoDevice *_this)
 {
     SDL_VideoData *data = _this->internal;
 

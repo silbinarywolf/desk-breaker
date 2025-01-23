@@ -1,6 +1,6 @@
 /*
   Simple DirectMedia Layer
-  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
 
   This software is provided 'as-is', without any express or implied
   warranty.  In no event will the authors be held liable for any damages
@@ -870,7 +870,7 @@ static GamepadMapping_t *SDL_CreateMappingForWGIGamepad(SDL_GUID guid)
 /*
  * Helper function to scan the mappings database for a gamepad with the specified GUID
  */
-static GamepadMapping_t *SDL_PrivateMatchGamepadMappingForGUID(SDL_GUID guid, bool match_version)
+static GamepadMapping_t *SDL_PrivateMatchGamepadMappingForGUID(SDL_GUID guid, bool match_version, bool exact_match_crc)
 {
     GamepadMapping_t *mapping, *best_match = NULL;
     Uint16 crc = 0;
@@ -909,6 +909,8 @@ static GamepadMapping_t *SDL_PrivateMatchGamepadMappingForGUID(SDL_GUID guid, bo
 
                 // An exact match, including CRC
                 return mapping;
+            } else if (crc && exact_match_crc) {
+                return NULL;
             }
 
             if (!best_match) {
@@ -926,7 +928,7 @@ static GamepadMapping_t *SDL_PrivateGetGamepadMappingForGUID(SDL_GUID guid, bool
 {
     GamepadMapping_t *mapping;
 
-    mapping = SDL_PrivateMatchGamepadMappingForGUID(guid, true);
+    mapping = SDL_PrivateMatchGamepadMappingForGUID(guid, true, adding_mapping);
     if (mapping) {
         return mapping;
     }
@@ -940,7 +942,7 @@ static GamepadMapping_t *SDL_PrivateGetGamepadMappingForGUID(SDL_GUID guid, bool
 
     if (SDL_JoystickGUIDUsesVersion(guid)) {
         // Try again, ignoring the version
-        mapping = SDL_PrivateMatchGamepadMappingForGUID(guid, false);
+        mapping = SDL_PrivateMatchGamepadMappingForGUID(guid, false, false);
         if (mapping) {
             return mapping;
         }
@@ -1935,12 +1937,13 @@ static int SDL_PrivateAddGamepadMapping(const char *mappingString, SDL_GamepadMa
     bool is_xinput_mapping = false;
     bool existing = false;
     GamepadMapping_t *pGamepadMapping;
-    int result = false;
+    int result = -1;
 
     SDL_AssertJoysticksLocked();
 
     if (!mappingString) {
-        return SDL_InvalidParamError("mappingString");
+        SDL_InvalidParamError("mappingString");
+        return -1;
     }
 
     { // Extract and verify the hint field
@@ -1992,7 +1995,7 @@ static int SDL_PrivateAddGamepadMapping(const char *mappingString, SDL_GamepadMa
                     value = !value;
                 }
                 if (!value) {
-                    result = true;
+                    result = 0;
                     goto done;
                 }
             }
@@ -2041,7 +2044,7 @@ static int SDL_PrivateAddGamepadMapping(const char *mappingString, SDL_GamepadMa
     }
 
     if (existing) {
-        result = true;
+        result = 0;
     } else {
         if (is_default_mapping) {
             s_pDefaultMapping = pGamepadMapping;
@@ -2581,7 +2584,7 @@ bool SDL_IsGamepad(SDL_JoystickID instance_id)
             }
 
             if (!s_gamepadInstanceIDs) {
-                s_gamepadInstanceIDs = SDL_CreateHashTable(NULL, 4, SDL_HashID, SDL_KeyMatchID, NULL, false);
+                s_gamepadInstanceIDs = SDL_CreateHashTable(NULL, 4, SDL_HashID, SDL_KeyMatchID, NULL, false, false);
             }
             SDL_InsertIntoHashTable(s_gamepadInstanceIDs, (void *)(uintptr_t)instance_id, (void *)(uintptr_t)result);
         }
@@ -2594,12 +2597,8 @@ bool SDL_IsGamepad(SDL_JoystickID instance_id)
 /*
  * Return 1 if the gamepad should be ignored by SDL
  */
-bool SDL_ShouldIgnoreGamepad(const char *name, SDL_GUID guid)
+bool SDL_ShouldIgnoreGamepad(Uint16 vendor_id, Uint16 product_id, Uint16 version, const char *name)
 {
-    Uint16 vendor;
-    Uint16 product;
-    Uint16 version;
-
 #ifdef SDL_PLATFORM_LINUX
     if (SDL_endswith(name, " Motion Sensors")) {
         // Don't treat the PS3 and PS4 motion controls as a separate gamepad
@@ -2623,37 +2622,28 @@ bool SDL_ShouldIgnoreGamepad(const char *name, SDL_GUID guid)
         return true;
     }
 
-    if (SDL_allowed_gamepads.num_included_entries == 0 &&
-        SDL_ignored_gamepads.num_included_entries == 0) {
+#ifdef SDL_PLATFORM_WIN32
+    if (SDL_GetHintBoolean("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", false) &&
+        SDL_GetHintBoolean("STEAM_COMPAT_PROTON", false)) {
+        // We are launched by Steam and running under Proton
+        // We can't tell whether this controller is a Steam Virtual Gamepad,
+        // so assume that Proton is doing the appropriate filtering of controllers
+        // and anything we see here is fine to use.
         return false;
     }
+#endif // SDL_PLATFORM_WIN32
 
-    SDL_GetJoystickGUIDInfo(guid, &vendor, &product, &version, NULL);
-
-    if (SDL_GetHintBoolean("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", false)) {
-        // We shouldn't ignore Steam's virtual gamepad since it's using the hints to filter out the real gamepads so it can remap input for the virtual gamepad
-        // https://partner.steamgames.com/doc/features/steam_gamepad/steam_input_gamepad_emulation_bestpractices
-        bool bSteamVirtualGamepad = false;
-#ifdef SDL_PLATFORM_LINUX
-        bSteamVirtualGamepad = (vendor == USB_VENDOR_VALVE && product == USB_PRODUCT_STEAM_VIRTUAL_GAMEPAD);
-#elif defined(SDL_PLATFORM_MACOS)
-        bSteamVirtualGamepad = (vendor == USB_VENDOR_MICROSOFT && product == USB_PRODUCT_XBOX360_WIRED_CONTROLLER && version == 0);
-#elif defined(SDL_PLATFORM_WIN32)
-        // We can't tell on Windows, but Steam will block others in input hooks
-        bSteamVirtualGamepad = true;
-#endif
-        if (bSteamVirtualGamepad) {
-            return false;
-        }
+    if (SDL_IsJoystickSteamVirtualGamepad(vendor_id, product_id, version)) {
+        return !SDL_GetHintBoolean("SDL_GAMECONTROLLER_ALLOW_STEAM_VIRTUAL_GAMEPAD", false);
     }
 
     if (SDL_allowed_gamepads.num_included_entries > 0) {
-        if (SDL_VIDPIDInList(vendor, product, &SDL_allowed_gamepads)) {
+        if (SDL_VIDPIDInList(vendor_id, product_id, &SDL_allowed_gamepads)) {
             return false;
         }
         return true;
     } else {
-        if (SDL_VIDPIDInList(vendor, product, &SDL_ignored_gamepads)) {
+        if (SDL_VIDPIDInList(vendor_id, product_id, &SDL_ignored_gamepads)) {
             return true;
         }
         return false;
@@ -2764,7 +2754,7 @@ bool SDL_GamepadHasAxis(SDL_Gamepad *gamepad, SDL_GamepadAxis axis)
         CHECK_GAMEPAD_MAGIC(gamepad, false);
 
         for (i = 0; i < gamepad->num_bindings; ++i) {
-            SDL_GamepadBinding *binding = &gamepad->bindings[i];
+            const SDL_GamepadBinding *binding = &gamepad->bindings[i];
             if (binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS && binding->output.axis.axis == axis) {
                 result = true;
                 break;
@@ -2790,7 +2780,7 @@ Sint16 SDL_GetGamepadAxis(SDL_Gamepad *gamepad, SDL_GamepadAxis axis)
         CHECK_GAMEPAD_MAGIC(gamepad, 0);
 
         for (i = 0; i < gamepad->num_bindings; ++i) {
-            SDL_GamepadBinding *binding = &gamepad->bindings[i];
+            const SDL_GamepadBinding *binding = &gamepad->bindings[i];
             if (binding->output_type == SDL_GAMEPAD_BINDTYPE_AXIS && binding->output.axis.axis == axis) {
                 int value = 0;
                 bool valid_input_range;
@@ -2854,7 +2844,7 @@ bool SDL_GamepadHasButton(SDL_Gamepad *gamepad, SDL_GamepadButton button)
         CHECK_GAMEPAD_MAGIC(gamepad, false);
 
         for (i = 0; i < gamepad->num_bindings; ++i) {
-            SDL_GamepadBinding *binding = &gamepad->bindings[i];
+            const SDL_GamepadBinding *binding = &gamepad->bindings[i];
             if (binding->output_type == SDL_GAMEPAD_BINDTYPE_BUTTON && binding->output.button == button) {
                 result = true;
                 break;
@@ -2880,7 +2870,7 @@ bool SDL_GetGamepadButton(SDL_Gamepad *gamepad, SDL_GamepadButton button)
         CHECK_GAMEPAD_MAGIC(gamepad, false);
 
         for (i = 0; i < gamepad->num_bindings; ++i) {
-            SDL_GamepadBinding *binding = &gamepad->bindings[i];
+            const SDL_GamepadBinding *binding = &gamepad->bindings[i];
             if (binding->output_type == SDL_GAMEPAD_BINDTYPE_BUTTON && binding->output.button == button) {
                 if (binding->input_type == SDL_GAMEPAD_BINDTYPE_AXIS) {
                     bool valid_input_range;
@@ -2890,23 +2880,19 @@ bool SDL_GetGamepadButton(SDL_Gamepad *gamepad, SDL_GamepadButton button)
                     if (binding->input.axis.axis_min < binding->input.axis.axis_max) {
                         valid_input_range = (value >= binding->input.axis.axis_min && value <= binding->input.axis.axis_max);
                         if (valid_input_range) {
-                            result = (value >= threshold);
-                            break;
+                            result |= (value >= threshold);
                         }
                     } else {
                         valid_input_range = (value >= binding->input.axis.axis_max && value <= binding->input.axis.axis_min);
                         if (valid_input_range) {
-                            result = (value <= threshold);
-                            break;
+                            result |= (value <= threshold);
                         }
                     }
                 } else if (binding->input_type == SDL_GAMEPAD_BINDTYPE_BUTTON) {
-                    result = SDL_GetJoystickButton(gamepad->joystick, binding->input.button);
-                    break;
+                    result |= SDL_GetJoystickButton(gamepad->joystick, binding->input.button);
                 } else if (binding->input_type == SDL_GAMEPAD_BINDTYPE_HAT) {
                     int hat_mask = SDL_GetJoystickHat(gamepad->joystick, binding->input.hat.hat);
-                    result = ((hat_mask & binding->input.hat.hat_mask) != 0);
-                    break;
+                    result |= ((hat_mask & binding->input.hat.hat_mask) != 0);
                 }
             }
         }

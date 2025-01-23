@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 const Dependency = std.Build.Dependency;
+const LazyPath = std.Build.LazyPath;
 const SDLBuildGenerator = @import("tools/gen_sdlbuild.zig").SDLBuildGenerator;
 const SDLConfig = @import("src/build/sdlbuild.zig").SDLConfig;
 const sdlsrc = @import("src/build/sdlbuild.zig");
@@ -10,17 +11,16 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const sdl_dep: *Dependency = blk: {
-        const sdl_local_dep = b.dependency("sdl3-local", .{});
-        std.fs.accessAbsolute(sdl_local_dep.path("src/SDL.c").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                break :blk b.lazyDependency("sdl3-remote", .{}) orelse return error.MissingDependency;
-            },
+    const sdl_path: LazyPath = blk: {
+        const dep: *Dependency = b.lazyDependency("sdl3", .{}) orelse {
+            break :blk b.path("");
+        };
+        std.fs.accessAbsolute(dep.path("src/SDL.c").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => return error.InvalidDependency,
             else => return err,
         };
-        break :blk sdl_local_dep;
+        break :blk dep.path("");
     };
-    const sdl_path = sdl_dep.path("");
 
     const sdl_api_include_path = sdl_path.path(b, "include");
     const sdl_build_config_include_path = sdl_api_include_path.path(b, "build_config");
@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) !void {
     // Generate source file stuff
     const do_sdl_codegen = b.option(bool, "generate", "run code generation") orelse false;
     if (do_sdl_codegen) {
-        var gen = try SDLBuildGenerator.init(b.allocator, sdl_dep.path("").getPath(b));
+        var gen = try SDLBuildGenerator.init(b.allocator, sdl_path.getPath(b));
         defer gen.deinit();
         try gen.generateSDLConfig();
         try gen.generateSDLBuild();
@@ -101,7 +101,7 @@ pub fn build(b: *std.Build) !void {
             // }
 
             // Add Java files to dependency
-            const java_dir = sdl_dep.path("android-project/app/src/main/java/org/libsdl/app");
+            const java_dir = sdl_path.path(b, "android-project/app/src/main/java/org/libsdl/app");
             const java_files: []const []const u8 = &.{
                 "SDL.java",
                 "SDLActivity.java",
@@ -181,6 +181,7 @@ pub fn build(b: *std.Build) !void {
                     lib.linkFramework("CoreGraphics");
                     lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
                     lib.linkFramework("QuartzCore"); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
+                    lib.linkFramework("UniformTypeIdentifiers"); // undefined symbol: _OBJC_CLASS_$_UTType
                     lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
                 },
                 .linux => {
@@ -373,7 +374,7 @@ pub fn build(b: *std.Build) !void {
             "cmake",
         }));
         cmake_setup.addArg("-S"); // path to source directory
-        cmake_setup.addDirectoryArg(sdl_dep.path(""));
+        cmake_setup.addDirectoryArg(sdl_path);
         cmake_setup.addArg("-B"); // path to build directory
         const build_dir = cmake_setup.addOutputDirectoryArg("sdl3_cmake_build");
         const cmake_build_type: []const u8 = switch (optimize) {
@@ -502,11 +503,15 @@ const generic_src_files = sdlsrc.c_files ++
     sdlsrc.dialog.c_files ++
     sdlsrc.dynapi.c_files ++
     sdlsrc.events.c_files ++
-    sdlsrc.file.c_files ++
+    // NOTE(jae): 2025-01-19
+    // src/io/SDL_iostream.c is the canonical source now
+    // sdlsrc.file.c_files ++
     sdlsrc.filesystem.c_files ++
     sdlsrc.gpu.c_files ++
     sdlsrc.haptic.c_files ++
     sdlsrc.hidapi.c_files ++
+    sdlsrc.io.c_files ++
+    sdlsrc.io.generic.c_files ++
     sdlsrc.joystick.c_files ++
     sdlsrc.joystick.virtual.c_files ++
     sdlsrc.joystick.hidapi.c_files ++
@@ -527,6 +532,7 @@ const generic_src_files = sdlsrc.c_files ++
     sdlsrc.thread.c_files ++
     sdlsrc.time.c_files ++
     sdlsrc.timer.c_files ++
+    sdlsrc.tray.c_files ++
     sdlsrc.video.c_files ++
     sdlsrc.video.yuv2rgb.c_files;
 
@@ -551,11 +557,14 @@ const windows_src_files = sdlsrc.audio.directsound.c_files ++
     sdlsrc.core.windows.c_files ++
     sdlsrc.dialog.windows.c_files ++
     sdlsrc.filesystem.windows.c_files ++
-    sdlsrc.gpu.d3d11.c_files ++
+    // NOTE(jae): 2025-01-19
+    // Currently has missing functions and compilation errors, not supported?
+    // sdlsrc.gpu.d3d11.c_files ++
     sdlsrc.gpu.d3d12.c_files ++
     sdlsrc.gpu.vulkan.c_files ++
     sdlsrc.haptic.windows.c_files ++
     sdlsrc.hidapi.windows.c_files ++
+    sdlsrc.io.windows.c_files ++
     sdlsrc.joystick.windows.c_files ++
     sdlsrc.loadso.windows.c_files ++
     sdlsrc.locale.windows.c_files ++
@@ -579,6 +588,7 @@ const windows_src_files = sdlsrc.audio.directsound.c_files ++
     sdlsrc.thread.windows.c_files ++
     sdlsrc.time.windows.c_files ++
     sdlsrc.timer.windows.c_files ++
+    sdlsrc.tray.windows.c_files ++
     sdlsrc.video.offscreen.c_files ++
     sdlsrc.video.windows.c_files ++
     dummy_src_files;
@@ -597,12 +607,14 @@ const darwin_src_files = sdlsrc.audio.disk.c_files ++
     sdlsrc.render.opengl.c_files ++
     sdlsrc.render.opengles2.c_files ++
     sdlsrc.thread.pthread.c_files ++
+    sdlsrc.tray.unix.c_files ++
     sdlsrc.video.offscreen.c_files ++
     dummy_src_files;
 
 const objective_c_src_files = [_][]const u8{} ++
     sdlsrc.audio.coreaudio.objective_c_files ++
     sdlsrc.camera.coremedia.objective_c_files ++
+    sdlsrc.dialog.cocoa.objective_c_files ++
     sdlsrc.filesystem.cocoa.objective_c_files ++
     sdlsrc.gpu.metal.objective_c_files ++
     sdlsrc.joystick.apple.objective_c_files ++
@@ -611,6 +623,7 @@ const objective_c_src_files = [_][]const u8{} ++
     sdlsrc.power.uikit.objective_c_files ++
     sdlsrc.render.metal.objective_c_files ++
     sdlsrc.sensor.coremotion.objective_c_files ++
+    sdlsrc.tray.cocoa.objective_c_files ++
     sdlsrc.video.cocoa.objective_c_files ++
     sdlsrc.video.uikit.objective_c_files;
 
@@ -696,6 +709,7 @@ const linux_src_files = sdlsrc.audio.aaudio.c_files ++
     sdlsrc.storage.steam.c_files ++
     sdlsrc.timer.unix.c_files ++
     sdlsrc.thread.generic.c_files ++
+    sdlsrc.tray.unix.c_files ++
     sdlsrc.video.x11.c_files ++
     sdlsrc.video.wayland.c_files ++
     dummy_src_files;

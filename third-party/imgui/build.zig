@@ -1,35 +1,35 @@
 const std = @import("std");
+
 const Dependency = std.Build.Dependency;
+const LazyPath = std.Build.LazyPath;
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const imgui_dep: *Dependency = blk: {
-        const local_dep = b.dependency("imgui-local", .{});
-        std.fs.accessAbsolute(local_dep.path("imgui.cpp").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                break :blk b.lazyDependency("imgui-remote", .{}) orelse return error.MissingDependency;
-            },
+    const imgui: LazyPath = blk: {
+        const dep: *Dependency = b.lazyDependency("imgui", .{}) orelse {
+            break :blk b.path("");
+        };
+        std.fs.accessAbsolute(dep.path("imgui.cpp").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => return error.InvalidDependency,
             else => return err,
         };
-        break :blk local_dep;
+        break :blk dep.path("");
     };
-    const imgui = imgui_dep.path("");
     const imgui_include_path = imgui;
     const zig_imgui_backend_include_path = b.path("imgui_backend_headers");
 
-    const cimgui_dep: *Dependency = blk: {
-        const local_dep = b.dependency("cimgui-local", .{});
-        std.fs.accessAbsolute(local_dep.path("cimgui.cpp").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                break :blk b.lazyDependency("cimgui-remote", .{}) orelse return error.MissingDependency;
-            },
+    const cimgui: LazyPath = blk: {
+        const dep: *Dependency = b.lazyDependency("cimgui", .{}) orelse {
+            break :blk b.path("");
+        };
+        std.fs.accessAbsolute(dep.path("cimgui.cpp").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => return error.InvalidDependency,
             else => return err,
         };
-        break :blk local_dep;
+        break :blk dep.path("");
     };
-    const cimgui = cimgui_dep.path("");
     const cimgui_include_path = cimgui;
 
     // cimgui expects imgui to exist in this specific structure

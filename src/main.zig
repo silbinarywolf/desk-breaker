@@ -5,6 +5,7 @@ const sdl = @import("sdl");
 const imgui = @import("imgui");
 const android = @import("android");
 const winregistry = @import("winregistry.zig");
+const datetime = @import("datetime.zig");
 
 const UserConfig = @import("userconfig.zig").UserConfig;
 
@@ -15,7 +16,7 @@ const Alarm = @import("time.zig").Alarm;
 
 const State = @import("state.zig").State;
 const UserSettings = @import("state.zig").UserSettings;
-const Window = @import("state.zig").Window;
+const Window = @import("window.zig").Window;
 const Timer = @import("state.zig").Timer;
 const NextTimer = @import("state.zig").NextTimer;
 
@@ -68,11 +69,23 @@ const GPAConfig: std.heap.GeneralPurposeAllocatorConfig = .{
 
 var gpa_allocator: std.heap.GeneralPurposeAllocator(GPAConfig) = .{};
 
+var has_opened_from_tray = false;
+var has_quit_from_tray = false;
+
+const AppName = "Desk Breaker";
+
 pub fn main() !void {
     const allocator = gpa_allocator.allocator();
     defer {
         _ = gpa_allocator.deinit();
     }
+
+    // NOTE(jae): 2024-01-12
+    // Plan is to use date data for daily data usage storage
+    // - Main priority: Daily checklist
+    // - Other things: Stats (active computer usage)
+    // const date = try datetime.GetLocalDateTime();
+    // std.debug.panic("local: {}, utc: {}", .{ date, datetime.GetUTCDateTime() });
 
     // Setup custom allocators for SDL and Imgui
     // - We can use the GeneralPurposeAllocator to catch memory leaks
@@ -99,14 +112,21 @@ pub fn main() !void {
     var icon_png = try sdlpng.load_from_surface_from_buffer(allocator, @embedFile("icon.png"));
     defer icon_png.deinit(allocator);
 
-    var app_window = try Window.init(.{
-        .title = "Desk Breaker",
+    const main_app_window = try allocator.create(Window);
+    main_app_window.* = try Window.init(.{
+        .title = AppName,
         .width = 640,
         .height = 480,
         .resizeable = true,
         .icon = icon_png.surface,
     });
-    defer app_window.deinit();
+
+    // TODO: Allow disabling system tray functionality
+    // NOTE: Does not seem to work on Debian/KDE SDL 3.1.10 via cmake build. Just returns null for SDL_CreateTray
+    const main_app_tray: ?*sdl.SDL_Tray = switch (builtin.os.tag) {
+        .windows => null, // sdl.SDL_CreateTray(icon_png.surface, AppName),
+        else => null,
+    };
 
     // Setup initial "previous mouse position"
     var prev_mouse_pos: MousePos = .{ .x = 0, .y = 0 };
@@ -119,11 +139,35 @@ pub fn main() !void {
         .allocator = allocator,
         .temp_allocator = std.heap.ArenaAllocator.init(allocator),
         .icon = icon_png.surface,
-        .window = &app_window,
+        .window = main_app_window,
+        .tray = main_app_tray,
         .user_settings = user_settings,
         .activity_timer = try std.time.Timer.start(),
     };
     defer state.deinit();
+
+    // Initialize tray
+    if (state.tray) |tray| {
+        const tray_menu: *sdl.SDL_TrayMenu = sdl.SDL_CreateTrayMenu(tray) orelse {
+            log.err("unable to initialize SDL tray menu: {s}", .{sdl.SDL_GetError()});
+            return error.SDLInitializationFailed;
+        };
+        if (sdl.SDL_InsertTrayEntryAt(tray_menu, -1, "Open", sdl.SDL_TRAYENTRY_BUTTON)) |tray_entry| {
+            sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
+                pub fn callback(_: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
+                    has_opened_from_tray = true;
+                }
+            }.callback, state);
+        }
+        if (sdl.SDL_InsertTrayEntryAt(tray_menu, -1, "Quit", sdl.SDL_TRAYENTRY_BUTTON)) |tray_entry| {
+            sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
+                pub fn callback(_: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
+                    has_quit_from_tray = true;
+                }
+            }.callback, state);
+        }
+    }
+    defer sdl.SDL_DestroyTray(state.tray);
 
     // DEBUG: Test break screen
     // state.user_settings.default_time_till_break = Duration.init(30 * time.ns_per_s);
@@ -131,10 +175,30 @@ pub fn main() !void {
 
     var has_quit = false;
     var frames_without_app_input: u16 = 0;
-    while (!has_quit) {
+    while (!has_quit and !has_quit_from_tray) {
         _ = state.temp_allocator.reset(.retain_capacity);
 
         const current_frame_time = sdl.SDL_GetPerformanceCounter();
+
+        if (has_opened_from_tray) {
+            has_opened_from_tray = false;
+
+            if (state.window) |app_window| {
+                _ = sdl.SDL_RestoreWindow(app_window.window);
+            } else {
+                // If no app window exists, create it
+                const app_window = try allocator.create(Window);
+                app_window.* = try Window.init(.{
+                    .title = AppName,
+                    .width = 640,
+                    .height = 480,
+                    .resizeable = true,
+                    .icon = icon_png.surface,
+                });
+                state.window = app_window;
+                frames_without_app_input = 0;
+            }
+        }
 
         // Event polling
         {
@@ -152,15 +216,18 @@ pub fn main() !void {
                 var sdl_event: sdl.SDL_Event = undefined;
                 // Get next event
                 {
-                    const ev_res = blk: {
-                        const window_flags = sdl.SDL_GetWindowFlags(state.window.window);
-                        const is_main_window_minimized_or_occluded = (window_flags & sdl.SDL_WINDOW_MINIMIZED != 0) or
-                            (window_flags & sdl.SDL_WINDOW_OCCLUDED != 0);
+                    const ev_res = evblk: {
+                        const is_main_window_minimized_or_occluded = blk: {
+                            const app_window = state.window orelse break :blk false;
+                            const window_flags = sdl.SDL_GetWindowFlags(app_window.window);
+                            break :blk (window_flags & sdl.SDL_WINDOW_MINIMIZED != 0) or
+                                (window_flags & sdl.SDL_WINDOW_OCCLUDED != 0);
+                        };
 
                         // log.debug("frames_without_app_input: {}, is minimized or occluded: {}", .{ frames_without_app_input, is_main_window_minimized_or_occluded });
                         if (is_polling_events) {
                             // Poll events and be responsive
-                            break :blk sdl.SDL_PollEvent(&sdl_event);
+                            break :evblk sdl.SDL_PollEvent(&sdl_event);
                         }
 
                         // If minimized, increase the wait event delay to be even more power-saving
@@ -173,7 +240,7 @@ pub fn main() !void {
                                 const safe_delay = state.user_settings.incoming_break_or_default().nanoseconds + (safe_delay_in_ms * time.ns_per_ms);
                                 if (timer.time_till_next_break.nanoseconds >= safe_delay) {
                                     // 5000ms timeout so we can at least occassionally detect global mouse position
-                                    break :blk sdl.SDL_WaitEventTimeout(&sdl_event, safe_delay_in_ms);
+                                    break :evblk sdl.SDL_WaitEventTimeout(&sdl_event, safe_delay_in_ms);
                                 }
                             }
                         }
@@ -184,7 +251,7 @@ pub fn main() !void {
                         //
                         // We also need the timeout so that it eventually reads global mouse position
                         // outside of this loop to detect activity.
-                        break :blk sdl.SDL_WaitEventTimeout(&sdl_event, 500);
+                        break :evblk sdl.SDL_WaitEventTimeout(&sdl_event, 500);
                     };
                     if (!ev_res) {
                         break;
@@ -195,9 +262,10 @@ pub fn main() !void {
 
                 // process events
                 {
-                    imgui.igSetCurrentContext(state.window.imgui_context);
-                    _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
-
+                    if (state.window) |window| {
+                        imgui.igSetCurrentContext(window.imgui_context);
+                        _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
+                    }
                     for (state.popup_windows.items) |*window| {
                         imgui.igSetCurrentContext(window.imgui_context);
                         _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
@@ -216,10 +284,18 @@ pub fn main() !void {
                     },
                     sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
                         const event = sdl_event.window;
-                        if (event.windowID == sdl.SDL_GetWindowID(state.window.window)) {
-                            // If closed the main app window, close entire app
-                            has_quit = true;
-                            break;
+                        if (state.window) |app_window| {
+                            if (event.windowID == sdl.SDL_GetWindowID(app_window.window)) {
+                                // If closed the main app window and has no system tray, close entire app
+                                if (state.tray == null) {
+                                    has_quit = true;
+                                } else {
+                                    app_window.deinit();
+                                    allocator.destroy(app_window);
+                                    state.window = null;
+                                }
+                                break;
+                            }
                         }
                     },
                     sdl.SDL_EVENT_MOUSE_MOTION => {
@@ -291,10 +367,12 @@ pub fn main() !void {
                 imgui.igNewFrame();
             }
 
-            imgui.igSetCurrentContext(state.window.imgui_context);
-            imgui.ImGui_ImplSDLRenderer3_NewFrame();
-            imgui.ImGui_ImplSDL3_NewFrame();
-            imgui.igNewFrame();
+            if (state.window) |app_window| {
+                imgui.igSetCurrentContext(app_window.imgui_context);
+                imgui.ImGui_ImplSDLRenderer3_NewFrame();
+                imgui.ImGui_ImplSDL3_NewFrame();
+                imgui.igNewFrame();
+            }
         }
 
         // Detect activity and handle timers to pop-up break window
@@ -364,8 +442,9 @@ pub fn main() !void {
             imgui.ImGuiWindowFlags_NoResize | imgui.ImGuiWindowFlags_NoBackground;
 
         // Main application window
-        {
-            imgui.igSetCurrentContext(state.window.imgui_context);
+        if (state.window) |app_window| {
+            imgui.igSetCurrentContext(app_window.imgui_context);
+
             const viewport = &imgui.igGetMainViewport()[0];
             const viewport_pos = viewport.Pos;
             const viewport_size = viewport.Size;
@@ -432,7 +511,14 @@ pub fn main() !void {
                             if (state.user_settings.settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
                             if (state.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
                             if (state.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{state.user_settings.settings.incoming_break_message});
-                            if (state.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{max_snoozes});
+                            if (state.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| {
+                                if (max_snoozes == UserConfig.Settings.MaxSnoozesDisabled) {
+                                    // Disabled
+                                    _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{UserConfig.Settings.MaxSnoozesDisabled});
+                                } else {
+                                    _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{max_snoozes});
+                                }
+                            }
 
                             // OS-specific
                             switch (builtin.os.tag) {
@@ -836,8 +922,8 @@ pub fn main() !void {
                         const current_value = &ui_options.max_snoozes_in_a_row;
                         const error_message = &ui_options.errors.max_snoozes_in_a_row;
                         if (imgui.igInputTextWithHint(
-                            "Max snoozes in a row",
-                            "default: 3 - 0 = disable",
+                            "Max snoozes in a row (-1 = off)",
+                            "default: 2",
                             current_value[0..].ptr,
                             current_value.len,
                             imgui.ImGuiInputTextFlags_CharsDecimal,
@@ -885,22 +971,27 @@ pub fn main() !void {
                         const incoming_break_message = std.mem.span(ui_options.incoming_break_message[0..].ptr);
 
                         // Get max snoozes in a row
-                        const max_snoozes_in_a_row: ?u32 = blk: {
+                        const max_snoozes_in_a_row: ?i32 = blk: {
                             const value_as_string = std.mem.span(ui_options.max_snoozes_in_a_row[0..].ptr);
                             if (value_as_string.len == 0) {
                                 break :blk null;
                             }
                             const error_message = &ui_options.errors.max_snoozes_in_a_row;
-                            break :blk std.fmt.parseInt(u32, value_as_string, 10) catch |err| switch (err) {
+                            const v = std.fmt.parseInt(i32, value_as_string, 10) catch |err| switch (err) {
                                 error.InvalidCharacter => {
                                     error_message.* = "invalid character (must be blank or a number)";
                                     break :blk null;
                                 },
                                 error.Overflow => {
-                                    error_message.* = "invalid amount (must be empty, or above 0)";
+                                    error_message.* = "invalid amount (number too small or too large)";
                                     break :blk null;
                                 },
                             };
+                            if (v < 0 and v != UserConfig.Settings.MaxSnoozesDisabled) {
+                                error_message.* = "cannot be lower than 0, only -1 is allowed to disable snoozing completely";
+                                break :blk null;
+                            }
+                            break :blk v;
                         };
 
                         if (ui_options.os_startup) |os_startup| {
@@ -968,13 +1059,19 @@ pub fn main() !void {
         for (state.popup_windows.items) |*window| {
             imgui.igSetCurrentContext(window.imgui_context);
 
-            const viewport = &imgui.igGetMainViewport()[0];
+            const viewport: *imgui.ImGuiViewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
+                // If no viewport skip
+                continue;
+            };
             const viewport_pos = viewport.Pos;
             const viewport_size = viewport.Size;
             imgui.igSetNextWindowPos(viewport_pos, 0, .{});
             imgui.igSetNextWindowSize(viewport_size, 0);
 
-            _ = imgui.igBegin("incoming_break_window", null, ImGuiDefaultWindowFlags);
+            if (!imgui.igBegin("incoming_break_window", null, ImGuiDefaultWindowFlags)) {
+                // if not rendering
+                continue;
+            }
             defer imgui.igEnd();
 
             const next_timer = state.time_till_next_timer_complete() orelse {
@@ -1027,6 +1124,7 @@ pub fn main() !void {
         }
         for (state.taking_break_windows.items) |*window| {
             imgui.igSetCurrentContext(window.imgui_context);
+
             const viewport = &imgui.igGetMainViewport()[0];
             const viewport_pos = viewport.Pos;
             const viewport_size = viewport.Size;
@@ -1191,7 +1289,9 @@ pub fn main() !void {
         }.renderWindow;
 
         // Render app window
-        renderWindow(state.window);
+        if (state.window) |app_window| {
+            renderWindow(app_window);
+        }
         for (state.popup_windows.items) |*incoming_break_window| {
             renderWindow(incoming_break_window);
         }

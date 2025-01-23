@@ -135,10 +135,11 @@ pub fn build(b: *std.Build) !void {
             exe.root_module.addImport("sdl", sdl_module);
 
             // NOTE(jae): 2024-07-31
-            // Experiment with MacOS cross-compilation
+            // Linux can do Mac cross-compilation if we download the macos-sdk lazy dependency
+            //
             // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
             // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
-            if (target.result.os.tag == .macos) {
+            if (target.result.os.tag == .macos and b.graph.host.result.os.tag != .macos) {
                 if (b.host.result.os.tag == .windows) {
                     @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
                 }
@@ -208,20 +209,10 @@ pub fn build(b: *std.Build) !void {
 
         // add zigimg
         {
-            const zigimg_dep_options = .{
+            const zigimg_dep = b.dependency("zigimg", .{
                 .target = target,
                 .optimize = .ReleaseFast,
-            };
-            const zigimg_dep: *std.Build.Dependency = blk: {
-                const local_dep = b.dependency("zigimg-local", zigimg_dep_options);
-                std.fs.accessAbsolute(local_dep.path("build.zig").getPath(b), .{}) catch |err| switch (err) {
-                    error.FileNotFound => {
-                        break :blk b.lazyDependency("zigimg-remote", zigimg_dep_options) orelse return;
-                    },
-                    else => return err,
-                };
-                break :blk local_dep;
-            };
+            });
             exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
         }
 

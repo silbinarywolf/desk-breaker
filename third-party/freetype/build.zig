@@ -1,22 +1,23 @@
 const std = @import("std");
+
 const Dependency = std.Build.Dependency;
+const LazyPath = std.Build.LazyPath;
 
 // borrowed logic from: https://github.com/mitchellh/zig-build-freetype/blob/main/build.zig
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const freetype_dep: *Dependency = blk: {
-        const local_dep = b.dependency("freetype-local", .{});
-        std.fs.accessAbsolute(local_dep.path("include/ft2build.h").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                break :blk b.lazyDependency("freetype-remote", .{}) orelse return error.MissingDependency;
-            },
+    const freetype: LazyPath = blk: {
+        const dep: *Dependency = b.lazyDependency("freetype", .{}) orelse {
+            break :blk b.path("");
+        };
+        std.fs.accessAbsolute(dep.path("include/ft2build.h").getPath(b), .{}) catch |err| switch (err) {
+            error.FileNotFound => return error.InvalidDependency,
             else => return err,
         };
-        break :blk local_dep;
+        break :blk dep.path("");
     };
-    const freetype = freetype_dep.path("");
     const freetype_include_path = freetype.path(b, "include");
 
     // const libpng_enabled = b.option(bool, "enable-libpng", "Build libpng") orelse false;

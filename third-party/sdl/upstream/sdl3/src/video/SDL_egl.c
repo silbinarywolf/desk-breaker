@@ -1,6 +1,6 @@
 /*
  *  Simple DirectMedia Layer
- *  Copyright (C) 1997-2024 Sam Lantinga <slouken@libsdl.org>
+ *  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
  *
  *  This software is provided 'as-is', without any express or implied
  *  warranty.  In no event will the authors be held liable for any damages
@@ -300,7 +300,9 @@ void SDL_EGL_UnloadLibrary(SDL_VideoDevice *_this)
 static bool SDL_EGL_LoadLibraryInternal(SDL_VideoDevice *_this, const char *egl_path)
 {
     SDL_SharedObject *egl_dll_handle = NULL;
+#if !defined(SDL_VIDEO_STATIC_ANGLE) && !defined(SDL_VIDEO_DRIVER_VITA)
     SDL_SharedObject *opengl_dll_handle = NULL;
+#endif
     const char *path = NULL;
 #if defined(SDL_VIDEO_DRIVER_WINDOWS)
     const char *d3dcompiler;
@@ -342,7 +344,7 @@ static bool SDL_EGL_LoadLibraryInternal(SDL_VideoDevice *_this, const char *egl_
 
 #if !defined(SDL_VIDEO_STATIC_ANGLE) && !defined(SDL_VIDEO_DRIVER_VITA)
     /* A funny thing, loading EGL.so first does not work on the Raspberry, so we load libGL* first */
-    path = SDL_getenv("SDL_VIDEO_GL_DRIVER");
+    path = SDL_GetHint(SDL_HINT_OPENGL_LIBRARY);
     if (path) {
         opengl_dll_handle = SDL_LoadObject(path);
     }
@@ -402,7 +404,7 @@ static bool SDL_EGL_LoadLibraryInternal(SDL_VideoDevice *_this, const char *egl_
         if (egl_dll_handle) {
             SDL_UnloadObject(egl_dll_handle);
         }
-        path = SDL_getenv("SDL_VIDEO_EGL_DRIVER");
+        path = SDL_GetHint(SDL_HINT_EGL_LIBRARY);
         if (!path) {
             path = DEFAULT_EGL;
         }
@@ -426,9 +428,6 @@ static bool SDL_EGL_LoadLibraryInternal(SDL_VideoDevice *_this, const char *egl_
 #endif
 
     _this->egl_data->egl_dll_handle = egl_dll_handle;
-#ifdef SDL_VIDEO_DRIVER_VITA
-    _this->egl_data->opengl_dll_handle = opengl_dll_handle;
-#endif
 
     // Load new function pointers
     LOAD_FUNC(PFNEGLGETDISPLAYPROC, eglGetDisplay);
