@@ -4,9 +4,12 @@ pub const SDLConfig = struct {
     HAVE_GCC_ATOMICS: bool = false,
     HAVE_GCC_SYNC_LOCK_TEST_AND_SET: bool = false,
     SDL_DISABLE_ALLOCA: bool = false,
+    HAVE_FLOAT_H: bool = false,
+    HAVE_STDARG_H: bool = false,
+    HAVE_STDDEF_H: bool = false,
+    HAVE_STDINT_H: bool = false,
     HAVE_LIBC: bool = false,
     HAVE_ALLOCA_H: bool = false,
-    HAVE_FLOAT_H: bool = false,
     HAVE_ICONV_H: bool = false,
     HAVE_INTTYPES_H: bool = false,
     HAVE_LIMITS_H: bool = false,
@@ -14,10 +17,6 @@ pub const SDLConfig = struct {
     HAVE_MATH_H: bool = false,
     HAVE_MEMORY_H: bool = false,
     HAVE_SIGNAL_H: bool = false,
-    HAVE_STDARG_H: bool = false,
-    HAVE_STDBOOL_H: bool = false,
-    HAVE_STDDEF_H: bool = false,
-    HAVE_STDINT_H: bool = false,
     HAVE_STDIO_H: bool = false,
     HAVE_STDLIB_H: bool = false,
     HAVE_STRINGS_H: bool = false,
@@ -27,10 +26,9 @@ pub const SDLConfig = struct {
     HAVE_PTHREAD_NP_H: bool = false,
     HAVE_DLOPEN: bool = false,
     HAVE_MALLOC: bool = false,
-    HAVE_CALLOC: bool = false,
-    HAVE_REALLOC: bool = false,
-    HAVE_FREE: bool = false,
+    HAVE_FDATASYNC: bool = false,
     HAVE_GETENV: bool = false,
+    HAVE_GETHOSTNAME: bool = false,
     HAVE_SETENV: bool = false,
     HAVE_PUTENV: bool = false,
     HAVE_UNSETENV: bool = false,
@@ -44,8 +42,6 @@ pub const SDLConfig = struct {
     HAVE_WCSNLEN: bool = false,
     HAVE_WCSLCPY: bool = false,
     HAVE_WCSLCAT: bool = false,
-    HAVE__WCSDUP: bool = false,
-    HAVE_WCSDUP: bool = false,
     HAVE_WCSSTR: bool = false,
     HAVE_WCSCMP: bool = false,
     HAVE_WCSNCMP: bool = false,
@@ -56,8 +52,6 @@ pub const SDLConfig = struct {
     HAVE_STRLCAT: bool = false,
     HAVE_STRPBRK: bool = false,
     HAVE__STRREV: bool = false,
-    HAVE__STRUPR: bool = false,
-    HAVE__STRLWR: bool = false,
     HAVE_INDEX: bool = false,
     HAVE_RINDEX: bool = false,
     HAVE_STRCHR: bool = false,
@@ -80,8 +74,6 @@ pub const SDLConfig = struct {
     HAVE_ATOF: bool = false,
     HAVE_STRCMP: bool = false,
     HAVE_STRNCMP: bool = false,
-    HAVE_STRCASESTR: bool = false,
-    HAVE_SSCANF: bool = false,
     HAVE_VSSCANF: bool = false,
     HAVE_VSNPRINTF: bool = false,
     HAVE_ACOS: bool = false,
@@ -96,6 +88,7 @@ pub const SDLConfig = struct {
     HAVE_CEILF: bool = false,
     HAVE_COPYSIGN: bool = false,
     HAVE_COPYSIGNF: bool = false,
+    HAVE__COPYSIGN: bool = false,
     HAVE_COS: bool = false,
     HAVE_COSF: bool = false,
     HAVE_EXP: bool = false,
@@ -134,6 +127,7 @@ pub const SDLConfig = struct {
     HAVE_TANF: bool = false,
     HAVE_TRUNC: bool = false,
     HAVE_TRUNCF: bool = false,
+    HAVE__FSEEKI64: bool = false,
     HAVE_FOPEN64: bool = false,
     HAVE_FSEEKO: bool = false,
     HAVE_FSEEKO64: bool = false,
@@ -163,8 +157,6 @@ pub const SDLConfig = struct {
     HAVE_DBUS_DBUS_H: bool = false,
     HAVE_FCITX: bool = false,
     HAVE_IBUS_IBUS_H: bool = false,
-    HAVE_SYS_INOTIFY_H: bool = false,
-    HAVE_INOTIFY_INIT: bool = false,
     HAVE_INOTIFY_INIT1: bool = false,
     HAVE_INOTIFY: bool = false,
     HAVE_LIBUSB: bool = false,
@@ -172,7 +164,7 @@ pub const SDLConfig = struct {
     HAVE_LINUX_INPUT_H: bool = false,
     HAVE_LIBUDEV_H: bool = false,
     HAVE_LIBDECOR_H: bool = false,
-    HAVE_D3D11_H: bool = false,
+    HAVE_LIBURING_H: bool = false,
     HAVE_DDRAW_H: bool = false,
     HAVE_DSOUND_H: bool = false,
     HAVE_DINPUT_H: bool = false,
@@ -182,9 +174,7 @@ pub const SDLConfig = struct {
     HAVE_DXGI_H: bool = false,
     HAVE_DXGI1_6_H: bool = false,
     HAVE_MMDEVICEAPI_H: bool = false,
-    HAVE_AUDIOCLIENT_H: bool = false,
     HAVE_TPCSHRD_H: bool = false,
-    HAVE_SENSORSAPI_H: bool = false,
     HAVE_ROAPI_H: bool = false,
     HAVE_SHELLSCALINGAPI_H: bool = false,
     USE_POSIX_SPAWN: bool = false,
@@ -192,16 +182,17 @@ pub const SDLConfig = struct {
     /// SDL internal assertion support, 0 = disabled, 1 = release, 2 = enabled, 3 = paranoid
     SDL_DEFAULT_ASSERT_LEVEL: u4 = 0,
     SDL_AUDIO_DISABLED: bool = false,
+    SDL_VIDEO_DISABLED: bool = false,
+    SDL_GPU_DISABLED: bool = false,
+    SDL_RENDER_DISABLED: bool = false,
+    SDL_CAMERA_DISABLED: bool = false,
     SDL_JOYSTICK_DISABLED: bool = false,
     SDL_HAPTIC_DISABLED: bool = false,
     SDL_HIDAPI_DISABLED: bool = false,
-    SDL_SENSOR_DISABLED: bool = false,
-    SDL_RENDER_DISABLED: bool = false,
-    SDL_THREADS_DISABLED: bool = false,
-    SDL_VIDEO_DISABLED: bool = false,
     SDL_POWER_DISABLED: bool = false,
-    SDL_CAMERA_DISABLED: bool = false,
-    SDL_GPU_DISABLED: bool = false,
+    SDL_SENSOR_DISABLED: bool = false,
+    SDL_DIALOG_DISABLED: bool = false,
+    SDL_THREADS_DISABLED: bool = false,
     SDL_AUDIO_DRIVER_ALSA: bool = false,
     SDL_AUDIO_DRIVER_ALSA_DYNAMIC: []const u8 = &[0]u8{},
     SDL_AUDIO_DRIVER_OPENSLES: bool = false,
@@ -270,7 +261,6 @@ pub const SDLConfig = struct {
     SDL_SENSOR_N3DS: bool = false,
     SDL_LOADSO_DLOPEN: bool = false,
     SDL_LOADSO_DUMMY: bool = false,
-    SDL_LOADSO_LDG: bool = false,
     SDL_LOADSO_WINDOWS: bool = false,
     SDL_THREAD_GENERIC_COND_SUFFIX: bool = false,
     SDL_THREAD_GENERIC_RWLOCK_SUFFIX: bool = false,
@@ -289,7 +279,6 @@ pub const SDLConfig = struct {
     SDL_TIME_PS2: bool = false,
     SDL_TIME_N3DS: bool = false,
     SDL_TIMER_HAIKU: bool = false,
-    SDL_TIMER_DUMMY: bool = false,
     SDL_TIMER_UNIX: bool = false,
     SDL_TIMER_WINDOWS: bool = false,
     SDL_TIMER_VITA: bool = false,
@@ -315,6 +304,7 @@ pub const SDLConfig = struct {
     SDL_VIDEO_DRIVER_VITA: bool = false,
     SDL_VIDEO_DRIVER_VIVANTE: bool = false,
     SDL_VIDEO_DRIVER_VIVANTE_VDK: bool = false,
+    SDL_VIDEO_DRIVER_OPENVR: bool = false,
     SDL_VIDEO_DRIVER_WAYLAND: bool = false,
     SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC: []const u8 = &[0]u8{},
     SDL_VIDEO_DRIVER_WAYLAND_DYNAMIC_CURSOR: []const u8 = &[0]u8{},
@@ -340,6 +330,7 @@ pub const SDLConfig = struct {
     SDL_VIDEO_DRIVER_X11_XRANDR: bool = false,
     SDL_VIDEO_DRIVER_X11_XSCRNSAVER: bool = false,
     SDL_VIDEO_DRIVER_X11_XSHAPE: bool = false,
+    SDL_VIDEO_DRIVER_X11_XSYNC: bool = false,
     SDL_VIDEO_DRIVER_QNX: bool = false,
     SDL_VIDEO_RENDER_D3D: bool = false,
     SDL_VIDEO_RENDER_D3D11: bool = false,
@@ -355,13 +346,10 @@ pub const SDLConfig = struct {
     SDL_VIDEO_OPENGL: bool = false,
     SDL_VIDEO_OPENGL_ES: bool = false,
     SDL_VIDEO_OPENGL_ES2: bool = false,
-    SDL_VIDEO_OPENGL_BGL: bool = false,
     SDL_VIDEO_OPENGL_CGL: bool = false,
     SDL_VIDEO_OPENGL_GLX: bool = false,
     SDL_VIDEO_OPENGL_WGL: bool = false,
     SDL_VIDEO_OPENGL_EGL: bool = false,
-    SDL_VIDEO_OPENGL_OSMESA: bool = false,
-    SDL_VIDEO_OPENGL_OSMESA_DYNAMIC: []const u8 = &[0]u8{},
     SDL_VIDEO_VULKAN: bool = false,
     SDL_VIDEO_METAL: bool = false,
     SDL_GPU_D3D11: bool = false,
@@ -391,13 +379,11 @@ pub const SDLConfig = struct {
     SDL_FILESYSTEM_PSP: bool = false,
     SDL_FILESYSTEM_PS2: bool = false,
     SDL_FILESYSTEM_N3DS: bool = false,
-    SDL_STORAGE_GENERIC: bool = false,
     SDL_STORAGE_STEAM: bool = false,
     SDL_FSOPS_POSIX: bool = false,
     SDL_FSOPS_WINDOWS: bool = false,
     SDL_FSOPS_DUMMY: bool = false,
     SDL_CAMERA_DRIVER_DUMMY: bool = false,
-    SDL_CAMERA_DRIVER_DISK: bool = false,
     SDL_CAMERA_DRIVER_V4L2: bool = false,
     SDL_CAMERA_DRIVER_COREMEDIA: bool = false,
     SDL_CAMERA_DRIVER_ANDROID: bool = false,
@@ -405,13 +391,13 @@ pub const SDLConfig = struct {
     SDL_CAMERA_DRIVER_MEDIAFOUNDATION: bool = false,
     SDL_CAMERA_DRIVER_PIPEWIRE: bool = false,
     SDL_CAMERA_DRIVER_PIPEWIRE_DYNAMIC: []const u8 = &[0]u8{},
-    SDL_MISC_DUMMY: bool = false,
-    SDL_LOCALE_DUMMY: bool = false,
+    SDL_CAMERA_DRIVER_VITA: bool = false,
+    SDL_DIALOG_DUMMY: bool = false,
     SDL_ALTIVEC_BLITTERS: bool = false,
-    SDL_ARM_SIMD_BLITTERS: bool = false,
-    SDL_ARM_NEON_BLITTERS: bool = false,
     DYNAPI_NEEDS_DLOPEN: bool = false,
     SDL_USE_IME: bool = false,
+    SDL_DISABLE_WINDOWS_IME: bool = false,
+    SDL_GDK_TEXTINPUT: bool = false,
     SDL_IPHONE_KEYBOARD: bool = false,
     SDL_IPHONE_LAUNCHSCREEN: bool = false,
     SDL_VIDEO_VITA_PIB: bool = false,
@@ -640,6 +626,12 @@ pub const camera = struct {
             "src/camera/v4l2/SDL_camera_v4l2.c",
         };
     };
+
+    pub const vita = struct {
+        pub const c_files = [_][]const u8{
+            "src/camera/vita/SDL_camera_vita.c",
+        };
+    };
 };
 
 pub const core = struct {
@@ -728,6 +720,7 @@ pub const cpuinfo = struct {
 
 pub const dialog = struct {
     pub const c_files = [_][]const u8{
+        "src/dialog/SDL_dialog.c",
         "src/dialog/SDL_dialog_utils.c",
     };
 
@@ -785,6 +778,7 @@ pub const events = struct {
         "src/events/SDL_events.c",
         "src/events/SDL_keyboard.c",
         "src/events/SDL_keymap.c",
+        "src/events/SDL_keysym_to_keycode.c",
         "src/events/SDL_keysym_to_scancode.c",
         "src/events/SDL_mouse.c",
         "src/events/SDL_pen.c",
@@ -1042,6 +1036,37 @@ pub const hidapi = struct {
     };
 };
 
+pub const io = struct {
+    pub const c_files = [_][]const u8{
+        "src/io/SDL_asyncio.c",
+        "src/io/SDL_iostream.c",
+    };
+
+    pub const generic = struct {
+        pub const c_files = [_][]const u8{
+            "src/io/generic/SDL_asyncio_generic.c",
+        };
+    };
+
+    pub const io_uring = struct {
+        pub const c_files = [_][]const u8{
+            "src/io/io_uring/SDL_asyncio_liburing.c",
+        };
+    };
+
+    pub const n3ds = struct {
+        pub const c_files = [_][]const u8{
+            "src/io/n3ds/SDL_iostreamromfs.c",
+        };
+    };
+
+    pub const windows = struct {
+        pub const c_files = [_][]const u8{
+            "src/io/windows/SDL_asyncio_windows_ioring.c",
+        };
+    };
+};
+
 pub const joystick = struct {
     pub const c_files = [_][]const u8{
         "src/joystick/SDL_gamepad.c",
@@ -1262,6 +1287,12 @@ pub const locale = struct {
     pub const n3ds = struct {
         pub const c_files = [_][]const u8{
             "src/locale/n3ds/SDL_syslocale.c",
+        };
+    };
+
+    pub const psp = struct {
+        pub const c_files = [_][]const u8{
+            "src/locale/psp/SDL_syslocale.c",
         };
     };
 
@@ -1861,6 +1892,36 @@ pub const timer = struct {
     };
 };
 
+pub const tray = struct {
+    pub const c_files = [_][]const u8{
+        "src/tray/SDL_tray_utils.c",
+    };
+
+    pub const cocoa = struct {
+        pub const objective_c_files = [_][]const u8{
+            "src/tray/cocoa/SDL_tray.m",
+        };
+    };
+
+    pub const dummy = struct {
+        pub const c_files = [_][]const u8{
+            "src/tray/dummy/SDL_tray.c",
+        };
+    };
+
+    pub const unix = struct {
+        pub const c_files = [_][]const u8{
+            "src/tray/unix/SDL_tray.c",
+        };
+    };
+
+    pub const windows = struct {
+        pub const c_files = [_][]const u8{
+            "src/tray/windows/SDL_tray.c",
+        };
+    };
+};
+
 pub const video = struct {
     pub const c_files = [_][]const u8{
         "src/video/SDL_RLEaccel.c",
@@ -1894,6 +1955,7 @@ pub const video = struct {
             "src/video/android/SDL_androidkeyboard.c",
             "src/video/android/SDL_androidmessagebox.c",
             "src/video/android/SDL_androidmouse.c",
+            "src/video/android/SDL_androidpen.c",
             "src/video/android/SDL_androidtouch.c",
             "src/video/android/SDL_androidvideo.c",
             "src/video/android/SDL_androidvulkan.c",
@@ -1999,6 +2061,12 @@ pub const video = struct {
         };
     };
 
+    pub const openvr = struct {
+        pub const c_files = [_][]const u8{
+            "src/video/openvr/SDL_openvrvideo.c",
+        };
+    };
+
     pub const ps2 = struct {
         pub const c_files = [_][]const u8{
             "src/video/ps2/SDL_ps2video.c",
@@ -2053,6 +2121,7 @@ pub const video = struct {
             "src/video/uikit/SDL_uikitmodes.m",
             "src/video/uikit/SDL_uikitopengles.m",
             "src/video/uikit/SDL_uikitopenglview.m",
+            "src/video/uikit/SDL_uikitpen.m",
             "src/video/uikit/SDL_uikitvideo.m",
             "src/video/uikit/SDL_uikitview.m",
             "src/video/uikit/SDL_uikitviewcontroller.m",
@@ -2103,6 +2172,7 @@ pub const video = struct {
 
     pub const windows = struct {
         pub const c_files = [_][]const u8{
+            "src/video/windows/SDL_surface_utils.c",
             "src/video/windows/SDL_windowsclipboard.c",
             "src/video/windows/SDL_windowsevents.c",
             "src/video/windows/SDL_windowsframebuffer.c",
@@ -2142,6 +2212,7 @@ pub const video = struct {
             "src/video/x11/SDL_x11window.c",
             "src/video/x11/SDL_x11xfixes.c",
             "src/video/x11/SDL_x11xinput2.c",
+            "src/video/x11/SDL_x11xsync.c",
             "src/video/x11/edid-parse.c",
             "src/video/x11/xsettings-client.c",
         };

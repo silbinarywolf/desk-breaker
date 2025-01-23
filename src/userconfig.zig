@@ -48,6 +48,8 @@ pub const UserConfig = struct {
 
     /// This maps to data saved into config.json
     pub const Settings = struct {
+        pub const MaxSnoozesDisabled: i32 = -1;
+
         /// this is the monitor to display on
         display_index: u32 = 0,
         is_activity_break_enabled: bool = true,
@@ -58,7 +60,8 @@ pub const UserConfig = struct {
         // customized incoming break message underneath the pending timer
         incoming_break_message: []const u8 = &[0]u8{},
         // maximum times you can hit snooze in a row
-        max_snoozes_in_a_row: ?u32 = null,
+        // set to -1 to disable
+        max_snoozes_in_a_row: ?i32 = null,
 
         pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
             allocator.free(self.incoming_break_message);
