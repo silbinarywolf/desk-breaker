@@ -204,7 +204,7 @@ pub fn deinit(self: *Window) void {
     self.* = undefined;
 }
 
-pub fn newFrame(window: *Window) void {
+pub fn imguiNewFrame(window: *Window) void {
     if (window.imgui_new_frame) {
         // if we didn't call end frame last frame, do it now
         imgui.igEndFrame();
