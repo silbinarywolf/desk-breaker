@@ -362,13 +362,13 @@ pub fn main() !void {
         // (as per example code: https://github.com/ocornut/imgui/blob/master/examples/example_sdl2_sdlrenderer2/main.cpp)
         {
             for (app.popup_windows.items) |*window| {
-                window.newFrame();
+                window.imguiNewFrame();
             }
             for (app.taking_break_windows.items) |*window| {
-                window.newFrame();
+                window.imguiNewFrame();
             }
             if (app.window) |app_window| {
-                app_window.newFrame();
+                app_window.imguiNewFrame();
             }
         }
 
