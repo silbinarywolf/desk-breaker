@@ -5,7 +5,7 @@ const zigimg = @import("zigimg");
 
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
-const Image = struct {
+pub const Image = struct {
     surface: *sdl.SDL_Surface,
     image: zigimg.ImageUnmanaged,
 
@@ -16,7 +16,7 @@ const Image = struct {
     }
 };
 
-pub fn load_from_surface_from_buffer(allocator: std.mem.Allocator, image_buffer: []const u8) !Image {
+pub fn load(allocator: std.mem.Allocator, image_buffer: []const u8) !Image {
     var stream_source = std.io.StreamSource{ .const_buffer = std.io.fixedBufferStream(image_buffer) };
     var img = try zigimg.png.PNG.readImage(allocator, &stream_source);
     errdefer img.deinit(allocator);
@@ -25,19 +25,6 @@ pub fn load_from_surface_from_buffer(allocator: std.mem.Allocator, image_buffer:
         .surface = surface,
         .image = img,
     };
-}
-
-pub fn load_from_buffer(renderer: *sdl.SDL_Renderer, temp_allocator: std.mem.Allocator, image_buffer: []const u8) !*sdl.SDL_Texture {
-    var stream_source = std.io.StreamSource{ .const_buffer = std.io.fixedBufferStream(image_buffer) };
-    return load_from_source(renderer, temp_allocator, &stream_source);
-}
-
-pub fn load_from_source(renderer: *sdl.SDL_Renderer, temp_allocator: std.mem.Allocator, stream: *std.io.StreamSource) !*sdl.SDL_Texture {
-    var img = try zigimg.png.PNG.readImage(temp_allocator, stream);
-    defer img.deinit(temp_allocator);
-
-    const texture = try sdlTextureFromImage(renderer, img);
-    return texture;
 }
 
 const PixelMask = struct {

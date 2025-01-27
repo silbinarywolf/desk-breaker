@@ -106,7 +106,9 @@ pub fn build(b: *std.Build) !void {
 
         if (target.result.os.tag == .windows) {
             exe.addWin32ResourceFile(.{
-                .file = b.path("src/deskbreaker.rc"),
+                // NOTE(jae): 2025-01-27
+                // RC file references "icon.ico" for the EXE icon
+                .file = b.path("src/resources/win.rc"),
                 // Anything that rc.exe accepts will work here
                 // https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
                 // This sets the default code page to UTF-8
@@ -179,7 +181,10 @@ pub fn build(b: *std.Build) !void {
             const imgui_enable_freetype = true;
             var imgui_dep = b.dependency("imgui", .{
                 .target = target,
-                .optimize = .ReleaseFast,
+                // NOTE(jae): 2025-01-27
+                // We want assertions in ImGui to tell is if we messed up so we
+                // don't just want ReleaseFast here.
+                .optimize = optimize,
                 .enable_freetype = imgui_enable_freetype,
             });
             const imgui_lib = imgui_dep.artifact("imgui");
