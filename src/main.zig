@@ -1,24 +1,25 @@
 const std = @import("std");
-const time = std.time;
 const builtin = @import("builtin");
+const time = std.time;
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 const android = @import("android");
+
 const winregistry = @import("winregistry.zig");
-const datetime = @import("datetime.zig");
+const DateTime = @import("DateTime.zig");
+const UserConfig = @import("UserConfig.zig");
+const GlobalCAllocator = @import("GlobalCAllocator.zig");
+const Duration = @import("Duration.zig");
+const Window = @import("Window.zig");
+const App = @import("App.zig");
+const UserSettings = App.UserSettings;
+const Timer = App.Timer;
 
-const UserConfig = @import("userconfig.zig").UserConfig;
-
-const sdlpng = @import("sdlpng.zig");
-const CLibAllocation = @import("c_lib_alloc.zig").CLibAllocation;
-const Duration = @import("time.zig").Duration;
-const Alarm = @import("time.zig").Alarm;
-
-const State = @import("state.zig").State;
-const UserSettings = @import("state.zig").UserSettings;
-const Window = @import("window.zig").Window;
-const Timer = @import("state.zig").Timer;
-const NextTimer = @import("state.zig").NextTimer;
+const ScreenOverview = @import("ScreenOverview.zig");
+const ScreenAddEditTimer = @import("ScreenAddEditTimer.zig");
+const ScreenOptions = @import("ScreenOptions.zig");
+const ScreenIncomingBreak = @import("ScreenIncomingBreak.zig");
+const ScreenTakingBreak = @import("ScreenTakingBreak.zig");
 
 const log = std.log.default;
 const assert = std.debug.assert;
@@ -70,9 +71,6 @@ const GPAConfig: std.heap.GeneralPurposeAllocatorConfig = .{
 var gpa_allocator: std.heap.GeneralPurposeAllocator(GPAConfig) = .{};
 
 var has_opened_from_tray = false;
-var has_quit_from_tray = false;
-
-const AppName = "Desk Breaker";
 
 pub fn main() !void {
     const allocator = gpa_allocator.allocator();
@@ -89,8 +87,8 @@ pub fn main() !void {
 
     // Setup custom allocators for SDL and Imgui
     // - We can use the GeneralPurposeAllocator to catch memory leaks
-    const c_lib_alloc = try CLibAllocation.init(allocator);
-    defer c_lib_alloc.deinit();
+    const global_c_allocator = try GlobalCAllocator.init(allocator);
+    defer global_c_allocator.deinit();
 
     // Load your settings
     var user_settings: *UserSettings = try allocator.create(UserSettings);
@@ -109,45 +107,39 @@ pub fn main() !void {
     }
     defer sdl.SDL_Quit();
 
-    var icon_png = try sdlpng.load_from_surface_from_buffer(allocator, @embedFile("icon.png"));
-    defer icon_png.deinit(allocator);
+    var app: *App = try allocator.create(App);
+    defer allocator.destroy(app);
+    app.* = try App.init(allocator, user_settings);
+    defer app.deinit();
 
-    const main_app_window = try allocator.create(Window);
-    main_app_window.* = try Window.init(.{
-        .title = AppName,
-        .width = 640,
-        .height = 480,
-        .resizeable = true,
-        .icon = icon_png.surface,
-    });
+    // setup main application window
+    app.window = blk: {
+        const main_app_window = try allocator.create(Window);
+        main_app_window.* = try Window.init(.{
+            .title = App.Name,
+            .width = 680,
+            .height = 480,
+            .resizeable = true,
+            .icon = app.icon.surface,
+        });
+        break :blk main_app_window;
+    };
 
-    // TODO: Allow disabling system tray functionality
-    // NOTE: Does not seem to work on Debian/KDE SDL 3.1.10 via cmake build. Just returns null for SDL_CreateTray
-    const main_app_tray: ?*sdl.SDL_Tray = switch (builtin.os.tag) {
-        .windows => null, // sdl.SDL_CreateTray(icon_png.surface, AppName),
+    // setup tray
+    app.tray = switch (builtin.os.tag) {
+        .windows => sdl.SDL_CreateTray(app.icon.surface, App.Name) orelse blk: {
+            const err = sdl.SDL_GetError();
+            if (err != null) {
+                log.err("unable to initialize SDL tray: {s}", .{err});
+                return error.SDLInitializationFailed;
+            }
+            break :blk null;
+        },
         else => null,
     };
 
-    // Setup initial "previous mouse position"
-    var prev_mouse_pos: MousePos = .{ .x = 0, .y = 0 };
-    _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
-
-    var state: *State = try allocator.create(State);
-    defer allocator.destroy(state);
-    state.* = .{
-        .mode = .regular,
-        .allocator = allocator,
-        .temp_allocator = std.heap.ArenaAllocator.init(allocator),
-        .icon = icon_png.surface,
-        .window = main_app_window,
-        .tray = main_app_tray,
-        .user_settings = user_settings,
-        .activity_timer = try std.time.Timer.start(),
-    };
-    defer state.deinit();
-
-    // Initialize tray
-    if (state.tray) |tray| {
+    // initialize tray
+    if (app.tray) |tray| {
         const tray_menu: *sdl.SDL_TrayMenu = sdl.SDL_CreateTrayMenu(tray) orelse {
             log.err("unable to initialize SDL tray menu: {s}", .{sdl.SDL_GetError()});
             return error.SDLInitializationFailed;
@@ -157,46 +149,61 @@ pub fn main() !void {
                 pub fn callback(_: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
                     has_opened_from_tray = true;
                 }
-            }.callback, state);
+            }.callback, app);
         }
         if (sdl.SDL_InsertTrayEntryAt(tray_menu, -1, "Quit", sdl.SDL_TRAYENTRY_BUTTON)) |tray_entry| {
             sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
-                pub fn callback(_: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
-                    has_quit_from_tray = true;
+                pub fn callback(app_ptr: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
+                    const app_in_tray: *App = @alignCast(@ptrCast(app_ptr));
+                    app_in_tray.has_quit = true;
                 }
-            }.callback, state);
+            }.callback, app);
         }
     }
-    defer sdl.SDL_DestroyTray(state.tray);
+    defer sdl.SDL_DestroyTray(app.tray);
+
+    // Setup initial "previous mouse position"
+    var prev_mouse_pos: MousePos = .{ .x = 0, .y = 0 };
+    _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
 
     // DEBUG: Test break screen
     // state.user_settings.default_time_till_break = Duration.init(30 * time.ns_per_s);
     // state.user_settings.default_break_time = Duration.init(5 * time.ns_per_s);
 
-    var has_quit = false;
     var frames_without_app_input: u16 = 0;
-    while (!has_quit and !has_quit_from_tray) {
-        _ = state.temp_allocator.reset(.retain_capacity);
+    while (!app.has_quit) {
+        _ = app.temp_allocator.reset(.retain_capacity);
 
         const current_frame_time = sdl.SDL_GetPerformanceCounter();
 
+        // Handle tray logic
         if (has_opened_from_tray) {
             has_opened_from_tray = false;
 
-            if (state.window) |app_window| {
+            if (app.window) |app_window| {
                 _ = sdl.SDL_RestoreWindow(app_window.window);
             } else {
                 // If no app window exists, create it
-                const app_window = try allocator.create(Window);
-                app_window.* = try Window.init(.{
-                    .title = AppName,
-                    .width = 640,
-                    .height = 480,
-                    .resizeable = true,
-                    .icon = icon_png.surface,
-                });
-                state.window = app_window;
+                app.window = blk: {
+                    const app_window = try allocator.create(Window);
+                    app_window.* = try Window.init(.{
+                        .title = App.Name,
+                        .width = 680,
+                        .height = 480,
+                        .resizeable = true,
+                        .icon = app.icon.surface,
+                    });
+                    break :blk app_window;
+                };
                 frames_without_app_input = 0;
+            }
+        }
+        if (app.minimize_to_tray) {
+            app.minimize_to_tray = false;
+            if (app.window) |app_window| {
+                app_window.deinit();
+                allocator.destroy(app_window);
+                app.window = null;
             }
         }
 
@@ -218,7 +225,7 @@ pub fn main() !void {
                 {
                     const ev_res = evblk: {
                         const is_main_window_minimized_or_occluded = blk: {
-                            const app_window = state.window orelse break :blk false;
+                            const app_window = app.window orelse break :blk false;
                             const window_flags = sdl.SDL_GetWindowFlags(app_window.window);
                             break :blk (window_flags & sdl.SDL_WINDOW_MINIMIZED != 0) or
                                 (window_flags & sdl.SDL_WINDOW_OCCLUDED != 0);
@@ -232,12 +239,12 @@ pub fn main() !void {
 
                         // If minimized, increase the wait event delay to be even more power-saving
                         const is_powersaving_mode = is_main_window_minimized_or_occluded and
-                            state.popup_windows.items.len == 0 and
-                            state.taking_break_windows.items.len == 0;
+                            app.popup_windows.items.len == 0 and
+                            app.taking_break_windows.items.len == 0;
                         if (is_powersaving_mode) {
-                            if (state.time_till_next_timer_complete()) |timer| {
+                            if (app.time_till_next_timer_complete()) |timer| {
                                 const safe_delay_in_ms: u64 = 5000;
-                                const safe_delay = state.user_settings.incoming_break_or_default().nanoseconds + (safe_delay_in_ms * time.ns_per_ms);
+                                const safe_delay = app.user_settings.incoming_break_or_default().nanoseconds + (safe_delay_in_ms * time.ns_per_ms);
                                 if (timer.time_till_next_break.nanoseconds >= safe_delay) {
                                     // 5000ms timeout so we can at least occassionally detect global mouse position
                                     break :evblk sdl.SDL_WaitEventTimeout(&sdl_event, safe_delay_in_ms);
@@ -262,15 +269,15 @@ pub fn main() !void {
 
                 // process events
                 {
-                    if (state.window) |window| {
+                    if (app.window) |window| {
                         imgui.igSetCurrentContext(window.imgui_context);
                         _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
                     }
-                    for (state.popup_windows.items) |*window| {
+                    for (app.popup_windows.items) |*window| {
                         imgui.igSetCurrentContext(window.imgui_context);
                         _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
                     }
-                    for (state.taking_break_windows.items) |*window| {
+                    for (app.taking_break_windows.items) |*window| {
                         imgui.igSetCurrentContext(window.imgui_context);
                         _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(&sdl_event));
                     }
@@ -279,21 +286,21 @@ pub fn main() !void {
                 switch (sdl_event.type) {
                     sdl.SDL_EVENT_QUIT => {
                         // If triggered quit, close entire app
-                        has_quit = true;
+                        app.has_quit = true;
                         break;
                     },
                     sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
                         const event = sdl_event.window;
-                        if (state.window) |app_window| {
+                        if (app.window) |app_window| {
                             if (event.windowID == sdl.SDL_GetWindowID(app_window.window)) {
+                                app.has_quit = true;
+                                // TODO: Add ability to configure when/how we minimize to system tray
                                 // If closed the main app window and has no system tray, close entire app
-                                if (state.tray == null) {
-                                    has_quit = true;
-                                } else {
-                                    app_window.deinit();
-                                    allocator.destroy(app_window);
-                                    state.window = null;
-                                }
+                                // if (app.tray == null) {
+                                //     app.has_quit = true;
+                                // } else {
+                                //     app.minimize_to_tray = true;
+                                // }
                                 break;
                             }
                         }
@@ -316,8 +323,8 @@ pub fn main() !void {
                             sdl.SDL_BUTTON_LEFT => {
                                 // event.state == sdl.SDL_RELEASED
                                 if (!event.down) {
-                                    if (state.break_mode.held_down_timer != null) {
-                                        state.break_mode.held_down_timer = null;
+                                    if (app.break_mode.held_down_timer != null) {
+                                        app.break_mode.held_down_timer = null;
                                     }
                                 }
                             },
@@ -334,11 +341,11 @@ pub fn main() !void {
                                 // event.state == sdl.SDL_RELEASED
                                 if (!event.down) {
                                     // If released reset the held down timer
-                                    if (state.break_mode.held_down_timer == null) {
-                                        state.break_mode.held_down_timer = try time.Timer.start();
+                                    if (app.break_mode.held_down_timer == null) {
+                                        app.break_mode.held_down_timer = try time.Timer.start();
                                     }
                                 }
-                                state.break_mode.esc_or_exit_presses += 1;
+                                app.break_mode.esc_or_exit_presses += 1;
                             },
                             else => {},
                         }
@@ -354,24 +361,14 @@ pub fn main() !void {
         // Set new ImGui Frame *after* event polling, otherwise you get rare instances of sticky buttons / interactivity
         // (as per example code: https://github.com/ocornut/imgui/blob/master/examples/example_sdl2_sdlrenderer2/main.cpp)
         {
-            for (state.popup_windows.items) |*window| {
-                imgui.igSetCurrentContext(window.imgui_context);
-                imgui.ImGui_ImplSDLRenderer3_NewFrame();
-                imgui.ImGui_ImplSDL3_NewFrame();
-                imgui.igNewFrame();
+            for (app.popup_windows.items) |*window| {
+                window.newFrame();
             }
-            for (state.taking_break_windows.items) |*window| {
-                imgui.igSetCurrentContext(window.imgui_context);
-                imgui.ImGui_ImplSDLRenderer3_NewFrame();
-                imgui.ImGui_ImplSDL3_NewFrame();
-                imgui.igNewFrame();
+            for (app.taking_break_windows.items) |*window| {
+                window.newFrame();
             }
-
-            if (state.window) |app_window| {
-                imgui.igSetCurrentContext(app_window.imgui_context);
-                imgui.ImGui_ImplSDLRenderer3_NewFrame();
-                imgui.ImGui_ImplSDL3_NewFrame();
-                imgui.igNewFrame();
+            if (app.window) |app_window| {
+                app_window.newFrame();
             }
         }
 
@@ -385,64 +382,60 @@ pub fn main() !void {
             if (diff.x >= 5 and
                 diff.y >= 5)
             {
-                state.time_since_last_input = try std.time.Timer.start();
-                state.is_user_mouse_active = true;
+                app.time_since_last_input = try std.time.Timer.start();
+                app.is_user_mouse_active = true;
             }
 
-            if (state.mode == .regular) {
+            if (app.mode == .regular) {
                 // Track time using computer
-                if (state.time_since_last_input) |*time_since_last_input| {
+                if (app.time_since_last_input) |*time_since_last_input| {
                     // TODO: Make inactivity time a variable
                     const inactivity_duration = 5 * std.time.ns_per_min;
                     if (time_since_last_input.read() > inactivity_duration) {
-                        state.is_user_mouse_active = false;
-                        state.activity_timer.reset();
+                        app.is_user_mouse_active = false;
+                        app.activity_timer.reset();
                     }
                 } else {
-                    state.activity_timer.reset();
-                    state.is_user_mouse_active = false;
+                    app.activity_timer.reset();
+                    app.is_user_mouse_active = false;
                 }
             }
 
             // Detect when to change mode
-            switch (state.mode) {
+            switch (app.mode) {
                 .regular, .incoming_break => {
-                    if (state.time_till_next_timer_complete()) |next_timer| {
+                    if (app.time_till_next_timer_complete()) |next_timer| {
                         if (next_timer.time_till_next_break.nanoseconds <= 0) {
-                            try state.change_mode(.taking_break);
-                        } else if (next_timer.time_till_next_break.nanoseconds <= state.user_settings.incoming_break_or_default().nanoseconds) {
-                            try state.change_mode(.incoming_break);
+                            try app.change_mode(.taking_break);
+                        } else if (next_timer.time_till_next_break.nanoseconds <= app.user_settings.incoming_break_or_default().nanoseconds) {
+                            try app.change_mode(.incoming_break);
                         } else {
                             // If cancelled timer in main window
-                            if (state.mode == .incoming_break) {
-                                try state.change_mode(.regular);
+                            if (app.mode == .incoming_break) {
+                                try app.change_mode(.regular);
                             }
                         }
                     } else {
-                        if (state.mode == .incoming_break) {
+                        if (app.mode == .incoming_break) {
                             // If we somehow got in this buggy state and there is no next break
                             // then switch to regular mode
-                            try state.change_mode(.regular);
+                            try app.change_mode(.regular);
                         }
                     }
                 },
                 .taking_break => {
-                    const time_active_in_ns = state.break_mode.timer.read();
-                    const time_till_break_over = state.break_mode.duration.diff(time_active_in_ns);
+                    const time_active_in_ns = app.break_mode.timer.read();
+                    const time_till_break_over = app.break_mode.duration.diff(time_active_in_ns);
                     if (time_till_break_over.nanoseconds <= 0) {
-                        state.snooze_times_in_a_row = 0;
-                        try state.change_mode(.regular);
+                        app.snooze_times_in_a_row = 0;
+                        try app.change_mode(.regular);
                     }
                 },
             }
         }
 
-        // Default flags we use for each window
-        const ImGuiDefaultWindowFlags = imgui.ImGuiWindowFlags_NoTitleBar | imgui.ImGuiWindowFlags_NoDecoration |
-            imgui.ImGuiWindowFlags_NoResize | imgui.ImGuiWindowFlags_NoBackground;
-
         // Main application window
-        if (state.window) |app_window| {
+        if (app.window) |app_window| appwindowblk: {
             imgui.igSetCurrentContext(app_window.imgui_context);
 
             const viewport = &imgui.igGetMainViewport()[0];
@@ -451,811 +444,94 @@ pub fn main() !void {
 
             imgui.igSetNextWindowPos(viewport_pos, 0, .{});
             imgui.igSetNextWindowSize(viewport_size, 0);
-            // NOTE(jae): 2024-11-03
-            // Removed "imgui.ImGuiWindowFlags_MenuBar" as we no longer use menu bar
-            _ = imgui.igBegin("mainwindow", null, ImGuiDefaultWindowFlags);
+            if (!imgui.igBegin("###mainwindow", null, App.ImGuiDefaultWindowFlags)) {
+                break :appwindowblk;
+            }
             defer imgui.igEnd();
 
-            // NOTE(jae): 2024-11-03
-            // Removed because kind of useless and it annoyed my partner, the one other user so far.
-            // if (imgui.igBeginMenuBar()) {
-            //     defer imgui.igEndMenuBar();
-            //     if (imgui.igBeginMenu("Preferences", true)) {
-            //         defer imgui.igEndMenu();
-            //         if (imgui.igMenuItem_Bool("Take a Break", "", false, true)) {
-            //             try state.change_mode(.taking_break);
-            //         }
-            //         if (imgui.igMenuItem_Bool("Exit", "", false, true)) {
-            //             has_quit = true;
-            //         }
-            //     }
-            // }
-
-            switch (state.ui.kind) {
-                .none => {
-                    // {
-                    //     imgui.igShowDemoWindow(null);
-                    // }
-
-                    // _ = imgui.igBeginTabBar("Tabs", imgui.ImGuiTabBarFlags_None);
-                    // _ = imgui.igBeginTabItem("Overview", null, 0);
-                    // imgui.igEndTabItem();
-                    // _ = imgui.igBeginTabItem("Timers", null, 0);
-                    // imgui.igEndTabItem();
-                    // defer imgui.igEndTabBar();
-
-                    // Heading
-                    {
-                        if (imgui.igButton("Add timer", .{})) {
-                            state.ui.timer = .{
-                                // ... resets all timer ui state ...
-                            };
-                            state.ui.kind = .timer;
+            // Heading
+            {
+                const uiHeadingButton = struct {
+                    pub fn uiHeadingButton(label: [:0]const u8, is_selected: bool) bool {
+                        if (is_selected) {
+                            const activeColor = imgui.igGetStyleColorVec4(imgui.ImGuiCol_ButtonActive)[0];
+                            imgui.igPushStyleColor_Vec4(imgui.ImGuiCol_Button, activeColor);
+                            imgui.igPushStyleColor_Vec4(imgui.ImGuiCol_ButtonHovered, activeColor);
                         }
-                        imgui.igSameLine(0, 16);
-                        if (imgui.igButton("Options", .{})) {
-                            state.ui.options = .{
-                                // ... resets all options ui state ...
-                                // set this
-                                .is_activity_break_enabled = state.user_settings.settings.is_activity_break_enabled,
-                                .display_index = state.user_settings.settings.display_index,
-                                // set below...
-                                // .time_till_break =
-                                // .break_time =
-                                // .incoming_break =
-                                // .incoming_break_message =
-                                // .max_snoozes_in_a_row =
-                            };
-                            const ui_options = &state.ui.options;
-                            if (state.user_settings.settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
-                            if (state.user_settings.settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
-                            if (state.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
-                            if (state.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{state.user_settings.settings.incoming_break_message});
-                            if (state.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| {
-                                if (max_snoozes == UserConfig.Settings.MaxSnoozesDisabled) {
-                                    // Disabled
-                                    _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{UserConfig.Settings.MaxSnoozesDisabled});
-                                } else {
-                                    _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{max_snoozes});
-                                }
-                            }
-
-                            // OS-specific
-                            switch (builtin.os.tag) {
-                                .windows => {
-                                    // Set os startup
-                                    ui_options.os_startup = blk: {
-                                        const temp_allocator = state.temp_allocator.allocator();
-                                        const startup_run = try winregistry.RegistryWtf8.openKey(std.os.windows.HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", .{});
-                                        defer startup_run.closeKey();
-                                        const startup_desk_breaker_path = startup_run.getString(temp_allocator, "", "DeskBreaker") catch |err| switch (err) {
-                                            error.ValueNameNotFound => "",
-                                            else => return err,
-                                        };
-                                        const out_buf = try temp_allocator.alloc(u8, std.fs.max_path_bytes);
-                                        const exe_path = try std.fs.selfExePath(out_buf);
-                                        break :blk std.mem.eql(u8, exe_path, startup_desk_breaker_path);
-                                    };
-                                },
-                                else => {},
-                            }
-
-                            // List displays by name (if supported by operating system)
-                            // - Windows: "0: MSI G241", "1: UGREEN"
-                            // - MacOS: "0: 0" and "1: 1"
-                            {
-                                // Reset list
-                                state.ui.options_metadata.display_names_buf.len = 0;
-
-                                var display_count: c_int = undefined;
-                                const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
-                                defer sdl.SDL_free(display_list_or_err);
-                                if (display_list_or_err != null) {
-                                    const display_list = display_list_or_err[0..@intCast(display_count)];
-                                    for (display_list, 0..) |display_id, i| {
-                                        const name_c_str = sdl.SDL_GetDisplayName(display_id);
-                                        if (name_c_str == null) {
-                                            continue;
-                                        }
-                                        try state.ui.options_metadata.display_names_buf.writer().print("{d}: {s}\x00", .{ i, name_c_str });
-                                    }
-                                }
-                            }
-
-                            // set ui to options
-                            state.ui.kind = .options;
+                        const r = imgui.igButton(label, .{});
+                        if (is_selected) {
+                            imgui.igPopStyleColor(2);
                         }
-                        imgui.igSameLine(0, 16);
-                        if (imgui.igButton("Take a break", .{})) {
-                            try state.change_mode(.taking_break);
-                        }
+                        imgui.igSameLine(0, 4);
+                        return r;
                     }
+                }.uiHeadingButton;
 
-                    // List of timers
-                    {
-                        for (state.user_settings.timers.items, 0..) |*t, i| {
-                            imgui.igPushID_Int(@intCast(i));
-                            defer imgui.igPopID();
-                            switch (t.kind) {
-                                .timer => {
-                                    const timer_duration = t.timer_duration orelse break;
+                var maybe_next_ui_screen: ?App.Screen = null;
 
-                                    // Get duration to print
-                                    var duration_left: Duration = timer_duration;
-                                    if (t.timer_started) |*timer_started| {
-                                        const diff = timer_duration.diff(timer_started.read());
-                                        duration_left = diff;
-                                    }
+                if (uiHeadingButton("Overview", app.ui.screen == .overview)) {
+                    maybe_next_ui_screen = .overview;
+                }
 
-                                    var is_enabled = t.timer_started != null;
-                                    if (imgui.igCheckbox(try state.tprint("{s} - {s}", .{ t.name.slice(), duration_left }), &is_enabled)) {
-                                        if (!is_enabled) {
-                                            t.timer_started = null;
-                                        } else {
-                                            t.timer_started = try std.time.Timer.start();
-                                        }
-                                    }
-                                },
-                                .alarm => {
-                                    @panic("TODO: handle rendering alarm in list");
-                                },
-                            }
-
-                            {
-                                // TODO: Make Edit button align to right side
-                                // const oldCursorPosX = imgui.igGetCursorPosX();
-                                // const oldCursorPosY = imgui.igGetCursorPosY();
-                                // defer {
-                                //     imgui.igSetCursorPosX(oldCursorPosX);
-                                //     imgui.igSetCursorPosY(oldCursorPosY);
-                                // }
-                                // imgui.igSameLine(0, 0);
-                                // imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = imgui.igGetCursorPosY() }, imgui.ImGuiCond_Always, .{ .x = 1 });
-                                // // NOTE(jae): 2024-07-28
-                                // // igBegin is globally scoped in rendering
-                                // _ = imgui.igBegin(try state.tprint("edit-timer-{}", .{i}), null, imgui_default_window_flags);
-                                // defer imgui.igEnd();
-                                // imgui.igSetCursorPosX(0);
-
-                                imgui.igSameLine(0, 16);
-                                if (imgui.igButton("Edit", .{})) {
-                                    const ui_timer = &state.ui.timer;
-                                    ui_timer.* = .{
-                                        .id = @intCast(i),
-                                        .kind = t.kind,
-                                        // .duration_time = if (t.timer_duration) |td| td. else "",
-                                    };
-                                    state.ui.kind = .timer;
-                                    _ = try std.fmt.bufPrintZ(ui_timer.name[0..], "{s}", .{t.name.slice()});
-                                    if (t.timer_duration) |td| _ = try std.fmt.bufPrintZ(ui_timer.duration_time[0..], "{sh}", .{td});
-                                }
-                            }
-                        }
-
-                        // TODO(jae): 2024-08-28
-                        // Try to get table working for the above listing instead but can't get it to work
-                        // if (imgui.igBeginTable("table", 2, imgui.ImGuiTableFlags_Borders |
-                        //     imgui.ImGuiTableFlags_SizingFixedFit, .{}, 0))
-                        // {
-                        //     for (state.user_settings.timers.items) |*t| {
-                        //         imgui.igTableNextRow(imgui.ImGuiTableRowFlags_None, 0);
-                        //         {
-                        //             imgui.igNextColumn();
-                        //             imgui.igText(try state.tprint("{s}", .{t.name.slice()}));
-                        //         }
-                        //         if (t.timer_duration) |timer_duration| {
-                        //             imgui.igNextColumn();
-                        //             imgui.igText(try state.tprint("{}", .{timer_duration}));
-                        //         }
-                        //     }
-                        //     imgui.igEndTable();
-                        // }
+                const has_selected_add_or_edit_timer = app.ui.screen == .timer;
+                const add_edit_timer: [:0]const u8 = if (!has_selected_add_or_edit_timer or app.ui.timer.id == -1)
+                    "Add Timer"
+                else
+                    "Edit Timer";
+                if (uiHeadingButton(add_edit_timer, has_selected_add_or_edit_timer)) {
+                    maybe_next_ui_screen = .timer;
+                }
+                if (uiHeadingButton("Options", app.ui.screen == .options)) {
+                    maybe_next_ui_screen = .options;
+                }
+                if (uiHeadingButton("Take a break", false)) {
+                    try app.change_mode(.taking_break);
+                }
+                if (app.tray) |_| {
+                    if (uiHeadingButton("Minimize to tray", false)) {
+                        app.minimize_to_tray = true;
                     }
-
-                    // Bottom-left-corner
-                    {
-                        imgui.igSetNextWindowPos(.{ .x = 0, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 0, .y = 1 });
-                        _ = imgui.igBegin("general-bottom-left-corner", null, ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
-                        defer imgui.igEnd();
-
-                        if (state.snooze_times > 0) {
-                            imgui.igText(try state.tprint("Times snoozed: {d}", .{state.snooze_times}));
-                        }
-
-                        if (state.snooze_activity_break_timer) |*snooze_timer| {
-                            imgui.igText(try state.tprint("Snooze timer over in: {s}", .{
-                                state.user_settings.snooze_duration_or_default().diff(snooze_timer.read()),
-                            }));
-                        } else if (state.user_settings.settings.is_activity_break_enabled) {
-                            const time_till_activity_break_format = "Time till activity break: {s}";
-                            if (state.is_user_mouse_active) {
-                                imgui.igText(try state.tprint(time_till_activity_break_format, .{
-                                    state.user_settings.time_till_break_or_default().diff(state.activity_timer.read()),
-                                }));
-                            } else {
-                                imgui.igText(try state.tprint(time_till_activity_break_format, .{
-                                    "(No mouse activity)",
-                                }));
-                            }
-                        }
-
-                        // DEBUG: Add debug info
-                        if (builtin.mode == .Debug) {
-                            {
-                                const time_in_seconds = @divFloor(state.activity_timer.read(), std.time.ns_per_s);
-                                imgui.igText("DEBUG: Time using computer: %d", time_in_seconds);
-                            }
-                            if (state.time_since_last_input) |*time_since_last_input| {
-                                const time_in_seconds = @divFloor(time_since_last_input.read(), std.time.ns_per_s);
-                                imgui.igText("DEBUG: Time since last activity: %d", time_in_seconds);
-                            } else {
-                                imgui.igText("DEBUG: Time since last activity: (none detected)");
-                            }
-                            if (state.time_till_next_timer_complete()) |next_timer| {
-                                imgui.igText(try state.tprint("DEBUG: Time till popout: {s}", .{next_timer.time_till_next_break}));
-                            }
-                        }
+                }
+                imgui.igNewLine();
+                imgui.igSeparatorEx(imgui.ImGuiSeparatorFlags_Horizontal, 2);
+                if (maybe_next_ui_screen) |next_ui_screen| uiblk: {
+                    // do nothing if same
+                    if (app.ui.screen == next_ui_screen) {
+                        break :uiblk;
                     }
+                    switch (next_ui_screen) {
+                        .overview => {
+                            // no state to reset
+                        },
+                        .timer => {
+                            ScreenAddEditTimer.open(app);
+                        },
+                        .options => {
+                            try ScreenOptions.open(app);
+                        },
+                    }
+                    app.ui.screen = next_ui_screen;
+                }
+            }
+
+            switch (app.ui.screen) {
+                .overview => {
+                    try ScreenOverview.render(app);
                 },
                 .timer => {
-                    imgui.igBeginGroup();
-                    defer imgui.igEndGroup();
-                    const ui_timer = &state.ui.timer;
-                    _ = imgui.igCombo_Str("Type", @ptrCast(&ui_timer.kind), @TypeOf(ui_timer.kind).ImGuiItems, 0);
-                    _ = imgui.igInputTextWithHint(
-                        "Name (Optional)",
-                        "Take out washing, Do dishes",
-                        ui_timer.name[0..].ptr,
-                        ui_timer.name.len,
-                        0,
-                        null,
-                        null,
-                    );
-                    switch (ui_timer.kind) {
-                        .timer => {
-                            if (imgui.igInputTextWithHint(
-                                "Duration",
-                                "1h 30m 45s",
-                                ui_timer.duration_time[0..].ptr,
-                                ui_timer.duration_time.len,
-                                0,
-                                null,
-                                null,
-                            )) {
-                                ui_timer.errors.duration_time = ""; // reset error message if changed
-                            }
-                            if (ui_timer.errors.duration_time.len > 0) {
-                                _ = imgui.igText(try state.tprint("{s}", .{ui_timer.errors.duration_time}));
-                            }
-                        },
-                        .alarm => {
-                            _ = imgui.igInputTextWithHint(
-                                "Time",
-                                "6pm, 6:30pm, 19:00",
-                                ui_timer.alarm_time[0..].ptr,
-                                ui_timer.alarm_time.len,
-                                0,
-                                null,
-                                null,
-                            );
-                        },
-                    }
-                    const is_new = ui_timer.id == -1;
-                    const save_label: [:0]const u8 = if (is_new) "Create" else "Save";
-                    if (imgui.igButton(save_label, .{})) {
-                        var t: Timer = .{
-                            .kind = ui_timer.kind,
-                        };
-                        const name_data = ui_timer.name[0..std.mem.len(ui_timer.name[0..].ptr)];
-                        if (name_data.len == 0) {
-                            t.name = try @TypeOf(t.name).fromSlice("Unnamed Alarm");
-                        } else {
-                            t.name = try @TypeOf(t.name).fromSlice(name_data);
-                        }
-                        var should_save_or_create = false;
-                        switch (t.kind) {
-                            .timer => {
-                                const duration_time_str = ui_timer.duration_time[0..std.mem.len(ui_timer.duration_time[0..].ptr)];
-                                // validate and set fields
-                                if (duration_time_str.len == 0) {
-                                    ui_timer.errors.duration_time = "required field";
-                                } else {
-                                    t.timer_duration = Duration.parseString(duration_time_str) catch null;
-                                    if (t.timer_duration == null) {
-                                        ui_timer.errors.duration_time = "invalid value, expect format: 1h 30m 45s";
-                                    }
-                                }
-                                // If all fields are valid
-                                if (t.timer_duration != null) {
-                                    should_save_or_create = true;
-                                }
-                            },
-                            .alarm => {
-                                @panic("TODO: handle saving alarm");
-                            },
-                        }
-                        if (should_save_or_create) {
-                            if (ui_timer.id == -1) {
-                                // Create
-                                try state.user_settings.timers.append(t);
-                                ui_timer.id = @intCast(state.user_settings.timers.items.len - 1);
-                            } else {
-                                // Save
-                                state.user_settings.timers.items[@intCast(ui_timer.id)] = t;
-                            }
-                            state.ui.kind = .none;
-
-                            // save
-                            try UserConfig.save(state.temp_allocator.allocator(), state.user_settings);
-                        }
-                    }
-                    imgui.igSameLine(0, 8);
-                    if (imgui.igButton("Cancel", .{})) {
-                        state.ui.kind = .none;
-                    }
-                    if (!is_new) {
-                        imgui.igSameLine(0, 0);
-                        imgui.igSetCursorPosX(0);
-                        imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = imgui.igGetCursorPosY() }, imgui.ImGuiCond_Always, .{ .x = 1 });
-                        _ = imgui.igBegin("deletewindow", null, ImGuiDefaultWindowFlags);
-                        defer imgui.igEnd();
-                        if (imgui.igButton("Delete", .{})) {
-                            _ = state.user_settings.timers.orderedRemove(@intCast(ui_timer.id));
-                            state.ui.kind = .none;
-
-                            // save
-                            try UserConfig.save(state.temp_allocator.allocator(), state.user_settings);
-                        }
-                    }
+                    try ScreenAddEditTimer.render(app);
                 },
                 .options => {
-                    const ui_options = &state.ui.options;
-                    const ui_metadata = &state.ui.options_metadata;
-
-                    imgui.igPushItemWidth(300);
-                    defer imgui.igPopItemWidth();
-
-                    if (ui_options.os_startup) |os_startup| {
-                        var is_enabled = os_startup;
-                        if (imgui.igCheckbox("Open on startup", &is_enabled)) {
-                            if (!is_enabled) {
-                                ui_options.os_startup = false;
-                            } else {
-                                ui_options.os_startup = true;
-                            }
-                        }
-                    }
-
-                    if (state.ui.options_metadata.display_names_buf.len > 0) {
-                        var display_index_ui: c_int = @intCast(ui_options.display_index);
-                        _ = imgui.igCombo_Str(
-                            "Display",
-                            &display_index_ui,
-                            ui_metadata.display_names_buf.buffer[0..],
-                            0,
-                        );
-                        if (display_index_ui >= 0) {
-                            ui_options.display_index = @intCast(display_index_ui);
-                        }
-                    }
-
-                    var is_enabled = ui_options.is_activity_break_enabled;
-                    if (imgui.igCheckbox("Enable Activity Timer", &is_enabled)) {
-                        if (!is_enabled) {
-                            ui_options.is_activity_break_enabled = false;
-                        } else {
-                            ui_options.is_activity_break_enabled = true;
-                        }
-                    }
-
-                    if (imgui.igInputTextWithHint(
-                        "Time till break",
-                        try state.tprint("default: {sh}", .{state.user_settings.default_time_till_break}),
-                        ui_options.time_till_break[0..].ptr,
-                        ui_options.time_till_break.len,
-                        0,
-                        null,
-                        null,
-                    )) {
-                        ui_options.errors.time_till_break = ""; // reset error message if changed
-                    }
-                    if (ui_options.errors.time_till_break.len > 0) {
-                        _ = imgui.igText(try state.tprint("{s}", .{ui_options.errors.time_till_break}));
-                    }
-
-                    if (imgui.igInputTextWithHint(
-                        "Break time",
-                        try state.tprint("default: {sh}", .{state.user_settings.default_break_time}),
-                        ui_options.break_time[0..].ptr,
-                        ui_options.break_time.len,
-                        0,
-                        null,
-                        null,
-                    )) {
-                        ui_options.errors.break_time = ""; // reset error message if changed
-                    }
-                    if (ui_options.errors.break_time.len > 0) {
-                        _ = imgui.igText(try state.tprint("{s}", .{ui_options.errors.break_time}));
-                    }
-
-                    // Incoming break
-                    {
-                        const default_value = state.user_settings.default_incoming_break;
-                        const current_value = &ui_options.incoming_break;
-                        const error_message = &ui_options.errors.incoming_break;
-                        if (imgui.igInputTextWithHint(
-                            "Incoming break",
-                            try state.tprint("default: {sh}", .{default_value}),
-                            current_value[0..].ptr,
-                            current_value.len,
-                            0,
-                            null,
-                            null,
-                        )) {
-                            error_message.* = ""; // reset error message if changed
-                        }
-                        if (error_message.len > 0) {
-                            _ = imgui.igText(try state.tprint("{s}", .{error_message.*}));
-                        }
-                    }
-
-                    {
-                        const current_value = &ui_options.incoming_break_message;
-                        const error_message = &ui_options.errors.incoming_break_message;
-                        if (imgui.igInputTextWithHint(
-                            "Incoming break message",
-                            "default: (none)",
-                            current_value[0..].ptr,
-                            current_value.len,
-                            0,
-                            null,
-                            null,
-                        )) {
-                            error_message.* = ""; // reset error message if changed
-                        }
-                        if (error_message.len > 0) {
-                            _ = imgui.igText(try state.tprint("{s}", .{error_message.*}));
-                        }
-                    }
-
-                    {
-                        const current_value = &ui_options.max_snoozes_in_a_row;
-                        const error_message = &ui_options.errors.max_snoozes_in_a_row;
-                        if (imgui.igInputTextWithHint(
-                            "Max snoozes in a row (-1 = off)",
-                            "default: 2",
-                            current_value[0..].ptr,
-                            current_value.len,
-                            imgui.ImGuiInputTextFlags_CharsDecimal,
-                            null,
-                            null,
-                        )) {
-                            error_message.* = ""; // reset error message if changed
-                        }
-                        if (error_message.len > 0) {
-                            _ = imgui.igText(try state.tprint("{s}", .{error_message.*}));
-                        }
-                    }
-
-                    if (imgui.igButton("Save", .{})) {
-                        // Get time till break
-                        const time_till_break_str = ui_options.time_till_break[0..std.mem.len(ui_options.time_till_break[0..].ptr)];
-                        const time_till_break: ?Duration = blk: {
-                            const d = Duration.parseOptionalString(time_till_break_str) catch {
-                                ui_options.errors.time_till_break = "invalid value, expect format: 1h 30m 45s";
-                                break :blk null;
-                            };
-                            break :blk d;
-                        };
-
-                        // Get break time
-                        const break_time_str = ui_options.time_till_break[0..std.mem.len(ui_options.break_time[0..].ptr)];
-                        const break_time: ?Duration = blk: {
-                            const d = Duration.parseOptionalString(break_time_str) catch {
-                                ui_options.errors.break_time = "invalid value, expect format: 1h 30m 45s";
-                                break :blk null;
-                            };
-                            break :blk d;
-                        };
-
-                        // Get incoming break
-                        const incoming_break: ?Duration = blk: {
-                            const d = Duration.parseOptionalString(std.mem.span(ui_options.incoming_break[0..].ptr)) catch {
-                                ui_options.errors.incoming_break = "invalid value, expect format: 1h 30m 45s";
-                                break :blk null;
-                            };
-                            break :blk d;
-                        };
-
-                        // Get incoming break message
-                        const incoming_break_message = std.mem.span(ui_options.incoming_break_message[0..].ptr);
-
-                        // Get max snoozes in a row
-                        const max_snoozes_in_a_row: ?i32 = blk: {
-                            const value_as_string = std.mem.span(ui_options.max_snoozes_in_a_row[0..].ptr);
-                            if (value_as_string.len == 0) {
-                                break :blk null;
-                            }
-                            const error_message = &ui_options.errors.max_snoozes_in_a_row;
-                            const v = std.fmt.parseInt(i32, value_as_string, 10) catch |err| switch (err) {
-                                error.InvalidCharacter => {
-                                    error_message.* = "invalid character (must be blank or a number)";
-                                    break :blk null;
-                                },
-                                error.Overflow => {
-                                    error_message.* = "invalid amount (number too small or too large)";
-                                    break :blk null;
-                                },
-                            };
-                            if (v < 0 and v != UserConfig.Settings.MaxSnoozesDisabled) {
-                                error_message.* = "cannot be lower than 0, only -1 is allowed to disable snoozing completely";
-                                break :blk null;
-                            }
-                            break :blk v;
-                        };
-
-                        if (ui_options.os_startup) |os_startup| {
-                            switch (builtin.os.tag) {
-                                .windows => {
-                                    const temp_allocator = state.temp_allocator.allocator();
-                                    const startup_run = try winregistry.RegistryWtf8.openKey(std.os.windows.HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run", .{});
-                                    defer startup_run.closeKey();
-                                    if (!os_startup) {
-                                        startup_run.deleteValue("DeskBreaker") catch |err| switch (err) {
-                                            error.ValueNameNotFound => {}, // If entry doesn't exist, do nothing
-                                            else => return err,
-                                        };
-                                    } else {
-                                        const out_buf = try temp_allocator.alloc(u8, std.fs.max_path_bytes);
-                                        const exe_path = try std.fs.selfExePath(out_buf);
-                                        try startup_run.setString("DeskBreaker", exe_path);
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
-
-                        // Check each field in errors (currently just assume '[]const u8' type)
-                        var has_error = false;
-                        inline for (std.meta.fields(@TypeOf(ui_options.errors))) |f| {
-                            const errorField = @field(ui_options.errors, f.name);
-                            has_error = has_error or errorField.len > 0;
-                        }
-                        if (!has_error) {
-                            allocator.free(state.user_settings.settings.incoming_break_message);
-
-                            // update from fields / text
-                            state.user_settings.settings = .{
-                                .display_index = ui_options.display_index,
-                                .is_activity_break_enabled = ui_options.is_activity_break_enabled,
-                                .time_till_break = time_till_break,
-                                .break_time = break_time,
-                                .incoming_break = incoming_break,
-                                .incoming_break_message = try allocator.dupe(u8, incoming_break_message),
-                                .max_snoozes_in_a_row = max_snoozes_in_a_row,
-                            };
-
-                            // save
-                            try UserConfig.save(state.temp_allocator.allocator(), state.user_settings);
-
-                            // close
-                            state.ui.kind = .none;
-                        }
-                    }
-                    imgui.igSameLine(0, 8);
-                    if (imgui.igButton("Cancel", .{})) {
-                        state.ui.kind = .none;
-                    }
+                    try ScreenOptions.render(app);
                 },
             }
         }
 
-        if (state.mode != .incoming_break) {
-            for (state.popup_windows.items) |*window| {
-                window.deinit();
-            }
-            state.popup_windows.clearRetainingCapacity();
-        }
-        for (state.popup_windows.items) |*window| {
-            imgui.igSetCurrentContext(window.imgui_context);
-
-            const viewport: *imgui.ImGuiViewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
-                // If no viewport skip
-                continue;
-            };
-            const viewport_pos = viewport.Pos;
-            const viewport_size = viewport.Size;
-            imgui.igSetNextWindowPos(viewport_pos, 0, .{});
-            imgui.igSetNextWindowSize(viewport_size, 0);
-
-            if (!imgui.igBegin("incoming_break_window", null, ImGuiDefaultWindowFlags)) {
-                // if not rendering
-                continue;
-            }
-            defer imgui.igEnd();
-
-            const next_timer = state.time_till_next_timer_complete() orelse {
-                break;
-            };
-
-            var heading_text: [:0]const u8 = "Time in:";
-            if (next_timer.id >= 0) {
-                heading_text = "Timer or alarm in:";
-            } else {
-                switch (next_timer.id) {
-                    NextTimer.ActivityTimer => {
-                        heading_text = "Break time in:";
-                    },
-                    NextTimer.SnoozeTimer => {
-                        // TODO(jae): Better phrasing here, for now it informs you that you hit snooze already
-                        heading_text = "Snooze in:";
-                    },
-                    else => {},
-                }
-            }
-
-            imgui.igTextWrapped(heading_text);
-            imgui.igTextWrapped(try state.tprint("{s}", .{next_timer.time_till_next_break}));
-
-            const user_defined_incoming_break_message = state.user_settings.settings.incoming_break_message;
-            if (user_defined_incoming_break_message.len > 0) {
-                imgui.igNewLine();
-                imgui.igTextWrapped(try state.tprint("{s}", .{state.user_settings.settings.incoming_break_message}));
-            }
-
-            if (next_timer.id == NextTimer.ActivityTimer or
-                next_timer.id == NextTimer.SnoozeTimer)
-            {
-                if (state.can_snooze()) {
-                    if (imgui.igButton("Snooze", .{})) {
-                        state.snooze();
-                        try state.change_mode(.regular);
-                    }
-                }
-            }
-        }
+        // Render Incoming break popup(s)
+        try ScreenIncomingBreak.render(app);
 
         // Taking break windows
-        if (state.mode != .taking_break) {
-            for (state.taking_break_windows.items) |*window| {
-                window.deinit();
-            }
-            state.taking_break_windows.clearRetainingCapacity();
-        }
-        for (state.taking_break_windows.items) |*window| {
-            imgui.igSetCurrentContext(window.imgui_context);
-
-            const viewport = &imgui.igGetMainViewport()[0];
-            const viewport_pos = viewport.Pos;
-            const viewport_size = viewport.Size;
-            imgui.igSetNextWindowPos(viewport_pos, 0, .{});
-            imgui.igSetNextWindowSize(viewport_size, 0);
-
-            var has_triggered_exiting_break_mode = false;
-            const required_esc_presses = 30;
-
-            // Top-Left
-            {
-                imgui.igSetNextWindowPos(viewport_pos, 0, .{ .x = 0, .y = 0 });
-                _ = imgui.igBegin("break-top-left", null, ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
-                defer imgui.igEnd();
-
-                imgui.igText(try state.tprint("Time till break is over: {s}", .{
-                    state.break_mode.duration.diff(state.break_mode.timer.read()),
-                }));
-            }
-
-            // Top-Right
-            {
-                imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = 0 }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 0 });
-                _ = imgui.igBegin("break-top-right", null, ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
-                defer imgui.igEnd();
-
-                if (imgui.igButton("Exit", .{})) {
-                    if (state.break_mode.held_down_timer == null) {
-                        state.break_mode.held_down_timer = try time.Timer.start();
-                    }
-
-                    // increment exit presses
-                    state.break_mode.esc_or_exit_presses += 1;
-
-                    // DEBUG: Quit immediately as we're likely just testing the screen
-                    if (state.user_settings.time_till_break_or_default().nanoseconds <= 1 * time.ns_per_s) {
-                        has_quit = true;
-                    }
-                }
-            }
-
-            {
-                imgui.igSetNextWindowPos(.{ .x = viewport_size.x / 2, .y = viewport_size.y / 2 }, imgui.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
-                _ = imgui.igBegin("break-center", null, ImGuiDefaultWindowFlags);
-                defer imgui.igEnd();
-
-                const has_active_timers = timercheck: {
-                    for (state.user_settings.timers.items) |*t| {
-                        switch (t.kind) {
-                            .timer => {
-                                if (t.timer_started == null or // If not using this timer, skip
-                                    t.timer_duration == null // If no duration configured, skip
-                                ) {
-                                    continue;
-                                }
-                                break :timercheck true;
-                            },
-                            .alarm => @panic("TODO: Handle listing alarm"),
-                        }
-                    }
-                    break :timercheck false;
-                };
-                imgui.igText("It's time for a break. Get up, stretch your limbs a bit!");
-                if (has_active_timers) {
-                    imgui.igNewLine();
-                    imgui.igText("Timers:");
-                    for (state.user_settings.timers.items) |*t| {
-                        switch (t.kind) {
-                            .timer => {
-                                // If not using this timer, skip
-                                var timer_started = t.timer_started orelse continue;
-                                // If no duration configured, skip
-                                const timer_duration = t.timer_duration orelse continue;
-
-                                // Show timer with time left
-                                const duration_left = timer_duration.diff(timer_started.read());
-                                imgui.igText(try state.tprint("{s} - {s}", .{ t.name.slice(), duration_left }));
-                            },
-                            .alarm => @panic("TODO: Handle listing alarm"),
-                        }
-                    }
-                }
-                // if (builtin.mode == .Debug) {
-                //     imgui.igText("Daily To-Do List");
-                //     _ = imgui.igCheckbox("Todo Item One", &todo_checkbox);
-                //     _ = imgui.igCheckbox("Todo Item Two", &todo_checkbox);
-                //     _ = imgui.igCheckbox("Todo Item Three", &todo_checkbox);
-                // }
-            }
-
-            // Bottom-right
-            {
-                imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 1 });
-                _ = imgui.igBegin("break-bottom-right-corner", null, ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
-                defer imgui.igEnd();
-
-                if (state.break_mode.held_down_timer) |*exit_timer| {
-                    imgui.igText(
-                        try state.tprint("Will exit in: {s}", .{state.user_settings.exit_time_or_default().diff(exit_timer.read())}),
-                    );
-                }
-
-                if (state.break_mode.esc_or_exit_presses > 1) {
-                    imgui.igText(
-                        try state.tprint("Presses until exit: {}/{}", .{ state.break_mode.esc_or_exit_presses, required_esc_presses }),
-                    );
-                }
-
-                if (state.can_snooze()) {
-                    if (imgui.igButton("Snooze", .{})) {
-                        state.snooze();
-                        has_triggered_exiting_break_mode = true;
-                    }
-                }
-            }
-
-            // Check if triggered exit break mode manually
-            if (state.break_mode.held_down_timer) |*exit_timer| {
-                const exit_time_left = state.user_settings.exit_time_or_default().diff(exit_timer.read());
-                if (exit_time_left.nanoseconds <= 0) {
-                    has_triggered_exiting_break_mode = true;
-                }
-            }
-            if (state.break_mode.esc_or_exit_presses >= required_esc_presses) {
-                has_triggered_exiting_break_mode = true;
-            }
-            if (has_triggered_exiting_break_mode) {
-                // NOTE(jae): 2024-11-25: should this also reset "state.snooze_times_in_a_row"? :thinking_emoji:
-                try state.change_mode(.regular);
-            }
-        }
+        try ScreenTakingBreak.render(app);
 
         // NOTE(jae): 2024-07-28
         // May want to disable this logic if using vsync
@@ -1274,13 +550,11 @@ pub fn main() !void {
         const renderWindow = struct {
             pub fn renderWindow(window: *Window) void {
                 const renderer = window.renderer;
-                imgui.igSetCurrentContext(window.imgui_context);
-                imgui.igRender();
 
                 _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
                 _ = sdl.SDL_RenderClear(renderer);
 
-                imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
+                window.imguiRender();
                 if (!sdl.SDL_RenderPresent(renderer)) {
                     // TODO: Handle not rendering?
                     @panic("SDL_RenderPresent failed for main application window");
@@ -1289,13 +563,13 @@ pub fn main() !void {
         }.renderWindow;
 
         // Render app window
-        if (state.window) |app_window| {
+        if (app.window) |app_window| {
             renderWindow(app_window);
         }
-        for (state.popup_windows.items) |*incoming_break_window| {
+        for (app.popup_windows.items) |*incoming_break_window| {
             renderWindow(incoming_break_window);
         }
-        for (state.taking_break_windows.items) |*taking_break_window| {
+        for (app.taking_break_windows.items) |*taking_break_window| {
             renderWindow(taking_break_window);
         }
     }
