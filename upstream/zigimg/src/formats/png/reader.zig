@@ -13,6 +13,9 @@ const utils = @import("../../utils.zig");
 
 // Png specification: http://www.libpng.org/pub/png/spec/iso/index-object.html
 
+// mlarouche: Enable this to step into the processors with a debugger
+const PNG_DEBUG = false;
+
 pub fn isChunkCritical(id: u32) bool {
     return (id & 0x20000000) == 0;
 }
@@ -73,7 +76,7 @@ const IDatChunksReader = struct {
     }
 
     fn fillBuffer(self: *Self, to_read: usize) ImageUnmanaged.ReadError!usize {
-        @memcpy(self.buffer[0..self.data.len], self.data);
+        mem.copyForwards(u8, self.buffer[0..self.data.len], self.data);
         const new_start = self.data.len;
         var max = self.buffer.len;
         if (max > self.remaining_chunk_length) {
@@ -293,13 +296,22 @@ fn readAllData(
     var decompress_stream = std.compress.zlib.decompressor(idat_reader);
 
     if (palette.len > 0) {
-        var destination_palette = if (result.getPalette()) |result_palette|
-            result_palette
-        else
-            try options.temp_allocator.alloc(color.Rgba32, palette.len);
+        var destination_palette = blk: {
+            if (result.isIndexed()) {
+                result.resizePalette(palette.len);
+
+                if (result.getPalette()) |result_palette| {
+                    break :blk result_palette;
+                }
+            }
+
+            break :blk try options.temp_allocator.alloc(color.Rgba32, palette.len);
+        };
+
         for (palette, 0..) |entry, n| {
             destination_palette[n] = color.Rgba32.initRgb(entry.r, entry.g, entry.b);
         }
+
         try callPaletteProcessors(options, destination_palette);
     }
 
@@ -639,21 +651,21 @@ pub const ReaderProcessor = struct {
         const Ptr = @TypeOf(context);
         const ptr_info = @typeInfo(Ptr);
 
-        std.debug.assert(ptr_info == .Pointer); // Must be a pointer
-        std.debug.assert(ptr_info.Pointer.size == .One); // Must be a single-item pointer
+        std.debug.assert(ptr_info == .pointer); // Must be a pointer
+        std.debug.assert(ptr_info.pointer.size == .one); // Must be a single-item pointer
 
         const gen = struct {
             fn chunkProcessor(ptr: *anyopaque, data: *ChunkProcessData) ImageUnmanaged.ReadError!PixelFormat {
                 const self: Ptr = @ptrCast(@alignCast(ptr));
-                return @call(.always_inline, chunkProcessorFn.?, .{ self, data });
+                return @call(if (PNG_DEBUG) .auto else .always_inline, chunkProcessorFn.?, .{ self, data });
             }
             fn paletteProcessor(ptr: *anyopaque, data: *PaletteProcessData) ImageUnmanaged.ReadError!void {
                 const self: Ptr = @ptrCast(@alignCast(ptr));
-                return @call(.always_inline, paletteProcessorFn.?, .{ self, data });
+                return @call(if (PNG_DEBUG) .auto else .always_inline, paletteProcessorFn.?, .{ self, data });
             }
             fn dataRowProcessor(ptr: *anyopaque, data: *RowProcessData) ImageUnmanaged.ReadError!PixelFormat {
                 const self: Ptr = @ptrCast(@alignCast(ptr));
-                return @call(.always_inline, dataRowProcessorFn.?, .{ self, data });
+                return @call(if (PNG_DEBUG) .auto else .always_inline, dataRowProcessorFn.?, .{ self, data });
             }
 
             const vtable = VTable{
@@ -755,7 +767,7 @@ pub const TrnsProcessor = struct {
         };
         var pixel_pos: u32 = 0;
         // work around broken saturating arithmetic on wasm https://github.com/llvm/llvm-project/issues/58557
-        const isWasm = comptime @import("builtin").target.isWasm();
+        const isWasm = comptime @import("builtin").target.cpu.arch.isWasm();
         switch (self.trns_data) {
             .gray => |gray_alpha| {
                 switch (data.src_format) {
@@ -839,7 +851,18 @@ pub const PlteProcessor = struct {
             return result_format;
         }
 
-        return .rgba32;
+        const palette_size = data.chunk_length / 3;
+        if (palette_size <= 2) {
+            return .indexed1;
+        } else if (palette_size <= 4) {
+            return .indexed2;
+        } else if (palette_size <= 16) {
+            return .indexed4;
+        } else if (palette_size <= 256) {
+            return .indexed8;
+        } else {
+            return .indexed16;
+        }
     }
 
     pub fn processPalette(self: *Self, data: *PaletteProcessData) ImageUnmanaged.ReadError!void {
@@ -939,7 +962,7 @@ else
         }
     };
 
-pub const NoopAllocator = Allocator.VTable{ .alloc = undefined, .free = undefined, .resize = undefined };
+pub const NoopAllocator = Allocator.VTable{ .alloc = undefined, .free = undefined, .remap = undefined, .resize = undefined };
 
 /// Applications can override this by defining DefaultPngOptions struct in their root source file.
 /// We would like to use FixedBufferAllocator with memory from stack here since we should be able
@@ -996,7 +1019,7 @@ test "spreadRowData" {
     var channel_count: u8 = 1;
     var bit_depth: u8 = 1;
     // 16 destination bytes, filter byte and two more bytes of current_row
-    var dest_buffer = [_]u8{0} ** 32;
+    var dest_buffer: [32]u8 = @splat(0);
     var cur_buffer = [_]u8{ 0, 0, 0, 0, 0xa5, 0x7c, 0x39, 0xf2, 0x5b, 0x15, 0x78, 0xd1 };
     var dest_row: []u8 = dest_buffer[0..16];
     var current_row: []u8 = cur_buffer[3..6];

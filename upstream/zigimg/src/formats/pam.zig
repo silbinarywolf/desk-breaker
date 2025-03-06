@@ -230,6 +230,7 @@ const Header = struct {
             .indexed8,
             .indexed16,
             .float32,
+            .rgb332,
             .rgb565,
             => return error.Unsupported, // unsupported pixel format
 
@@ -322,15 +323,10 @@ pub const PAM = struct {
 
     pub fn formatInterface() FormatInterface {
         return FormatInterface{
-            .format = format,
             .formatDetect = formatDetect,
             .readImage = readImage,
             .writeImage = writeImage,
         };
-    }
-
-    pub fn format() ImageUnmanaged.Format {
-        return ImageUnmanaged.Format.pam;
     }
 
     /// Returns `true` if the image will be able to be decoded, or a

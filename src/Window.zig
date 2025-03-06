@@ -4,7 +4,7 @@ const builtin = @import("builtin");
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 
-const log = std.log.default;
+const log = std.log.scoped(.Window);
 const assert = std.debug.assert;
 
 pub const Options = struct {
@@ -74,12 +74,16 @@ pub fn init(options: Options) !@This() {
         log.err("SDL_CreateWindowWithProperties failed: {s}", .{sdl.SDL_GetError()});
         return error.SdlFailed;
     };
-    if (options.icon) |icon| {
-        if (!sdl.SDL_SetWindowIcon(window, icon)) {
-            log.err("unable to set window icon: {s}", .{sdl.SDL_GetError()});
-            return error.SDLFailed;
+
+    if (builtin.os.tag != .emscripten) {
+        if (options.icon) |icon| {
+            if (!sdl.SDL_SetWindowIcon(window, icon)) {
+                log.err("unable to set window icon: {s}", .{sdl.SDL_GetError()});
+                return error.SDLFailed;
+            }
         }
     }
+
     // TODO(jae): 2024-08-20
     // Add option to use hardware accelerated instead.
     // Defaulting to software rendering so this can run without taxing games / GPU usage

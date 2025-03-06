@@ -1,9 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 // const android = @import("zig-android-sdk");
+const emscripten = @import("emscripten");
 
 const app_name = "Desk Breaker";
-const recommended_zig_version = "0.13.0";
+const recommended_zig_version = "0.14.0";
 
 pub fn build(b: *std.Build) !void {
     switch (comptime builtin.zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {
@@ -75,7 +76,12 @@ pub fn build(b: *std.Build) !void {
     // };
 
     for (targets) |target| {
-        var exe: *std.Build.Step.Compile = if (target.result.isAndroid()) b.addSharedLibrary(.{
+        var exe: *std.Build.Step.Compile = if (target.result.abi.isAndroid()) b.addSharedLibrary(.{
+            .name = exe_name,
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }) else if (target.result.os.tag == .emscripten) b.addStaticLibrary(.{
             .name = exe_name,
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -142,10 +148,10 @@ pub fn build(b: *std.Build) !void {
             // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
             // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
             if (target.result.os.tag == .macos and b.graph.host.result.os.tag != .macos) {
-                if (b.host.result.os.tag == .windows) {
+                if (b.graph.host.result.os.tag == .windows) {
                     @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
                 }
-                const maybe_macos_sdk = b.lazyDependency("macos-sdk", .{});
+                const maybe_macos_sdk = b.lazyDependency("macos_sdk", .{});
                 if (maybe_macos_sdk) |macos_sdk| {
                     const macos_sdk_path = macos_sdk.path("");
 
@@ -171,7 +177,11 @@ pub fn build(b: *std.Build) !void {
                 .optimize = .ReleaseFast,
             });
             const freetype_lib = freetype_dep.artifact("freetype");
-            exe.root_module.linkLibrary(freetype_lib);
+            if (target.result.os.tag != .emscripten) {
+                // NOTE(jae): 2025-02-02
+                // Link with Emscripten toolchains version instead due to setjmp/etc symbols not being found.
+                exe.root_module.linkLibrary(freetype_lib);
+            }
             exe.root_module.addImport("freetype", freetype_dep.module("freetype"));
             break :blk freetype_lib;
         };
@@ -221,7 +231,7 @@ pub fn build(b: *std.Build) !void {
             exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
         }
 
-        if (target.result.isAndroid()) {
+        if (target.result.abi.isAndroid()) {
             @panic("not using Android SDK");
             // const apk: *android.APK = android_apk orelse @panic("Android APK should be initialized");
             // const android_dep = b.dependency("zig-android-sdk", .{
@@ -231,6 +241,17 @@ pub fn build(b: *std.Build) !void {
             // exe.root_module.addImport("android", android_dep.module("android"));
             //
             // apk.addArtifact(exe);
+        } else if (target.result.os.tag == .emscripten) {
+            const em = emscripten.Tools.create(b, .{
+                .version = "3.1.53",
+            }) orelse break;
+
+            const run_step = b.step("run", "Run the application in browser");
+            const emcc_cmd = em.addRunArtifact(exe);
+            run_step.dependOn(&emcc_cmd.step);
+
+            const installed_web_html = em.addInstallArtifact(exe);
+            b.getInstallStep().dependOn(&installed_web_html.step);
         } else {
             const run_step = b.step("run", "Run the application");
             const run_cmd = b.addRunArtifact(exe);

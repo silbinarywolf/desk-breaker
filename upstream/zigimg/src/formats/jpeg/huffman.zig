@@ -14,6 +14,8 @@ const HuffmanCodeMap = std.AutoArrayHashMap(HuffmanCode, u8);
 const JPEG_DEBUG = false;
 const JPEG_VERY_DEBUG = false;
 
+const fast_bits = 9;
+
 pub const Table = struct {
     const Self = @This();
 
@@ -21,6 +23,8 @@ pub const Table = struct {
 
     code_counts: [16]u8,
     code_map: HuffmanCodeMap,
+    fast_table: [1 << fast_bits]u8,
+    fast_size: [1 << fast_bits]u5,
 
     table_class: u8,
 
@@ -29,7 +33,7 @@ pub const Table = struct {
             return ImageReadError.InvalidData;
 
         var code_counts: [16]u8 = undefined;
-        if ((try reader.read(code_counts[0..])) < 16) {
+        if ((try reader.readAll(code_counts[0..])) < 16) {
             return ImageReadError.InvalidData;
         }
 
@@ -40,6 +44,9 @@ pub const Table = struct {
 
         var huffman_code_map = HuffmanCodeMap.init(allocator);
         errdefer huffman_code_map.deinit();
+
+        var fast_table: [1 << fast_bits]u8 = @splat(255);
+        var fast_size: [1 << fast_bits]u5 = @splat(0);
 
         if (JPEG_VERY_DEBUG) std.debug.print("  Decoded huffman codes map:\n", .{});
 
@@ -64,6 +71,17 @@ pub const Table = struct {
                 const byte = try reader.readByte();
                 try huffman_code_map.put(.{ .length_minus_one = @as(u4, @intCast(i)), .code = code }, byte);
 
+                // construct accelaration structure see stb_image
+                if (i + 1 <= fast_bits) {
+                    const first_index = code << fast_bits - @as(u4, @intCast(i + 1));
+                    const num_indexes = @as(usize, 1) << @as(u4, @intCast(fast_bits - (i + 1)));
+                    for (0..num_indexes) |index| {
+                        std.debug.assert(fast_table[first_index + index] == 255);
+                        fast_table[first_index + index] = byte;
+                        fast_size[first_index + index] = @as(u5, @intCast(i + 1));
+                    }
+                }
+
                 if (JPEG_VERY_DEBUG) std.debug.print("      {b} => 0x{X}\n", .{ code, byte });
                 code += 1;
             }
@@ -75,6 +93,8 @@ pub const Table = struct {
             .allocator = allocator,
             .code_counts = code_counts,
             .code_map = huffman_code_map,
+            .fast_table = fast_table,
+            .fast_size = fast_size,
             .table_class = table_class,
         };
     }
@@ -89,13 +109,14 @@ pub const Reader = struct {
 
     table: ?*const Table = null,
     reader: buffered_stream_source.DefaultBufferedStreamSourceReader.Reader,
-    byte_buffer: u8 = 0,
-    bits_left: u4 = 0,
-    last_byte_was_ff: bool = false,
+    stream: *buffered_stream_source.DefaultBufferedStreamSourceReader,
+    bit_buffer: u32 = 0,
+    bit_count: u5 = 0,
 
-    pub fn init(reader: buffered_stream_source.DefaultBufferedStreamSourceReader.Reader) Self {
+    pub fn init(stream: *buffered_stream_source.DefaultBufferedStreamSourceReader) Self {
         return .{
-            .reader = reader,
+            .reader = stream.reader(),
+            .stream = stream,
         };
     }
 
@@ -103,34 +124,87 @@ pub const Reader = struct {
         self.table = table;
     }
 
-    fn readBit(self: *Self) ImageReadError!u1 {
-        if (self.bits_left == 0) {
-            self.byte_buffer = try self.reader.readByte();
-
-            if (self.byte_buffer == 0 and self.last_byte_was_ff) {
-                // This was a stuffed byte, read one more.
-                self.byte_buffer = try self.reader.readByte();
-            }
-            self.last_byte_was_ff = self.byte_buffer == 0xFF;
-            self.bits_left = 8;
+    pub fn peekBits(self: *Self, num_bits: u5) ImageReadError!u32 {
+        if (num_bits > 16) {
+            return ImageReadError.InvalidData;
         }
 
-        const bit: u1 = @intCast(self.byte_buffer >> 7);
-        self.byte_buffer <<= 1;
-        self.bits_left -= 1;
+        try self.fillBits(num_bits);
 
-        return bit;
+        return (self.bit_buffer >> 1) >> (31 - num_bits);
+    }
+
+    pub fn fillBits(self: *Self, num_bits: u5) ImageReadError!void {
+        while (self.bit_count < num_bits) {
+            var byte_curr: u32 = try self.reader.readByte();
+
+            while (byte_curr == 0xFF) {
+                const byte_next: u8 = try self.reader.readByte();
+
+                if (byte_next == 0x00) {
+                    break;
+                } else if (byte_next == 0xFF) {
+                    continue;
+                } else if (byte_next >= 0xD0 and byte_next <= 0xD7) {
+                    byte_curr = try self.reader.readByte();
+                } else {
+                    try self.stream.seekBy(-2);
+                    return ImageReadError.InvalidData;
+                }
+            }
+
+            self.bit_buffer |= byte_curr << (24 - self.bit_count);
+            self.bit_count += 8;
+        }
+    }
+
+    pub fn consumeBits(self: *Self, num_bits: u5) void {
+        std.debug.assert(num_bits <= self.bit_count and num_bits <= 16);
+
+        self.bit_buffer <<= num_bits;
+        self.bit_count -= num_bits;
+    }
+
+    pub fn readBits(self: *Self, num_bits: u5) ImageReadError!u32 {
+        const bits: u32 = try peekBits(self, num_bits);
+        consumeBits(self, num_bits);
+        return bits;
+    }
+
+    pub fn flushBits(self: *Self) void {
+        if (self.bit_count > 8 and self.bit_count % 8 != 0) {
+            const bits_to_flush: u5 = self.bit_count % 8;
+            self.bit_buffer <<= bits_to_flush;
+            self.bit_count = self.bit_count - bits_to_flush;
+        } else if (self.bit_count % 8 == 0) {
+            return;
+        } else if (self.bit_count < 8) {
+            self.bit_buffer = 0;
+            self.bit_count = 0;
+        } else {
+            unreachable;
+        }
     }
 
     pub fn readCode(self: *Self) ImageReadError!u8 {
-        var code: u16 = 0;
+        const fast_index = self.peekBits(fast_bits) catch 0;
 
-        var i: u5 = 0;
-        while (i < 16) : (i += 1) {
-            // NOTE: if the table is stored as a tree, this is O(1) to update the new node,
-            // instead of O(log n), so should be faster.
-            code = (code << 1) | (try self.readBit());
-            if (self.table.?.code_map.get(.{ .length_minus_one = @intCast(i), .code = code })) |value| {
+        if (self.bit_count >= fast_bits) {
+            const value = self.table.?.fast_table[fast_index];
+            if (value != 255) {
+                const length = self.table.?.fast_size[fast_index];
+                self.consumeBits(length);
+                return value;
+            }
+        }
+
+        var code: u32 = 0;
+
+        var length: u5 = if (self.bit_count < fast_bits) 1 else fast_bits + 1;
+        while (length <= 16) : (length += 1) {
+            code = try self.peekBits(length);
+            if (self.table.?.code_map.get(.{ .length_minus_one = @intCast(length - 1), .code = @intCast(code) })) |value| {
+                self.consumeBits(length);
                 return value;
             }
         }
@@ -139,38 +213,18 @@ pub const Reader = struct {
         return ImageReadError.InvalidData;
     }
 
-    pub fn readLiteralBits(self: *Self, bitsNeeded: u8) ImageReadError!u32 {
-        var bits: u32 = 0;
-
-        var i: usize = 0;
-        while (i < bitsNeeded) : (i += 1) {
-            bits = (bits << 1) | (try self.readBit());
-        }
-
-        return bits;
-    }
-
     /// This function implements T.81 section F1.2.1, Huffman encoding of DC coefficients.
     pub fn readMagnitudeCoded(self: *Self, magnitude: u5) ImageReadError!i32 {
         if (magnitude == 0)
             return 0;
 
-        const bits = try self.readLiteralBits(magnitude);
+        var coeff: i32 = @intCast(try self.peekBits(magnitude));
+        self.consumeBits(magnitude);
 
-        // The sign of the read bits value.
-        const bits_sign = (bits >> (magnitude - 1)) & 1;
-        // The mask for clearing the sign bit.
-        const bits_mask = (@as(u32, 1) << (magnitude - 1)) - 1;
-        // The bits without the sign bit.
-        const unsigned_bits = bits & bits_mask;
+        if (coeff < @as(i32, 1) << (magnitude - 1)) {
+            coeff -= (@as(i32, 1) << magnitude) - 1;
+        }
 
-        // The magnitude base value. This is -2^n+1 when bits_sign == 0, and
-        // 2^(n-1) when bits_sign == 1.
-        const base = if (bits_sign == 0)
-            -(@as(i32, 1) << magnitude) + 1
-        else
-            (@as(i32, 1) << (magnitude - 1));
-
-        return base + @as(i32, @bitCast(unsigned_bits));
+        return coeff;
     }
 };

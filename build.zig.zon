@@ -1,6 +1,6 @@
 // https://github.com/ziglang/zig/blob/master/doc/build.zig.zon.md
 .{
-    .name = "desk-breaker",
+    .name = .desk_breaker,
     .version = "0.0.0",
     .dependencies = .{
         .sdl = .{
@@ -14,8 +14,6 @@
         },
         .zigimg = .{
             .path = "upstream/zigimg",
-            // .url = "https://github.com/zigimg/zigimg/archive/d9dbbe22b5f7b5f1f4772169ed93ffeed8e8124d.tar.gz",
-            // .hash = "122013646f7038ecc71ddf8a0d7de346d29a6ec40140af57f838b0a975c69af512b0",
         },
         // NOTE(jae): 2024-11-05
         // Used as experiment to run Desk Breaker on Android
@@ -24,9 +22,15 @@
         //     .hash = "12206ac089f1f74b08c0d64179203ef6417159376f89f9fd68e6fe844bd15d20559f",
         //     .lazy = true,
         // },
+        // NOTE(jae): 2024-11-05
+        // Used as experiment to run Desk Breaker in browser
+        .emscripten = .{
+            .path = "third-party/emscripten",
+            .lazy = true,
+        },
         // NOTE(jae): 2024-07-31
         // Experiment with MacOS cross-compilation
-        .@"macos-sdk" = .{
+        .macos_sdk = .{
             .url = "https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz",
             .hash = "1220370aa34744d76093a36bf29a67da94ad5c5888ee79c2bbc89e2e2a9572d1ab19",
             .lazy = true,
@@ -39,4 +43,5 @@
         "build.zig.zon",
         "src",
     },
+    .fingerprint = 0x54c45984eb95c957,
 }

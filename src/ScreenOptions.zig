@@ -9,25 +9,33 @@ const Duration = @import("Duration.zig");
 const App = @import("App.zig");
 const Timer = App.Timer;
 
-const log = std.log.default;
+const log = std.log.scoped(.ScreenOptions);
 const assert = std.debug.assert;
 
 pub fn open(app: *App) !void {
+    if (!app.ui.ui_allocator.reset(.retain_capacity)) {
+        log.debug("[ui allocator] failed to reset", .{});
+    }
+
+    const ui_options = &app.ui.options;
     app.ui.options = .{
         // ... resets all options ui state ...
         // set this
         .is_activity_break_enabled = app.user_settings.settings.is_activity_break_enabled,
         .display_index = app.user_settings.settings.display_index,
         // set below...
-        // .time_till_break =
+        .time_till_break = try app.ui.allocDuration(app.user_settings.settings.time_till_break),
+        .break_time = try app.ui.allocDuration(app.user_settings.settings.break_time),
+        // .incoming_break =
+        // .incoming_break_message =
+        // .max_snoozes_in_a_row =
         // .break_time =
         // .incoming_break =
         // .incoming_break_message =
         // .max_snoozes_in_a_row =
     };
-    const ui_options = &app.ui.options;
-    if (app.user_settings.settings.time_till_break) |td| _ = try std.fmt.bufPrintZ(ui_options.time_till_break[0..], "{sh}", .{td});
-    if (app.user_settings.settings.break_time) |td| _ = try std.fmt.bufPrintZ(ui_options.break_time[0..], "{sh}", .{td});
+
+    // TODO: Switch each item to new temporary allocator
     if (app.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
     if (app.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{app.user_settings.settings.incoming_break_message});
     if (app.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| {
@@ -63,8 +71,8 @@ pub fn open(app: *App) !void {
     // - Windows: "0: MSI G241", "1: UGREEN"
     // - MacOS: "0: 0" and "1: 1"
     {
-        // Reset list
-        app.ui.options_metadata.display_names_buf.len = 0;
+        // Reset options
+        app.ui.options_metadata = .{};
 
         var display_count: c_int = undefined;
         const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
@@ -212,31 +220,24 @@ pub fn render(app: *App) !void {
     }
 
     if (imgui.igButton("Save", .{})) {
+        const InvalidDurationMessage = "invalid value, expect format: 1h 30m 45s";
+
         // Get time till break
-        const time_till_break: ?Duration = blk: {
-            const d = Duration.parseOptionalString(std.mem.span(ui_options.time_till_break[0..].ptr)) catch {
-                ui_options.errors.time_till_break = "invalid value, expect format: 1h 30m 45s";
-                break :blk null;
-            };
-            break :blk d;
+        const time_till_break: ?Duration = Duration.parseOptionalString(std.mem.span(ui_options.time_till_break[0..].ptr)) catch blk: {
+            ui_options.errors.time_till_break = InvalidDurationMessage;
+            break :blk null;
         };
 
         // Get break time
-        const break_time: ?Duration = blk: {
-            const d = Duration.parseOptionalString(std.mem.span(ui_options.break_time[0..].ptr)) catch {
-                ui_options.errors.break_time = "invalid value, expect format: 1h 30m 45s";
-                break :blk null;
-            };
-            break :blk d;
+        const break_time: ?Duration = Duration.parseOptionalString(std.mem.span(ui_options.break_time[0..].ptr)) catch blk: {
+            ui_options.errors.break_time = InvalidDurationMessage;
+            break :blk null;
         };
 
         // Get incoming break
-        const incoming_break: ?Duration = blk: {
-            const d = Duration.parseOptionalString(std.mem.span(ui_options.incoming_break[0..].ptr)) catch {
-                ui_options.errors.incoming_break = "invalid value, expect format: 1h 30m 45s";
-                break :blk null;
-            };
-            break :blk d;
+        const incoming_break: ?Duration = Duration.parseOptionalString(std.mem.span(ui_options.incoming_break[0..].ptr)) catch blk: {
+            ui_options.errors.incoming_break = InvalidDurationMessage;
+            break :blk null;
         };
 
         // Get incoming break message
@@ -294,6 +295,7 @@ pub fn render(app: *App) !void {
             has_error = has_error or errorField.len > 0;
         }
         if (!has_error) {
+            // free allocated data that changed (strings)
             app.allocator.free(app.user_settings.settings.incoming_break_message);
 
             // update from fields / text

@@ -13,7 +13,7 @@ pub inline fn scaleToIntColor(comptime T: type, value: anytype) T {
     const ValueT = @TypeOf(value);
     if (ValueT == comptime_int) return @as(T, value);
     const ValueTypeInfo = @typeInfo(ValueT);
-    if (ValueTypeInfo != .Int or ValueTypeInfo.Int.signedness != .unsigned) {
+    if (ValueTypeInfo != .int or ValueTypeInfo.int.signedness != .unsigned) {
         @compileError("scaleToInColor only accepts unsigned integers as values. Got " ++ @typeName(ValueT) ++ ".");
     }
     const cur_value_bits = @bitSizeOf(ValueT);
@@ -370,6 +370,18 @@ pub const Bgr555 = packed struct {
     pub usingnamespace RgbMethods(@This(), u5, u5, u5, void);
 };
 
+// Rgb332
+// OpenGL: GL_R3_G3_B2
+// Vulkan: n/a
+// Direct3D/DXGI: n/a
+pub const Rgb332 = packed struct {
+    r: u3,
+    g: u3,
+    b: u2,
+
+    pub usingnamespace RgbMethods(@This(), u3, u3, u2, void);
+};
+
 // Rgb555
 // OpenGL: GL_RGB5
 // Vulkan: VK_FORMAT_R5G5B5A1_UNORM_PACK16
@@ -474,20 +486,36 @@ pub fn IndexedStorage(comptime T: type) type {
         const Self = @This();
 
         pub fn init(allocator: Allocator, pixel_count: usize) !Self {
-            const result = Self{
+            return initPaletteSize(allocator, pixel_count, PaletteSize);
+        }
+
+        pub fn initPaletteSize(allocator: Allocator, pixel_count: usize, palette_size: usize) !Self {
+            std.debug.assert(palette_size <= PaletteSize);
+
+            // Allocate the full capacity of the palette but reduce its length to the requested size
+            var result = Self{
                 .indices = try allocator.alloc(T, pixel_count),
                 .palette = try allocator.alloc(Rgba32, PaletteSize),
             };
 
-            // Since not all palette entries need to be filled we make sure
-            // they are all zero at the start.
-            @memset(result.palette, Rgba32.initRgba(0, 0, 0, 0));
+            result.palette.len = palette_size;
+
+            // Palette is filled with a opaque black by default. Having palette not use
+            // alpha is a good heuristic for indexed PNG to not add the transparency chunk.
+            @memset(result.palette, Rgba32.initRgba(0, 0, 0, 255));
             return result;
         }
 
         pub fn deinit(self: Self, allocator: Allocator) void {
-            allocator.free(self.palette);
+            var full_palette = self.palette;
+            full_palette.len = PaletteSize;
+            allocator.free(full_palette);
             allocator.free(self.indices);
+        }
+
+        pub fn resizePalette(self: *Self, new_palette_size: usize) void {
+            std.debug.assert(new_palette_size <= PaletteSize);
+            self.palette.len = new_palette_size;
         }
     };
 }
@@ -557,6 +585,7 @@ pub const PixelStorage = union(PixelFormat) {
     grayscale16: []Grayscale16,
     grayscale8Alpha: []Grayscale8Alpha,
     grayscale16Alpha: []Grayscale16Alpha,
+    rgb332: []Rgb332,
     rgb555: []Rgb555,
     rgb565: []Rgb565,
     rgb24: []Rgb24,
@@ -645,6 +674,11 @@ pub const PixelStorage = union(PixelFormat) {
                     .rgba32 = try allocator.alloc(Rgba32, pixel_count),
                 };
             },
+            .rgb332 => {
+                return .{
+                    .rgb332 = try allocator.alloc(Rgb332, pixel_count),
+                };
+            },
             .rgb565 => {
                 return .{
                     .rgb565 = try allocator.alloc(Rgb565, pixel_count),
@@ -720,6 +754,11 @@ pub const PixelStorage = union(PixelFormat) {
                     .grayscale16Alpha = @constCast(@alignCast(std.mem.bytesAsSlice(Grayscale16Alpha, pixels))),
                 };
             },
+            .rgb332 => {
+                return .{
+                    .rgb332 = @constCast(std.mem.bytesAsSlice(Rgb332, pixels)),
+                };
+            },
             .rgb555 => {
                 return .{
                     .rgb555 = @constCast(@alignCast(std.mem.bytesAsSlice(Rgb555, pixels))),
@@ -791,6 +830,7 @@ pub const PixelStorage = union(PixelFormat) {
             .grayscale16Alpha => |data| allocator.free(data),
             .rgb24 => |data| allocator.free(data),
             .rgba32 => |data| allocator.free(data),
+            .rgb332 => |data| allocator.free(data),
             .rgb565 => |data| allocator.free(data),
             .rgb555 => |data| allocator.free(data),
             .bgr555 => |data| allocator.free(data),
@@ -819,6 +859,7 @@ pub const PixelStorage = union(PixelFormat) {
             .grayscale16Alpha => |data| data.len,
             .rgb24 => |data| data.len,
             .rgba32 => |data| data.len,
+            .rgb332 => |data| data.len,
             .rgb565 => |data| data.len,
             .rgb555 => |data| data.len,
             .bgr555 => |data| data.len,
@@ -852,6 +893,17 @@ pub const PixelStorage = union(PixelFormat) {
         };
     }
 
+    pub fn resizePalette(self: *PixelStorage, new_palette_size: usize) void {
+        switch (self.*) {
+            .indexed1 => |*data| data.resizePalette(new_palette_size),
+            .indexed2 => |*data| data.resizePalette(new_palette_size),
+            .indexed4 => |*data| data.resizePalette(new_palette_size),
+            .indexed8 => |*data| data.resizePalette(new_palette_size),
+            .indexed16 => |*data| data.resizePalette(new_palette_size),
+            else => {},
+        }
+    }
+
     /// Return the pixel data as a const byte slice
     pub fn asBytes(self: PixelStorage) []u8 {
         return switch (self) {
@@ -870,6 +922,7 @@ pub const PixelStorage = union(PixelFormat) {
             .grayscale16Alpha => |data| std.mem.sliceAsBytes(data),
             .rgb24 => |data| std.mem.sliceAsBytes(data),
             .rgba32 => |data| std.mem.sliceAsBytes(data),
+            .rgb332 => |data| std.mem.sliceAsBytes(data),
             .rgb565 => |data| std.mem.sliceAsBytes(data),
             .rgb555 => |data| std.mem.sliceAsBytes(data),
             .bgr555 => |data| std.mem.sliceAsBytes(data),
@@ -898,6 +951,7 @@ pub const PixelStorage = union(PixelFormat) {
             .grayscale16Alpha => |data| std.mem.sliceAsBytes(data),
             .rgb24 => |data| std.mem.sliceAsBytes(data),
             .rgba32 => |data| std.mem.sliceAsBytes(data),
+            .rgb332 => |data| std.mem.sliceAsBytes(data),
             .rgb565 => |data| std.mem.sliceAsBytes(data),
             .rgb555 => |data| std.mem.sliceAsBytes(data),
             .bgr555 => |data| std.mem.sliceAsBytes(data),
@@ -927,6 +981,7 @@ pub const PixelStorage = union(PixelFormat) {
             .grayscale16Alpha => |data| .{ .grayscale16Alpha = data[begin..end] },
             .rgb24 => |data| .{ .rgb24 = data[begin..end] },
             .rgba32 => |data| .{ .rgba32 = data[begin..end] },
+            .rgb332 => |data| .{ .rgb332 = data[begin..end] },
             .rgb565 => |data| .{ .rgb565 = data[begin..end] },
             .rgb555 => |data| .{ .rgb555 = data[begin..end] },
             .bgr555 => |data| .{ .bgr555 = data[begin..end] },
@@ -974,6 +1029,7 @@ pub const PixelStorageIterator = struct {
             .grayscale16Alpha => |data| data[self.current_index].toColorf32(),
             .rgb24 => |data| data[self.current_index].toColorf32(),
             .rgba32 => |data| data[self.current_index].toColorf32(),
+            .rgb332 => |data| data[self.current_index].toColorf32(),
             .rgb565 => |data| data[self.current_index].toColorf32(),
             .rgb555 => |data| data[self.current_index].toColorf32(),
             .bgr555 => |data| data[self.current_index].toColorf32(),

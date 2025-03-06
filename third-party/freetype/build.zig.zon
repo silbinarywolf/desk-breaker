@@ -1,5 +1,5 @@
 .{
-    .name = "freetype",
+    .name = .freetype,
     .version = "0.0.0",
     .dependencies = .{
         .freetype = .{
@@ -15,4 +15,5 @@
         "src",
         "include",
     },
+    .fingerprint = 0xac2059b692ebeb66,
 }

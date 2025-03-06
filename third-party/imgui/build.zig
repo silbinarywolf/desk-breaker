@@ -128,18 +128,18 @@ pub fn build(b: *std.Build) !void {
     }
     b.installArtifact(lib);
 
-    // SDL Translate C-code
+    // Imgui Translate C-code
     var c_translate = b.addTranslateC(.{
         // NOTE(jae): 2024-11-05
         // Translating C-header API only so we use host so that Android builds
         // will compile correctly.
-        .target = b.host,
-        .optimize = .ReleaseFast,
+        .target = b.graph.host,
+        .optimize = optimize,
         .root_source_file = b.path("src/imgui.h"),
     });
-    c_translate.addIncludeDir(cimgui_include_path.getPath(b));
-    c_translate.addIncludeDir(zig_cimgui_headers_path.getPath(b));
-    c_translate.addIncludeDir(zig_imgui_backend_include_path.getPath(b));
+    c_translate.addIncludePath(cimgui_include_path);
+    c_translate.addIncludePath(zig_cimgui_headers_path);
+    c_translate.addIncludePath(zig_imgui_backend_include_path);
 
     _ = b.addModule("imgui", .{
         .target = target,

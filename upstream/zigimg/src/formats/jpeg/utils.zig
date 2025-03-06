@@ -1,83 +1,23 @@
 //! general utilizies and constants
 const std = @import("std");
 
+pub const MAX_COMPONENTS = 3;
+pub const MAX_BLOCKS = 8;
+pub const Block = [64]i32;
+
 // See figure A.6 in T.81.
-pub const ZigzagOffsets = blk: {
-    var offsets: [64]usize = undefined;
-    offsets[0] = 0;
-
-    var current_offset: usize = 0;
-    var direction: enum { north_east, south_west } = .north_east;
-    var i: usize = 1;
-    while (i < 64) : (i += 1) {
-        switch (direction) {
-            .north_east => {
-                if (current_offset < 8) {
-                    // Hit top edge
-                    current_offset += 1;
-                    direction = .south_west;
-                } else if (current_offset % 8 == 7) {
-                    // Hit right edge
-                    current_offset += 8;
-                    direction = .south_west;
-                } else {
-                    current_offset -= 7;
-                }
-            },
-            .south_west => {
-                if (current_offset >= 56) {
-                    // Hit bottom edge
-                    current_offset += 1;
-                    direction = .north_east;
-                } else if (current_offset % 8 == 0) {
-                    // Hit left edge
-                    current_offset += 8;
-                    direction = .north_east;
-                } else {
-                    current_offset += 7;
-                }
-            },
-        }
-
-        if (current_offset >= 64) {
-            @compileError(std.fmt.comptimePrint("ZigzagOffsets: Hit offset {} (>= 64) at index {}!\n", .{ current_offset, i }));
-        }
-
-        offsets[i] = current_offset;
-    }
-
-    break :blk offsets;
+// zig fmt: off
+pub const ZigzagOffsets: [64]usize  = .{
+    0,   1,  8, 16,  9,  2,  3, 10,
+    17, 24, 32, 25, 18, 11,  4,  5,
+    12, 19, 26, 33, 40, 48, 41, 34,
+    27, 20, 13,  6,  7, 14, 21, 28,
+    35, 42, 49, 56, 57, 50, 43, 36,
+    29, 22, 15, 23, 30, 37, 44, 51,
+    58, 59, 52, 45, 38, 31, 39, 46,
+    53, 60, 61, 54, 47, 55, 62, 63
 };
-
-/// The precalculated IDCT multipliers. This is possible because the only part of
-/// the IDCT calculation that changes between runs is the coefficients.
-/// see A.3.3 of t.81 1992
-pub const IDCTMultipliers = blk: {
-    var multipliers: [8][8][8][8]f32 = undefined;
-    @setEvalBranchQuota(4700);
-
-    var y: usize = 0;
-    while (y < 8) : (y += 1) {
-        var x: usize = 0;
-        while (x < 8) : (x += 1) {
-            var u: usize = 0;
-            while (u < 8) : (u += 1) {
-                var v: usize = 0;
-                while (v < 8) : (v += 1) {
-                    const C_u: f32 = if (u == 0) 1.0 / @sqrt(2.0) else 1.0;
-                    const C_v: f32 = if (v == 0) 1.0 / @sqrt(2.0) else 1.0;
-
-                    const x_cosine = @cos(((2 * @as(f32, @floatFromInt(x)) + 1) * @as(f32, @floatFromInt(u)) * std.math.pi) / 16.0);
-                    const y_cosine = @cos(((2 * @as(f32, @floatFromInt(y)) + 1) * @as(f32, @floatFromInt(v)) * std.math.pi) / 16.0);
-                    const uv_value = C_u * C_v * x_cosine * y_cosine;
-                    multipliers[y][x][u][v] = uv_value;
-                }
-            }
-        }
-    }
-
-    break :blk multipliers;
-};
+// zig fmt: on
 
 /// Marker codes, see t-81 section B.1.1.3
 pub const Markers = enum(u16) {
@@ -125,7 +65,22 @@ pub const Markers = enum(u16) {
     expand_reference_components = 0xFFDF,
 
     // 0xFFE0-0xFFEF application segments markers add 0-15 as needed.
-    application0 = 0xFFE0,
+    app0 = 0xFFE0,
+    app1 = 0xFFE1,
+    app2 = 0xFFE2,
+    app3 = 0xFFE3,
+    app4 = 0xFFE4,
+    app5 = 0xFFE5,
+    app6 = 0xFFE6,
+    app7 = 0xFFE7,
+    app8 = 0xFFE8,
+    app9 = 0xFFE9,
+    app10 = 0xFFEA,
+    app11 = 0xFFEB,
+    app12 = 0xFFEC,
+    app13 = 0xFFED,
+    app14 = 0xFFEE,
+    app15 = 0xFFEF,
 
     // 0xFFF0-0xFFFD jpeg extension markers add 0-13 as needed.
     jpeg_extension0 = 0xFFF0,
@@ -133,7 +88,3 @@ pub const Markers = enum(u16) {
 
     // reserved markers from 0xFF01-0xFFBF, add as needed
 };
-
-pub const MAX_COMPONENTS = 3;
-pub const MAX_BLOCKS = 8;
-pub const MCU = [64]i32;

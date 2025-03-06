@@ -1,0 +1,20 @@
+// https://github.com/ziglang/zig/blob/master/doc/build.zig.zon.md
+.{
+    .name = .emscripten,
+    .version = "0.0.0",
+    .dependencies = .{
+        .emsdk = .{
+            .url = "https://github.com/emscripten-core/emsdk/archive/refs/tags/4.0.2.zip",
+            .hash = "1220ec7dac6561f269088fe8f529662ccd6daf07256ca1d303b7e4a613d026605328",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "LICENSE",
+        "README.md",
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0xb9660be1c521e88a,
+}

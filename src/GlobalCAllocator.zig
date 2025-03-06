@@ -5,7 +5,7 @@ const sdl = @import("sdl");
 const imgui = @import("imgui");
 const assert = std.debug.assert;
 
-const log = std.log.scoped(.c_allocator);
+const log = std.log.scoped(.GlobalCAllocator);
 
 var global_c_allocator: ?GlobalCAllocator = null;
 
