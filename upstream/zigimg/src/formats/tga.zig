@@ -69,7 +69,7 @@ pub const TGAHeader = extern struct {
 };
 
 pub const TGAExtensionComment = extern struct {
-    lines: [4][80:0]u8 = [_][80:0]u8{[_:0]u8{0} ** 80} ** 4,
+    lines: [4][80:0]u8 = @splat(@splat(0)),
 };
 
 pub const TGAExtensionSoftwareVersion = extern struct {
@@ -107,12 +107,12 @@ pub const TGAAttributeType = enum(u8) {
 
 pub const TGAExtension = extern struct {
     extension_size: u16 align(1) = @sizeOf(TGAExtension),
-    author_name: [40:0]u8 align(1) = [_:0]u8{0} ** 40,
+    author_name: [40:0]u8 align(1) = @splat(0),
     author_comment: TGAExtensionComment align(1) = .{},
     timestamp: TGAExtensionTimestamp align(1) = .{},
-    job_id: [40:0]u8 align(1) = [_:0]u8{0} ** 40,
+    job_id: [40:0]u8 align(1) = @splat(0),
     job_time: TGAExtensionJobTime align(1) = .{},
-    software_id: [40:0]u8 align(1) = [_:0]u8{0} ** 40,
+    software_id: [40:0]u8 align(1) = @splat(0),
     software_version: TGAExtensionSoftwareVersion align(1) = .{},
     key_color: color.Bgra32 align(1) = .{ .r = 0, .g = 0, .b = 0, .a = 0 },
     pixel_aspect: TGAExtensionRatio align(1) = .{},
@@ -193,7 +193,7 @@ const TargaRLEDecoder = struct {
 
                 self.repeat_count = @as(usize, @intCast(packet_header.count)) + 1;
 
-                _ = try self.source_reader.read(self.repeat_data);
+                _ = try self.source_reader.readAll(self.repeat_data);
 
                 self.data_stream.reset();
             } else if (packet_header.packet_type == .raw) {
@@ -217,7 +217,7 @@ const TargaRLEDecoder = struct {
                 read_count = dest.len;
             },
             .raw => {
-                const read_bytes = try self.source_reader.read(dest);
+                const read_bytes = try self.source_reader.readAll(dest);
 
                 self.repeat_count -= read_bytes;
 
@@ -331,16 +331,21 @@ fn RunLengthSimpleEncoder(comptime IntType: type) type {
     };
 }
 
-fn RunLengthSIMDEncoder(comptime IntType: type) type {
+fn RunLengthSIMDEncoder(
+    comptime IntType: type,
+    comptime optional_parameters: struct {
+        vector_length: comptime_int = std.simd.suggestVectorLength(IntType) orelse 4,
+    },
+) type {
     return struct {
-        const VectorLength = std.simd.suggestVectorLength(IntType) orelse 4;
+        const VectorLength = optional_parameters.vector_length;
         const VectorType = @Vector(VectorLength, IntType);
-        const BytesPerPixels = (@typeInfo(IntType).Int.bits + 7) / 8;
+        const BytesPerPixels = (@typeInfo(IntType).int.bits + 7) / 8;
         const IndexStep = VectorLength * BytesPerPixels;
         const MaskType = std.meta.Int(.unsigned, VectorLength);
 
         comptime {
-            if (!std.math.isPowerOfTwo(@typeInfo(IntType).Int.bits)) {
+            if (!std.math.isPowerOfTwo(@typeInfo(IntType).int.bits)) {
                 @compileError("Only power of two integers are supported by the run-length SIMD encoder");
             }
         }
@@ -370,7 +375,7 @@ fn RunLengthSIMDEncoder(comptime IntType: type) type {
                 const inverted_mask = ~@as(MaskType, @bitCast(compare_mask));
                 const current_similar_count = @ctz(inverted_mask);
 
-                if (current_similar_count == VectorLength) {
+                if (current_similar_count == VectorLength and compared_value == read_value) {
                     total_similar_count += current_similar_count;
                     index += current_similar_count * BytesPerPixels;
 
@@ -453,31 +458,48 @@ test "TGA RLE SIMD u8 (bytes) encoder" {
     const uncompressed_data = [_]u8{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 64, 64, 2, 2, 2, 2, 2, 215, 215, 215, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 200, 200, 200, 200, 210, 210 };
     const compressed_data = [_]u8{ 0x88, 0x01, 0x81, 0x40, 0x84, 0x02, 0x82, 0xD7, 0x89, 0x03, 0x83, 0xC8, 0x81, 0xD2 };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    const Test = struct {
+        pub fn do(comptime vector_length: comptime_int) !void {
+            var result_list = std.ArrayList(u8).init(std.testing.allocator);
+            defer result_list.deinit();
 
-    const writer = result_list.writer();
+            const writer = result_list.writer();
 
-    try RunLengthSIMDEncoder(u8).encode(uncompressed_data[0..], writer);
+            try RunLengthSIMDEncoder(u8, .{ .vector_length = vector_length }).encode(uncompressed_data[0..], writer);
+            try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+        }
+    };
 
-    try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+    try Test.do(4);
+    try Test.do(8);
+    try Test.do(16);
+    try Test.do(32);
 }
 
 test "TGA RLE SIMD u8 (bytes) encoder should encore more than 128 bytes similar" {
-    const first_uncompressed_part = [_]u8{0x45} ** 135;
+    const first_uncompressed_part: [135]u8 = @splat(0x45);
     const second_uncompresse_part = [_]u8{ 0x1, 0x1, 0x1, 0x1 };
     const uncompressed_data = first_uncompressed_part ++ second_uncompresse_part;
 
     const compressed_data = [_]u8{ 0xFF, 0x45, 0x86, 0x45, 0x83, 0x1 };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    const Test = struct {
+        pub fn do(comptime vector_length: comptime_int) !void {
+            var result_list = std.ArrayList(u8).init(std.testing.allocator);
+            defer result_list.deinit();
 
-    const writer = result_list.writer();
+            const writer = result_list.writer();
 
-    try RunLengthSIMDEncoder(u8).encode(uncompressed_data[0..], writer);
+            try RunLengthSIMDEncoder(u8, .{ .vector_length = vector_length }).encode(uncompressed_data[0..], writer);
 
-    try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+            try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+        }
+    };
+
+    try Test.do(4);
+    try Test.do(8);
+    try Test.do(16);
+    try Test.do(32);
 }
 
 test "TGA RLE SIMD u16 encoder" {
@@ -486,14 +508,23 @@ test "TGA RLE SIMD u16 encoder" {
 
     const compressed_data = [_]u8{ 0x87, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x00, 0x04, 0x00, 0x00, 0x05, 0x00, 0x00, 0x06, 0x00, 0x00, 0x07, 0x00, 0x00, 0x08, 0x00 };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    const Test = struct {
+        pub fn do(comptime vector_length: comptime_int, compressed_data_param: []const u8, uncompressed_data_param: []const u8) !void {
+            var result_list = std.ArrayList(u8).init(std.testing.allocator);
+            defer result_list.deinit();
 
-    const writer = result_list.writer();
+            const writer = result_list.writer();
 
-    try RunLengthSIMDEncoder(u16).encode(uncompressed_data[0..], writer);
+            try RunLengthSIMDEncoder(u16, .{ .vector_length = vector_length }).encode(uncompressed_data_param[0..], writer);
 
-    try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+            try std.testing.expectEqualSlices(u8, compressed_data_param[0..], result_list.items);
+        }
+    };
+
+    try Test.do(4, compressed_data[0..], uncompressed_data);
+    try Test.do(8, compressed_data[0..], uncompressed_data);
+    try Test.do(16, compressed_data[0..], uncompressed_data);
+    try Test.do(32, compressed_data[0..], uncompressed_data);
 }
 
 test "TGA RLE SIMD u32 encoder" {
@@ -502,14 +533,23 @@ test "TGA RLE SIMD u32 encoder" {
 
     const compressed_data = [_]u8{ 0x87, 0xEF, 0xCD, 0xAB, 0xFF, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00 };
 
-    var result_list = std.ArrayList(u8).init(std.testing.allocator);
-    defer result_list.deinit();
+    const Test = struct {
+        pub fn do(comptime vector_length: comptime_int, compressed_data_param: []const u8, uncompressed_data_param: []const u8) !void {
+            var result_list = std.ArrayList(u8).init(std.testing.allocator);
+            defer result_list.deinit();
 
-    const writer = result_list.writer();
+            const writer = result_list.writer();
 
-    try RunLengthSIMDEncoder(u32).encode(uncompressed_data[0..], writer);
+            try RunLengthSIMDEncoder(u32, .{ .vector_length = vector_length }).encode(uncompressed_data_param[0..], writer);
 
-    try std.testing.expectEqualSlices(u8, compressed_data[0..], result_list.items);
+            try std.testing.expectEqualSlices(u8, compressed_data_param[0..], result_list.items);
+        }
+    };
+
+    try Test.do(4, compressed_data[0..], uncompressed_data);
+    try Test.do(8, compressed_data[0..], uncompressed_data);
+    try Test.do(16, compressed_data[0..], uncompressed_data);
+    try Test.do(32, compressed_data[0..], uncompressed_data);
 }
 
 test "TGA RLE simple u24 encoder" {
@@ -566,15 +606,10 @@ pub const TGA = struct {
 
     pub fn formatInterface() FormatInterface {
         return FormatInterface{
-            .format = format,
             .formatDetect = formatDetect,
             .readImage = readImage,
             .writeImage = writeImage,
         };
-    }
-
-    pub fn format() ImageUnmanaged.Format {
-        return ImageUnmanaged.Format.tga;
     }
 
     pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageUnmanaged.ReadError!bool {
@@ -814,7 +849,7 @@ pub const TGA = struct {
         if (self.header.id_length > 0) {
             self.id.resize(self.header.id_length);
 
-            const read_id_size = try buffered_stream.read(self.id.data[0..]);
+            const read_id_size = try reader.readAll(self.id.data[0..]);
 
             if (read_id_size != self.header.id_length) {
                 return ImageUnmanaged.ReadError.InvalidData;
@@ -860,9 +895,11 @@ pub const TGA = struct {
                 // Read color map, it is not compressed by RLE so always use the original reader
                 switch (self.header.color_map_spec.bit_depth) {
                     15, 16 => {
+                        pixels.indexed8.resizePalette(self.header.color_map_spec.length);
                         try self.readColorMap16(pixels.indexed8, reader);
                     },
                     24 => {
+                        pixels.indexed8.resizePalette(self.header.color_map_spec.length);
                         try self.readColorMap24(pixels.indexed8, reader);
                     },
                     else => {
@@ -1144,14 +1181,14 @@ pub const TGA = struct {
                             for (0..effective_height) |y| {
                                 const current_scanline = y * pixel_stride;
 
-                                try RunLengthSIMDEncoder(IntType).encode(bytes[current_scanline..(current_scanline + pixel_stride)], writer);
+                                try RunLengthSIMDEncoder(IntType, .{}).encode(bytes[current_scanline..(current_scanline + pixel_stride)], writer);
                             }
                         } else {
                             for (0..effective_height) |y| {
                                 const flipped_y = effective_height - y - 1;
                                 const current_scanline = flipped_y * pixel_stride;
 
-                                try RunLengthSIMDEncoder(IntType).encode(bytes[current_scanline..(current_scanline + pixel_stride)], writer);
+                                try RunLengthSIMDEncoder(IntType, .{}).encode(bytes[current_scanline..(current_scanline + pixel_stride)], writer);
                             }
                         }
                     } else {

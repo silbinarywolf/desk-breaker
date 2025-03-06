@@ -5,7 +5,7 @@ const imgui = @import("imgui");
 const App = @import("App.zig");
 const Duration = @import("Duration.zig");
 
-const log = std.log.default;
+const log = std.log.scoped(.ScreenOverview);
 const assert = std.debug.assert;
 
 pub fn render(app: *App) !void {

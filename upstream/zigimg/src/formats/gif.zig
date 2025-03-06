@@ -194,15 +194,10 @@ pub const GIF = struct {
 
     pub fn formatInterface() FormatInterface {
         return FormatInterface{
-            .format = format,
             .formatDetect = formatDetect,
             .readImage = readImage,
             .writeImage = writeImage,
         };
-    }
-
-    pub fn format() ImageUnmanaged.Format {
-        return ImageUnmanaged.Format.gif;
     }
 
     pub fn formatDetect(stream: *ImageUnmanaged.Stream) !bool {
@@ -465,7 +460,7 @@ pub const GIF = struct {
                     var data_block = utils.FixedStorage(u8, 256){};
                     data_block.resize(data_block_size);
 
-                    _ = try context.reader.read(data_block.data[0..]);
+                    _ = try context.reader.readAll(data_block.data[0..]);
 
                     try comment_list.appendSlice(self.allocator, data_block.data);
 
@@ -481,8 +476,8 @@ pub const GIF = struct {
                     // Eat block size
                     _ = try context.reader.readByte();
 
-                    _ = try context.reader.read(application_info.application_identifier[0..]);
-                    _ = try context.reader.read(application_info.authentification_code[0..]);
+                    _ = try context.reader.readAll(application_info.application_identifier[0..]);
+                    _ = try context.reader.readAll(application_info.authentification_code[0..]);
 
                     var data_list = try std.ArrayListUnmanaged(u8).initCapacity(self.allocator, 256);
                     defer data_list.deinit(self.allocator);
@@ -493,7 +488,7 @@ pub const GIF = struct {
                         var data_block = utils.FixedStorage(u8, 256){};
                         data_block.resize(data_block_size);
 
-                        _ = try context.reader.read(data_block.data[0..]);
+                        _ = try context.reader.readAll(data_block.data[0..]);
 
                         try data_list.appendSlice(self.allocator, data_block.data);
 
@@ -561,7 +556,7 @@ pub const GIF = struct {
                 var data_block = utils.FixedStorage(u8, 256){};
                 data_block.resize(data_block_size);
 
-                _ = try context.reader.read(data_block.data[0..]);
+                _ = try context.reader.readAll(data_block.data[0..]);
 
                 var data_block_reader = ImageUnmanaged.Stream{
                     .buffer = std.io.fixedBufferStream(data_block.data),

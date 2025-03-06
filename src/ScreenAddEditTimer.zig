@@ -7,11 +7,14 @@ const Duration = @import("Duration.zig");
 const App = @import("App.zig");
 const Timer = App.Timer;
 
-const log = std.log.default;
+const log = std.log.scoped(.ScreenAddEditTimer);
 const assert = std.debug.assert;
 
 /// called when the screen is first opened
 pub fn open(app: *App) void {
+    if (!app.ui.ui_allocator.reset(.retain_capacity)) {
+        log.debug("[ui allocator] failed to reset", .{});
+    }
     app.ui.timer = .{
         // ... resets all timer ui state ...
     };

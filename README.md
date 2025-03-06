@@ -12,7 +12,7 @@ This was built for those who have trouble with hyperfocusing and need something 
 
 ## Requirements
 
-* [Zig 0.13.x](https://ziglang.org/download/#release-0.13.0)
+* [Zig 0.14.x](https://ziglang.org/download/#release-0.14.0)
 
 ## How to download
 

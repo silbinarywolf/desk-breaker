@@ -1,5 +1,5 @@
 .{
-    .name = "sdl",
+    .name = .sdl,
     .version = "0.0.0",
     .dependencies = .{
         .sdl3 = .{
@@ -60,4 +60,5 @@
         "src",
         "tools",
     },
+    .fingerprint = 0xec638ccb50e4260d,
 }

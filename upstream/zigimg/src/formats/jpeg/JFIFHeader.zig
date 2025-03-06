@@ -1,6 +1,5 @@
 //! this module implements the JFIF header
-//! specified in https://www.w3.org/Graphics/JPEG/itu-t81.pdf
-//! section B.2.1 and assumes that there will be an application0 segment.
+//! specified in https://www.w3.org/Graphics/JPEG/jfif3.pdf
 
 const std = @import("std");
 
@@ -28,7 +27,7 @@ pub fn read(buffered_stream: *buffered_stream_source.DefaultBufferedStreamSource
     const reader = buffered_stream.reader();
     try buffered_stream.seekTo(2);
     const maybe_app0_marker = try reader.readInt(u16, .big);
-    if (maybe_app0_marker != @intFromEnum(Markers.application0)) {
+    if (maybe_app0_marker != @intFromEnum(Markers.app0)) {
         return error.App0MarkerDoesNotExist;
     }
 
@@ -36,7 +35,7 @@ pub fn read(buffered_stream: *buffered_stream_source.DefaultBufferedStreamSource
     _ = try reader.readInt(u16, .big);
 
     var identifier_buffer: [4]u8 = undefined;
-    _ = try reader.read(identifier_buffer[0..]);
+    _ = try reader.readAll(identifier_buffer[0..]);
 
     if (!std.mem.eql(u8, identifier_buffer[0..], "JFIF")) {
         return error.JfifIdentifierNotSet;
@@ -62,7 +61,7 @@ pub fn read(buffered_stream: *buffered_stream_source.DefaultBufferedStreamSource
     // TODO: Support application markers, present in versions 1.02 and above.
     // see https://www.ecma-international.org/wp-content/uploads/ECMA_TR-98_1st_edition_june_2009.pdf
     // chapt 10.1
-    if (((try reader.readInt(u16, .big)) & 0xFFF0) == @intFromEnum(Markers.application0)) {
+    if (((try reader.readInt(u16, .big)) & 0xFFF0) == @intFromEnum(Markers.app0)) {
         return error.ExtraneousApplicationMarker;
     }
 

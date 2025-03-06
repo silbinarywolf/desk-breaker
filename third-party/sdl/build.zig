@@ -124,6 +124,10 @@ pub fn build(b: *std.Build) !void {
                 .windows => {
                     lib.root_module.addCMacro("HAVE_MODF", "1");
 
+                    // Between Zig 0.13.0 and Zig 0.14.0, "windows.gaming.input.h" was removed from "lib/libc/include/any-windows-any"
+                    // This folder brings all headers needed by that one file so that SDL3 can be compiled for Windows.
+                    lib.addIncludePath(b.path("upstream/any-windows-any"));
+
                     lib.addCSourceFiles(.{
                         .root = sdl_path,
                         .files = &windows_src_files,
@@ -183,6 +187,66 @@ pub fn build(b: *std.Build) !void {
                     lib.linkFramework("QuartzCore"); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
                     lib.linkFramework("UniformTypeIdentifiers"); // undefined symbol: _OBJC_CLASS_$_UTType
                     lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
+                },
+                .emscripten => {
+                    const is_single_threaded = if (lib.root_module.single_threaded) |st| st else false;
+                    if (is_single_threaded) {
+                        lib.addCSourceFiles(.{
+                            .root = sdl_path,
+                            .files = &sdlsrc.thread.generic.c_files,
+                        });
+                        @panic("SDL3: have not setup build to support single threaded");
+                    } else {
+                        lib.addCSourceFiles(.{
+                            .root = sdl_path,
+                            .files = &sdlsrc.thread.pthread.c_files,
+                        });
+                    }
+
+                    lib.root_module.addCMacro("SDL_PLATFORM_EMSCRIPTEN", "1");
+                    if (!is_single_threaded) {
+                        lib.root_module.addCMacro("__EMSCRIPTEN_PTHREADS__", "1");
+                    }
+                    // NOTE(jae): 2025-02-02
+                    // SDL_iostream.c needs this and doesn't include SDL_build_config.h
+                    lib.root_module.addCMacro("HAVE_STDIO_H", "1");
+                    lib.addCSourceFiles(.{
+                        .root = sdl_path,
+                        .files = &emscripten_src_files,
+                    });
+
+                    lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                    const config_header = b.addConfigHeader(.{
+                        .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{
+                            "build_config",
+                            "SDL_build_config_emscripten.h",
+                        })) },
+                        .include_path = "SDL_build_config.h",
+                    }, .{});
+                    // const config_header = b.addConfigHeader(.{
+                    //     .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
+                    //     .include_path = "SDL_build_config.h",
+                    // }, SDLConfig{
+                    //     .SDL_TIMER_UNIX = true,
+                    //     .SDL_FILESYSTEM_EMSCRIPTEN = true,
+                    //     .SDL_POWER_EMSCRIPTEN = true,
+                    //     .SDL_JOYSTICK_EMSCRIPTEN = true,
+                    //     .SDL_AUDIO_DRIVER_EMSCRIPTEN = true,
+                    //     .SDL_VIDEO_DRIVER_EMSCRIPTEN = true,
+                    //     .SDL_CAMERA_DRIVER_EMSCRIPTEN = true,
+                    //     .SDL_HAPTIC_DISABLED = true,
+                    //     .HAVE_STDARG_H = true,
+                    //     .HAVE_STDDEF_H = true,
+                    //     .HAVE_STDINT_H = true,
+                    //     // NOTE(jae): 2025-02-02
+                    //     // SDL_iostream.c needs this
+                    //     .HAVE_STDIO_H = true,
+                    //     .SDL_THREAD_PTHREAD = !is_single_threaded,
+                    //     .SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = !is_single_threaded,
+                    // });
+
+                    lib.addConfigHeader(config_header);
+                    lib.installConfigHeader(config_header);
                 },
                 .linux => {
                     @panic("Only building with cmake is supported for now");
@@ -480,11 +544,11 @@ pub fn build(b: *std.Build) !void {
         // NOTE(jae): 2024-11-05
         // Translating C-header API only so we use host so that Android builds
         // will compile correctly.
-        .target = b.host,
+        .target = b.graph.host,
         .optimize = .ReleaseFast,
         .root_source_file = b.path("src/sdl.h"),
     });
-    c_translate.addIncludeDir(sdl_api_include_path.getPath(b));
+    c_translate.addIncludePath(sdl_api_include_path);
 
     var module = b.addModule("sdl", .{
         .target = target,
@@ -656,34 +720,48 @@ const android_src_files = sdlsrc.core.android.c_files ++
 
 const android_src_cpp_files = sdlsrc.hidapi.android.cpp_files;
 
-// TODO(jae): 2024-10-27
-// Update this to work
-const emscripten_src_files = [_][]const u8{
-    "src/audio/emscripten/SDL_emscriptenaudio.c",
-    "src/filesystem/emscripten/SDL_sysfilesystem.c",
-    "src/joystick/emscripten/SDL_sysjoystick.c",
-    "src/locale/emscripten/SDL_syslocale.c",
-    "src/misc/emscripten/SDL_sysurl.c",
-    "src/power/emscripten/SDL_syspower.c",
-    "src/video/emscripten/SDL_emscriptenevents.c",
-    "src/video/emscripten/SDL_emscriptenframebuffer.c",
-    "src/video/emscripten/SDL_emscriptenmouse.c",
-    "src/video/emscripten/SDL_emscriptenopengles.c",
-    "src/video/emscripten/SDL_emscriptenvideo.c",
+const emscripten_src_files = sdlsrc.audio.emscripten.c_files ++
+    sdlsrc.audio.dummy.c_files ++
+    sdlsrc.camera.emscripten.c_files ++
+    sdlsrc.filesystem.emscripten.c_files ++
+    sdlsrc.haptic.dummy.c_files ++
+    sdlsrc.joystick.emscripten.c_files ++
+    sdlsrc.locale.emscripten.c_files ++
+    sdlsrc.misc.emscripten.c_files ++
+    sdlsrc.power.emscripten.c_files ++
+    sdlsrc.video.emscripten.c_files ++
+    sdlsrc.loadso.dlopen.c_files ++
+    sdlsrc.audio.disk.c_files ++
+    sdlsrc.render.opengl.c_files ++
+    sdlsrc.render.opengles2.c_files ++
+    sdlsrc.sensor.dummy.c_files ++
+    sdlsrc.timer.unix.c_files ++
+    sdlsrc.tray.dummy.c_files;
+// const emscripten_src_files = [_][]const u8{
+//     "src/audio/emscripten/SDL_emscriptenaudio.c",
+//     "src/filesystem/emscripten/SDL_sysfilesystem.c",
+//     "src/joystick/emscripten/SDL_sysjoystick.c",
+//     "src/locale/emscripten/SDL_syslocale.c",
+//     "src/misc/emscripten/SDL_sysurl.c",
+//     "src/power/emscripten/SDL_syspower.c",
+//     "src/video/emscripten/SDL_emscriptenevents.c",
+//     "src/video/emscripten/SDL_emscriptenframebuffer.c",
+//     "src/video/emscripten/SDL_emscriptenmouse.c",
+//     "src/video/emscripten/SDL_emscriptenopengles.c",
+//     "src/video/emscripten/SDL_emscriptenvideo.c",
 
-    "src/timer/unix/SDL_systimer.c",
-    "src/loadso/dlopen/SDL_sysloadso.c",
-    "src/audio/disk/SDL_diskaudio.c",
-    "src/render/opengles2/SDL_render_gles2.c",
-    "src/render/opengles2/SDL_shaders_gles2.c",
-    "src/sensor/dummy/SDL_dummysensor.c",
-
-    "src/thread/pthread/SDL_syscond.c",
-    "src/thread/pthread/SDL_sysmutex.c",
-    "src/thread/pthread/SDL_syssem.c",
-    "src/thread/pthread/SDL_systhread.c",
-    "src/thread/pthread/SDL_systls.c",
-};
+//     "src/timer/unix/SDL_systimer.c",
+//     "src/loadso/dlopen/SDL_sysloadso.c",
+//     "src/audio/disk/SDL_diskaudio.c",
+//     "src/render/opengles2/SDL_render_gles2.c",
+//     "src/render/opengles2/SDL_shaders_gles2.c",
+//     "src/sensor/dummy/SDL_dummysensor.c",
+//     "src/thread/pthread/SDL_syscond.c",
+//     "src/thread/pthread/SDL_sysmutex.c",
+//     "src/thread/pthread/SDL_syssem.c",
+//     "src/thread/pthread/SDL_systhread.c",
+//     "src/thread/pthread/SDL_systls.c",
+// };
 
 const linux_src_files = sdlsrc.audio.aaudio.c_files ++
     sdlsrc.audio.alsa.c_files ++

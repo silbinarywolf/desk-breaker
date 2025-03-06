@@ -1,5 +1,5 @@
 .{
-    .name = "imgui",
+    .name = .imgui,
     .version = "0.0.0",
     .dependencies = .{
         .imgui = .{
@@ -20,4 +20,5 @@
         "build.zig.zon",
         "src",
     },
+    .fingerprint = 0xb0f24415bc4d6f1c,
 }

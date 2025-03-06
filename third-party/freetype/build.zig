@@ -46,6 +46,13 @@ pub fn build(b: *std.Build) !void {
     lib.root_module.addCMacro("HAVE_UNISTD_H", "1");
     lib.root_module.addCMacro("HAVE_FCNTL_H", "1");
 
+    // NOTE(jae): 2025-02-02
+    // Experiment with trying to get this building with Emscripten
+    // if (target.result.os.tag == .emscripten) {
+    //     lib.root_module.addCMacro("longjmp", "emscripten_longjmp");
+    //     lib.root_module.addCMacro("setjmp", "emscripten_setjmp");
+    // }
+
     var flags = std.ArrayList([]const u8).init(b.allocator);
     defer flags.deinit();
     try flags.appendSlice(&.{
@@ -101,6 +108,7 @@ pub fn build(b: *std.Build) !void {
     b.installArtifact(lib);
 
     var module = b.addModule("freetype", .{
+        .target = b.graph.host,
         .root_source_file = b.path("src/freetype.zig"),
     });
     module.addIncludePath(b.path("include"));

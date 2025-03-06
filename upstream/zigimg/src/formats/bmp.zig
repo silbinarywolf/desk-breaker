@@ -143,15 +143,10 @@ pub const BMP = struct {
 
     pub fn formatInterface() FormatInterface {
         return FormatInterface{
-            .format = format,
             .formatDetect = formatDetect,
             .readImage = readImage,
             .writeImage = writeImage,
         };
-    }
-
-    pub fn format() ImageUnmanaged.Format {
-        return ImageUnmanaged.Format.bmp;
     }
 
     pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageUnmanaged.Stream.ReadError!bool {
@@ -376,7 +371,7 @@ pub const BMP = struct {
     }
 
     fn readPixelsInternal(pixels: anytype, reader: buffered_stream_source.DefaultBufferedStreamSourceReader.Reader, pixel_width: i32, pixel_height: i32) ImageUnmanaged.ReadError!void {
-        const ColorBufferType = @typeInfo(@TypeOf(pixels)).Pointer.child;
+        const ColorBufferType = @typeInfo(@TypeOf(pixels)).pointer.child;
 
         var x: i32 = 0;
         var y: i32 = pixel_height - 1;

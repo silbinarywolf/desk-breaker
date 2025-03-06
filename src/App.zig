@@ -12,7 +12,7 @@ const Duration = @import("Duration.zig");
 
 const Window = @import("Window.zig");
 
-const log = std.log.default;
+const log = std.log.scoped(.App);
 const assert = std.debug.assert;
 
 const winuser = struct {
@@ -160,7 +160,10 @@ pub const Screen = enum {
 
 const UiState = struct {
     screen: Screen = .overview,
-    timer: UiTimer = .{},
+    /// allocate buffers for each input field as needed, this buffer is cleared when the timer or options
+    /// screen is opened.
+    ui_allocator: std.heap.ArenaAllocator,
+    timer: UiTimer,
     options: struct {
         /// os_startup is true if you want the application to boot on operating system startup
         os_startup: ?bool = switch (builtin.os.tag) {
@@ -169,8 +172,8 @@ const UiState = struct {
         },
         display_index: u32 = 0,
         is_activity_break_enabled: bool = false,
-        time_till_break: UiDuration = std.mem.zeroes(UiDuration),
-        break_time: UiDuration = std.mem.zeroes(UiDuration),
+        time_till_break: [:0]u8,
+        break_time: [:0]u8,
         incoming_break: UiDuration = std.mem.zeroes(UiDuration),
         incoming_break_message: [128:0]u8 = std.mem.zeroes([128:0]u8),
         max_snoozes_in_a_row: [128:0]u8 = std.mem.zeroes([128:0]u8),
@@ -181,10 +184,25 @@ const UiState = struct {
             incoming_break_message: []const u8 = &[0]u8{},
             max_snoozes_in_a_row: []const u8 = &[0]u8{},
         } = .{},
-    } = .{},
+    },
     options_metadata: struct {
         display_names_buf: std.BoundedArray(u8, 4096) = std.BoundedArray(u8, 4096){},
-    } = .{},
+    },
+
+    /// allocBuffer will get a temporary buffer to use for UI elements
+    pub fn allocBuffer(self: *@This()) std.mem.Allocator.Error![:0]u8 {
+        return try self.ui_allocator.allocator().allocSentinel(u8, 96, 0);
+    }
+
+    /// allocDuration will return a buffer of [N:0]
+    pub fn allocDuration(self: *@This(), duration: ?Duration) error{ OutOfMemory, NoSpaceLeft }![:0]u8 {
+        const buf = try self.allocBuffer();
+        buf[0] = '\x00';
+        if (duration) |td| _ = try std.fmt.bufPrintZ(buf, "{sh}", .{td});
+        // NOTE(jae): 2025-01-31
+        // Return the full buffer for use with ImGui, this is why we ignore bufPrintZ
+        return buf;
+    }
 };
 
 pub const NextTimer = struct {
@@ -257,7 +275,7 @@ break_mode: struct {
 },
 
 // ui state (temporary state when editing)
-ui: UiState = .{},
+ui: UiState,
 
 pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
     var icon_png = try SdlPng.load(allocator, @embedFile("resources/icon.png"));
@@ -272,11 +290,18 @@ pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
         .tray = null,
         .user_settings = user_settings,
         .activity_timer = try std.time.Timer.start(),
+        .ui = .{
+            .ui_allocator = std.heap.ArenaAllocator.init(allocator),
+            .timer = undefined,
+            .options = undefined,
+            .options_metadata = undefined,
+        },
     };
 }
 
 pub fn deinit(app: *App) void {
     const allocator = app.allocator;
+    app.ui.ui_allocator.deinit();
     if (app.window) |app_window| {
         app_window.deinit();
         allocator.destroy(app_window);
@@ -288,8 +313,13 @@ pub fn deinit(app: *App) void {
     for (app.taking_break_windows.items) |*window| {
         window.deinit();
     }
+    if (app.tray) |tray| {
+        sdl.SDL_DestroyTray(tray);
+    }
     app.taking_break_windows.deinit(allocator);
     app.icon.deinit(allocator);
+    app.user_settings.deinit(allocator);
+    allocator.destroy(app.user_settings);
     // NOTE(jae): 2024-11-15: user_settings is freed outside of this
     // state.user_settings.deinit(state.allocator);
     app.temp_allocator.deinit();

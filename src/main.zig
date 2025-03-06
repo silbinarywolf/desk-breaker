@@ -33,10 +33,10 @@ else
     .{};
 
 /// custom panic handler for Android
-pub const panic = if (builtin.abi == .android)
-    android.panic
-else
-    std.builtin.default_panic;
+// pub const panic = if (builtin.abi == .android)
+//     android.panic
+// else
+//     std.builtin.default_panic;
 
 /// This needs to be exported for Android builds
 export fn SDL_main() callconv(.C) void {
@@ -46,6 +46,13 @@ export fn SDL_main() callconv(.C) void {
         @panic("SDL_main should not be called outside of Android builds");
     }
 }
+
+pub const os = if (builtin.os.tag == .emscripten) struct {
+    pub const heap = struct {
+        /// Force web browser to use c allocator with Emscripten
+        pub const page_allocator = std.heap.c_allocator;
+    };
+} else std.os;
 
 const MousePos = struct {
     x: f32,
@@ -59,7 +66,11 @@ const MousePos = struct {
     }
 };
 
-const GPAConfig: std.heap.GeneralPurposeAllocatorConfig = .{
+const GPAConfig: std.heap.GeneralPurposeAllocatorConfig = if (builtin.os.tag == .emscripten) .{
+    // NOTE(jae): 2025-02-03
+    // Must always be 0 even in Debug mode for Zig 0.13.0, otherwise captureStackFrames crashes
+    .stack_trace_frames = 0,
+} else .{
     // NOTE(jae): 2024-04-21
     // Safety is true for debug/releaseSafe builds
     // .safety = true,
@@ -72,11 +83,48 @@ var gpa_allocator: std.heap.GeneralPurposeAllocator(GPAConfig) = .{};
 
 var has_opened_from_tray = false;
 
+var prev_mouse_pos: MousePos = .{ .x = 0, .y = 0 };
+
+var global_c_allocator: *GlobalCAllocator = undefined;
+
+/// app_global is stored here mostly for Emscripten to access app via emscripten_set_main_loop
+var app_global: App = undefined;
+
+pub fn unload() !void {}
+
 pub fn main() !void {
-    const allocator = gpa_allocator.allocator();
-    defer {
-        _ = gpa_allocator.deinit();
+    // init app
+    try start(&app_global);
+
+    // run update
+    if (builtin.os.tag == .emscripten) {
+        std.os.emscripten.emscripten_set_main_loop(struct {
+            pub fn emscripten_loop() callconv(.C) void {
+                if (app_global.has_quit) {
+                    std.os.emscripten.emscripten_cancel_main_loop();
+                    quit(&app_global) catch |err| {
+                        log.err("application quit had error: {}", .{err});
+                        return;
+                    };
+                    log.debug("application quit", .{});
+                    return;
+                }
+                update(&app_global) catch |err| {
+                    log.err("application has error: {}", .{err});
+                    std.os.emscripten.emscripten_cancel_main_loop();
+                };
+            }
+        }.emscripten_loop, 0, 0);
+    } else {
+        while (!app_global.has_quit) {
+            try update(&app_global);
+        }
+        try quit(&app_global);
     }
+}
+
+pub fn start(app: *App) !void {
+    const allocator = gpa_allocator.allocator();
 
     // NOTE(jae): 2024-01-12
     // Plan is to use date data for daily data usage storage
@@ -87,30 +135,28 @@ pub fn main() !void {
 
     // Setup custom allocators for SDL and Imgui
     // - We can use the GeneralPurposeAllocator to catch memory leaks
-    const global_c_allocator = try GlobalCAllocator.init(allocator);
-    defer global_c_allocator.deinit();
+    global_c_allocator = try GlobalCAllocator.init(allocator);
+    errdefer global_c_allocator.deinit();
 
     // Load your settings
     var user_settings: *UserSettings = try allocator.create(UserSettings);
-    defer allocator.destroy(user_settings);
+    errdefer allocator.destroy(user_settings);
 
     user_settings.* = UserConfig.load(allocator) catch |err| switch (err) {
         // If no file found, use default
         error.FileNotFound => UserSettings.init(allocator),
         else => return err,
     };
-    defer user_settings.deinit(allocator);
+    errdefer user_settings.deinit(allocator);
 
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
         log.err("unable to initialize SDL: {s}", .{sdl.SDL_GetError()});
         return error.SDLInitializationFailed;
     }
-    defer sdl.SDL_Quit();
+    errdefer sdl.SDL_Quit();
 
-    var app: *App = try allocator.create(App);
-    defer allocator.destroy(app);
     app.* = try App.init(allocator, user_settings);
-    defer app.deinit();
+    errdefer app.deinit();
 
     // setup main application window
     app.window = blk: {
@@ -160,18 +206,27 @@ pub fn main() !void {
             }.callback, app);
         }
     }
-    defer sdl.SDL_DestroyTray(app.tray);
 
     // Setup initial "previous mouse position"
-    var prev_mouse_pos: MousePos = .{ .x = 0, .y = 0 };
     _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
 
     // DEBUG: Test break screen
     // state.user_settings.default_time_till_break = Duration.init(30 * time.ns_per_s);
     // state.user_settings.default_break_time = Duration.init(5 * time.ns_per_s);
+}
 
-    var frames_without_app_input: u16 = 0;
-    while (!app.has_quit) {
+pub fn quit(app: *App) !void {
+    app.deinit();
+    sdl.SDL_Quit();
+    global_c_allocator.deinit();
+    _ = gpa_allocator.deinit();
+}
+
+var frames_without_app_input: u16 = 0;
+
+pub fn update(app: *App) !void {
+    {
+        const allocator = app.allocator;
         _ = app.temp_allocator.reset(.retain_capacity);
 
         const current_frame_time = sdl.SDL_GetPerformanceCounter();

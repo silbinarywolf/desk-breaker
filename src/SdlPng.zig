@@ -18,7 +18,7 @@ pub const Image = struct {
 
 pub fn load(allocator: std.mem.Allocator, image_buffer: []const u8) !Image {
     var stream_source = std.io.StreamSource{ .const_buffer = std.io.fixedBufferStream(image_buffer) };
-    var img = try zigimg.png.PNG.readImage(allocator, &stream_source);
+    var img = try zigimg.formats.png.PNG.readImage(allocator, &stream_source);
     errdefer img.deinit(allocator);
     const surface = try sdlSurfaceFromImage(img);
     return .{

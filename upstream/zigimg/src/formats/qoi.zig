@@ -115,15 +115,10 @@ pub const QOI = struct {
 
     pub fn formatInterface() FormatInterface {
         return FormatInterface{
-            .format = format,
             .formatDetect = formatDetect,
             .readImage = readImage,
             .writeImage = writeImage,
         };
-    }
-
-    pub fn format() ImageUnmanaged.Format {
-        return ImageUnmanaged.Format.qoi;
     }
 
     pub fn formatDetect(stream: *ImageUnmanaged.Stream) ImageReadError!bool {
@@ -194,7 +189,7 @@ pub const QOI = struct {
 
         const reader = buffered_stream.reader();
 
-        _ = try buffered_stream.read(magic_buffer[0..]);
+        _ = try reader.readAll(magic_buffer[0..]);
 
         if (!std.mem.eql(u8, magic_buffer[0..], Header.correct_magic[0..])) {
             return ImageReadError.InvalidData;
