@@ -16,6 +16,8 @@ const Duration = @import("Duration.zig");
 
 const CurrentVersion = 2;
 
+const CanLoadConfig = builtin.os.tag != .emscripten and !builtin.abi.isAndroid();
+
 /// PartialVersion is used to deserialize just the "version" field first
 const PartialVersion = struct {
     version: u32,
@@ -80,8 +82,9 @@ timers: []Timer,
 pub fn load(allocator: std.mem.Allocator) !UserSettings {
     const path = get_data_dir_path(allocator) catch |err| switch (err) {
         error.AppDataDirUnavailable => {
-            // If unavailable like on Android, do nothing
-            return UserSettings.init(allocator);
+            // If missing $HOME environment variable and not in portable mode
+            // then assume we cannot find the config file.
+            return error.FileNotFound;
         },
         else => return err,
     };
@@ -207,13 +210,15 @@ pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !v
     });
 }
 
+const DataDirPathError = std.fs.GetAppDataDirError || std.fs.SelfExePathError || std.fs.File.OpenError || std.mem.Allocator.Error;
+
 /// If "portable_mode_enabled" exists alongside binary then save in "%EXE_DIR%/userdata"
 /// returns slice that is owned by the caller and should be freed by them
-pub fn get_data_dir_path(allocator: mem.Allocator) ![]const u8 {
-    if (builtin.os.tag == .emscripten) {
+pub fn get_data_dir_path(allocator: mem.Allocator) DataDirPathError![]const u8 {
+    if (!CanLoadConfig) {
+        // If not supported by platform/OS like Emscripten or Android
         return error.AppDataDirUnavailable;
     }
-
     const out_buf = try allocator.alloc(u8, std.fs.max_path_bytes);
     defer allocator.free(out_buf);
     const path = try std.fs.selfExeDirPath(out_buf);

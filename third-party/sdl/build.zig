@@ -35,9 +35,9 @@ pub fn build(b: *std.Build) !void {
         try gen.formatAndWriteFile(b.pathJoin(&.{ b.path("").getPath(b), "src", "build", "sdlbuild.zig" }));
     }
 
-    const use_cmake = target.result.os.tag == .linux and target.result.abi != .android;
+    const use_cmake = target.result.os.tag == .linux and !target.result.abi.isAndroid();
     if (!use_cmake) {
-        const lib = if (target.result.abi != .android) b.addStaticLibrary(.{
+        const lib = if (!target.result.abi.isAndroid()) b.addStaticLibrary(.{
             .name = "SDL3",
             .target = target,
             .optimize = optimize,
@@ -63,21 +63,31 @@ pub fn build(b: *std.Build) !void {
         // Used for SDL_egl.h and SDL_opengles2.h
         lib.root_module.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
 
-        if (target.result.abi == .android) {
+        if (target.result.abi.isAndroid()) {
             lib.root_module.addCSourceFiles(.{
                 .root = sdl_path,
                 .files = &android_src_files,
             });
 
-            const has_hidapi = true;
-            if (has_hidapi) {
-                lib.root_module.addCSourceFiles(.{
-                    .root = sdl_path,
-                    .files = &android_src_cpp_files,
-                    .flags = &.{"-std=c++11"},
-                });
+            lib.root_module.addCSourceFiles(.{
+                .root = sdl_path,
+                .files = &android_src_cpp_files,
+                .flags = &.{"-std=c++11"},
+            });
+            // NOTE(jae): 2025-03-10
+            // While redundant in this context, we're expressing here that we workaround an issue
+            // in Zig 0.14.0 where linking C++ causes build errors.
+            // See: https://github.com/silbinarywolf/zig-android-sdk/issues/19
+            if (!target.result.abi.isAndroid()) {
                 lib.linkLibCpp();
             }
+            // Avoid linking with linkLibCpp() as that causes issues as Zig 0.14.0 attempts to mix
+            // its own C++ includes with those auto-included by the Zig Android SDK.
+            //
+            // However, not linking c++ means when loading on X86_64 systems, you get
+            // unresolved symbol "_Unwind_Resume" when SDL2 is loaded, so to workaround that
+            // we link the "unwind" library
+            lib.linkSystemLibrary("unwind");
 
             // This is needed for "src/render/opengles/SDL_render_gles.c" to compile
             lib.root_module.addCMacro("GL_GLEXT_PROTOTYPES", "1");
@@ -646,9 +656,9 @@ const windows_src_files = sdlsrc.audio.directsound.c_files ++
     sdlsrc.storage.steam.c_files ++
     // Only need these files from: sdlsrc.thread.generic.c_files
     [_][]const u8{
-    "src/thread/generic/SDL_sysrwlock.c",
-    "src/thread/generic/SDL_syscond.c",
-} ++
+        "src/thread/generic/SDL_sysrwlock.c",
+        "src/thread/generic/SDL_syscond.c",
+    } ++
     sdlsrc.thread.windows.c_files ++
     sdlsrc.time.windows.c_files ++
     sdlsrc.timer.windows.c_files ++
@@ -699,6 +709,7 @@ const android_src_files = sdlsrc.core.android.c_files ++
     sdlsrc.audio.openslES.c_files ++
     sdlsrc.audio.aaudio.c_files ++
     sdlsrc.camera.android.c_files ++
+    sdlsrc.dialog.android.c_files ++
     sdlsrc.filesystem.android.c_files ++
     sdlsrc.filesystem.posix.c_files ++
     sdlsrc.gpu.vulkan.c_files ++
@@ -714,6 +725,7 @@ const android_src_files = sdlsrc.core.android.c_files ++
     sdlsrc.sensor.android.c_files ++
     sdlsrc.time.unix.c_files ++
     sdlsrc.timer.unix.c_files ++
+    sdlsrc.tray.dummy.c_files ++
     sdlsrc.loadso.dlopen.c_files ++
     sdlsrc.thread.pthread.c_files ++
     sdlsrc.video.android.c_files;

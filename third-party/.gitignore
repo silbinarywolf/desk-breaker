@@ -1,3 +1,5 @@
+# Handle .gitignore logic for inlined Zig modules
+
 # zigimg
 /zigimg/*
 !/zigimg/.gitattributes

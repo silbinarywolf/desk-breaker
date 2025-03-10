@@ -13,17 +13,17 @@
             .path = "third-party/imgui",
         },
         .zigimg = .{
-            .path = "upstream/zigimg",
+            .path = "third-party/zigimg",
         },
-        // NOTE(jae): 2024-11-05
-        // Used as experiment to run Desk Breaker on Android
-        // .@"zig-android-sdk" = .{
-        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/4d3613943692a979fba47f6a66b5236a84a2a97c.tar.gz",
-        //     .hash = "12206ac089f1f74b08c0d64179203ef6417159376f89f9fd68e6fe844bd15d20559f",
-        //     .lazy = true,
+        // NOTE(jae): 2025-03-10
+        // Used as an experiment to run Desk Breaker on Android and validate the Zig Android SDK against a more complicated
+        // project.
+        // .android = .{
+        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/f0dad83fad71c70cf8310631ae1d23f5bb6228a8.tar.gz",
+        //     .hash = "1220c1b15451d38fd4207105c242feaabfcc1ca2b508889bf5e576d2e41fa7cd295b",
         // },
         // NOTE(jae): 2024-11-05
-        // Used as experiment to run Desk Breaker in browser
+        // Used as an experiment to run Desk Breaker in browser
         .emscripten = .{
             .path = "third-party/emscripten",
             .lazy = true,

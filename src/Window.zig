@@ -75,7 +75,7 @@ pub fn init(options: Options) !@This() {
         return error.SdlFailed;
     };
 
-    if (builtin.os.tag != .emscripten) {
+    if (comptime builtin.os.tag != .emscripten and !builtin.abi.isAndroid()) {
         if (options.icon) |icon| {
             if (!sdl.SDL_SetWindowIcon(window, icon)) {
                 log.err("unable to set window icon: {s}", .{sdl.SDL_GetError()});
