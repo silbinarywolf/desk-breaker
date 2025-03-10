@@ -25,25 +25,31 @@ const log = std.log.default;
 const assert = std.debug.assert;
 
 /// custom standard options for Android
-pub const std_options: std.Options = if (builtin.abi == .android)
+pub const std_options: std.Options = if (builtin.abi.isAndroid())
     .{
         .logFn = android.logFn,
     }
 else
     .{};
 
-/// custom panic handler for Android
-// pub const panic = if (builtin.abi == .android)
-//     android.panic
-// else
-//     std.builtin.default_panic;
+// custom panic handler for Android
+pub const panic = if (builtin.abi.isAndroid())
+    android.panic
+else
+    std.debug.FullPanic(std.debug.defaultPanic);
+
+comptime {
+    if (builtin.abi.isAndroid()) {
+        @export(&SDL_main, .{ .name = "SDL_main", .linkage = .strong });
+    }
+}
 
 /// This needs to be exported for Android builds
-export fn SDL_main() callconv(.C) void {
-    if (builtin.abi == .android) {
+fn SDL_main() callconv(.C) void {
+    if (comptime builtin.abi.isAndroid()) {
         _ = std.start.callMain();
     } else {
-        @panic("SDL_main should not be called outside of Android builds");
+        @compileError("SDL_main should not be called outside of Android builds");
     }
 }
 

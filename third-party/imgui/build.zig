@@ -45,7 +45,13 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .link_libc = true,
     });
-    lib.linkLibCpp();
+    // NOTE(jae): 2025-03-09
+    // Avoid explicit linking of C++ as it breaks Android build
+    // if we need this in the future, either make it ignored for Android targets
+    // or only use it for OSes that need it to build.
+    if (!target.result.abi.isAndroid()) {
+        lib.linkLibCpp();
+    }
 
     // ImGui files
     lib.addCSourceFiles(.{

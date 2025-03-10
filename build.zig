@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-// const android = @import("zig-android-sdk");
+// const android = @import("android");
 const emscripten = @import("emscripten");
 
 const app_name = "Desk Breaker";
@@ -51,7 +51,7 @@ pub fn build(b: *std.Build) !void {
     //     const android_tools = android.Tools.create(b, .{
     //         .api_level = .android15,
     //         .build_tools_version = "35.0.0",
-    //         .ndk_version = "27.0.12077973",
+    //         .ndk_version = "29.0.13113456",
     //     });
     //     const apk = android.APK.create(b, android_tools);
     //
@@ -65,7 +65,7 @@ pub fn build(b: *std.Build) !void {
     //
     //     // Add SDL3's Java files like SDL.java, SDLActivity.java, HIDDevice.java, etc
     //     const sdl_dep = b.dependency("sdl", .{
-    //         .optimize = .ReleaseFast,
+    //         .optimize = optimize,
     //         .target = android_targets[0],
     //     });
     //     const sdl_java_files = sdl_dep.namedWriteFiles("sdljava");
@@ -122,10 +122,18 @@ pub fn build(b: *std.Build) !void {
             });
         }
 
+        const library_optimize = if (!target.result.abi.isAndroid())
+            optimize
+        else
+            // In Zig 0.14.0, for Android builds, make sure we build libraries with ReleaseSafe
+            // otherwise we get errors relating to libubsan_rt.a getting RELOCATION errors
+            // https://github.com/silbinarywolf/zig-android-sdk/issues/18
+            if (optimize == .Debug) .ReleaseSafe else optimize;
+
         // add sdl
         const sdl_module = blk: {
             const sdl_dep = b.dependency("sdl", .{
-                .optimize = .ReleaseFast,
+                .optimize = library_optimize,
                 .target = target,
             });
             const sdl_lib = sdl_dep.artifact("SDL3");
@@ -174,7 +182,7 @@ pub fn build(b: *std.Build) !void {
         const freetype_lib = blk: {
             var freetype_dep = b.dependency("freetype", .{
                 .target = target,
-                .optimize = .ReleaseFast,
+                .optimize = library_optimize,
             });
             const freetype_lib = freetype_dep.artifact("freetype");
             if (target.result.os.tag != .emscripten) {
@@ -194,7 +202,7 @@ pub fn build(b: *std.Build) !void {
                 // NOTE(jae): 2025-01-27
                 // We want assertions in ImGui to tell is if we messed up so we
                 // don't just want ReleaseFast here.
-                .optimize = optimize,
+                .optimize = library_optimize,
                 .enable_freetype = imgui_enable_freetype,
             });
             const imgui_lib = imgui_dep.artifact("imgui");
@@ -226,7 +234,7 @@ pub fn build(b: *std.Build) !void {
         {
             const zigimg_dep = b.dependency("zigimg", .{
                 .target = target,
-                .optimize = .ReleaseFast,
+                .optimize = library_optimize,
             });
             exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
         }
@@ -234,9 +242,9 @@ pub fn build(b: *std.Build) !void {
         if (target.result.abi.isAndroid()) {
             @panic("not using Android SDK");
             // const apk: *android.APK = android_apk orelse @panic("Android APK should be initialized");
-            // const android_dep = b.dependency("zig-android-sdk", .{
-            //     .optimize = optimize,
+            // const android_dep = b.dependency("android", .{
             //     .target = target,
+            //     .optimize = optimize,
             // });
             // exe.root_module.addImport("android", android_dep.module("android"));
             //
