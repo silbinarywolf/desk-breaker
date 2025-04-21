@@ -486,7 +486,23 @@ pub fn update(app: *App) !void {
                 .regular, .incoming_break => {
                     if (app.time_till_next_timer_complete()) |next_timer| {
                         if (next_timer.time_till_next_break.nanoseconds <= 0) {
-                            try app.change_mode(.taking_break);
+                            const detect_computer_in_sleep_mode = blk: {
+                                // If it's an activity timer or sleep timer and the difference in time
+                                // is over N seconds in the past, assume the computer was in sleep mode for a long
+                                // period of time and ignore the break logic.
+                                if (next_timer.id == .activity_timer or next_timer.id == .snooze_timer) {
+                                    if (next_timer.time_till_next_break.nanoseconds <= -180 * time.ns_per_s) {
+                                        break :blk true;
+                                    }
+                                }
+                                break :blk false;
+                            };
+                            if (!detect_computer_in_sleep_mode) {
+                                try app.change_mode(.taking_break);
+                            } else {
+                                app.activity_timer.reset();
+                                app.snooze_activity_break_timer = null;
+                            }
                         } else if (next_timer.time_till_next_break.nanoseconds <= app.user_settings.incoming_break_or_default().nanoseconds) {
                             try app.change_mode(.incoming_break);
                         } else {

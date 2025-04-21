@@ -471,7 +471,7 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
                         const timer_duration = t.timer_duration orelse unreachable;
 
                         const diff = timer_duration.diff(timer_started.read());
-                        if (diff.nanoseconds == 0) {
+                        if (diff.nanoseconds <= 0) {
                             // Disable timer
                             t.timer_started = null;
                         }
