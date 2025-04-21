@@ -575,7 +575,6 @@ pub const audio = struct {
     pub const wasapi = struct {
         pub const c_files = [_][]const u8{
             "src/audio/wasapi/SDL_wasapi.c",
-            "src/audio/wasapi/SDL_wasapi_win32.c",
         };
     };
 };
@@ -672,7 +671,6 @@ pub const core = struct {
             "src/core/linux/SDL_fcitx.c",
             "src/core/linux/SDL_ibus.c",
             "src/core/linux/SDL_ime.c",
-            "src/core/linux/SDL_sandbox.c",
             "src/core/linux/SDL_system_theme.c",
             "src/core/linux/SDL_threadprio.c",
             "src/core/linux/SDL_udev.c",
@@ -695,6 +693,7 @@ pub const core = struct {
 
     pub const windows = struct {
         pub const c_files = [_][]const u8{
+            "src/core/windows/SDL_gameinput.c",
             "src/core/windows/SDL_hid.c",
             "src/core/windows/SDL_immdevice.c",
             "src/core/windows/SDL_windows.c",
@@ -776,6 +775,7 @@ pub const events = struct {
         "src/events/SDL_displayevents.c",
         "src/events/SDL_dropevents.c",
         "src/events/SDL_events.c",
+        "src/events/SDL_eventwatch.c",
         "src/events/SDL_keyboard.c",
         "src/events/SDL_keymap.c",
         "src/events/SDL_keysym_to_keycode.c",
@@ -787,18 +787,6 @@ pub const events = struct {
         "src/events/SDL_touch.c",
         "src/events/SDL_windowevents.c",
         "src/events/imKStoUCS.c",
-    };
-};
-
-pub const file = struct {
-    pub const c_files = [_][]const u8{
-        "src/file/SDL_iostream.c",
-    };
-
-    pub const n3ds = struct {
-        pub const c_files = [_][]const u8{
-            "src/file/n3ds/SDL_iostreamromfs.c",
-        };
     };
 };
 
@@ -897,12 +885,6 @@ pub const filesystem = struct {
 pub const gpu = struct {
     pub const c_files = [_][]const u8{
         "src/gpu/SDL_gpu.c",
-    };
-
-    pub const d3d11 = struct {
-        pub const c_files = [_][]const u8{
-            "src/gpu/d3d11/SDL_gpu_d3d11.c",
-        };
     };
 
     pub const d3d12 = struct {
@@ -1170,12 +1152,6 @@ pub const joystick = struct {
         };
     };
 
-    pub const steam = struct {
-        pub const c_files = [_][]const u8{
-            "src/joystick/steam/SDL_steamcontroller.c",
-        };
-    };
-
     pub const virtual = struct {
         pub const c_files = [_][]const u8{
             "src/joystick/virtual/SDL_virtualjoystick.c",
@@ -1349,12 +1325,6 @@ pub const main = struct {
     pub const n3ds = struct {
         pub const c_files = [_][]const u8{
             "src/main/n3ds/SDL_sysmain_runapp.c",
-        };
-    };
-
-    pub const ngage = struct {
-        pub const cpp_files = [_][]const u8{
-            "src/main/ngage/SDL_sysmain_runapp.cpp",
         };
     };
 
@@ -1735,18 +1705,9 @@ pub const thread = struct {
 
     pub const n3ds = struct {
         pub const c_files = [_][]const u8{
-            "src/thread/n3ds/SDL_syscond.c",
             "src/thread/n3ds/SDL_sysmutex.c",
             "src/thread/n3ds/SDL_syssem.c",
             "src/thread/n3ds/SDL_systhread.c",
-        };
-    };
-
-    pub const ngage = struct {
-        pub const cpp_files = [_][]const u8{
-            "src/thread/ngage/SDL_sysmutex.cpp",
-            "src/thread/ngage/SDL_syssem.cpp",
-            "src/thread/ngage/SDL_systhread.cpp",
         };
     };
 
@@ -1855,12 +1816,6 @@ pub const timer = struct {
         };
     };
 
-    pub const ngage = struct {
-        pub const cpp_files = [_][]const u8{
-            "src/timer/ngage/SDL_systimer.cpp",
-        };
-    };
-
     pub const ps2 = struct {
         pub const c_files = [_][]const u8{
             "src/timer/ps2/SDL_systimer.c",
@@ -1939,6 +1894,7 @@ pub const video = struct {
         "src/video/SDL_fillrect.c",
         "src/video/SDL_pixels.c",
         "src/video/SDL_rect.c",
+        "src/video/SDL_stb.c",
         "src/video/SDL_stretch.c",
         "src/video/SDL_surface.c",
         "src/video/SDL_video.c",
@@ -2038,15 +1994,6 @@ pub const video = struct {
             "src/video/n3ds/SDL_n3dsswkb.c",
             "src/video/n3ds/SDL_n3dstouch.c",
             "src/video/n3ds/SDL_n3dsvideo.c",
-        };
-    };
-
-    pub const ngage = struct {
-        pub const cpp_files = [_][]const u8{
-            "src/video/ngage/SDL_ngageevents.cpp",
-            "src/video/ngage/SDL_ngageframebuffer.cpp",
-            "src/video/ngage/SDL_ngagevideo.cpp",
-            "src/video/ngage/SDL_ngagewindow.cpp",
         };
     };
 
@@ -2156,6 +2103,7 @@ pub const video = struct {
     pub const wayland = struct {
         pub const c_files = [_][]const u8{
             "src/video/wayland/SDL_waylandclipboard.c",
+            "src/video/wayland/SDL_waylandcolor.c",
             "src/video/wayland/SDL_waylanddatamanager.c",
             "src/video/wayland/SDL_waylanddyn.c",
             "src/video/wayland/SDL_waylandevents.c",

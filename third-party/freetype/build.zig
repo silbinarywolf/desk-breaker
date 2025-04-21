@@ -53,11 +53,9 @@ pub fn build(b: *std.Build) !void {
     //     lib.root_module.addCMacro("setjmp", "emscripten_setjmp");
     // }
 
-    var flags = std.ArrayList([]const u8).init(b.allocator);
-    defer flags.deinit();
-    try flags.appendSlice(&.{
+    const flags = &[_][]const u8{
         "-fno-sanitize=undefined",
-    });
+    };
     if (libpng_enabled) lib.root_module.addCMacro("FT_CONFIG_OPTION_USE_PNG", "1");
     // TODO(JAE): 2024-04-08
     // add zlib to build
@@ -67,7 +65,7 @@ pub fn build(b: *std.Build) !void {
     lib.addCSourceFiles(.{
         .root = freetype,
         .files = srcs,
-        .flags = flags.items,
+        .flags = flags,
     });
     // lib.installHeader("include/freetype-zig.h", "freetype-zig.h");
     // lib.installHeader(freetype.path(b, "include/ft2build.h"), "ft2build.h");
@@ -82,7 +80,7 @@ pub fn build(b: *std.Build) !void {
                     "builds/windows/ftsystem.c",
                     "builds/windows/ftdebug.c",
                 },
-                .flags = flags.items,
+                .flags = flags,
             });
             lib.addWin32ResourceFile(.{
                 .file = freetype.path(b, "src/base/ftver.rc"),
@@ -94,7 +92,7 @@ pub fn build(b: *std.Build) !void {
                 "builds/unix/ftsystem.c",
                 "src/base/ftdebug.c",
             },
-            .flags = flags.items,
+            .flags = flags,
         }),
         else => lib.addCSourceFiles(.{
             .root = freetype,
@@ -102,17 +100,20 @@ pub fn build(b: *std.Build) !void {
                 "src/base/ftsystem.c",
                 "src/base/ftdebug.c",
             },
-            .flags = flags.items,
+            .flags = flags,
         }),
     }
     b.installArtifact(lib);
 
-    var module = b.addModule("freetype", .{
-        .target = b.graph.host,
-        .root_source_file = b.path("src/freetype.zig"),
+    var c_translate = b.addTranslateC(.{
+        .target = target,
+        .optimize = .ReleaseFast,
+        .root_source_file = b.path("include/freetype-zig.h"),
     });
-    module.addIncludePath(b.path("include"));
-    module.addIncludePath(freetype_include_path);
+    c_translate.addIncludePath(b.path("include"));
+    c_translate.addIncludePath(freetype_include_path);
+
+    _ = c_translate.addModule("freetype");
 }
 
 const headers = &.{

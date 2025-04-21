@@ -1,0 +1,6 @@
+/wuffs-0.3/*
+!/wuffs-0.3/release
+/wuffs-0.3/release/c/*
+!/wuffs-0.3/release/c/wuffs-v0.3.c
+!/wuffs-0.3/LICENSE
+!/wuffs-0.3/sync.txt

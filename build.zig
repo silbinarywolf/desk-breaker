@@ -1,7 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
-// const android = @import("android");
+const android = if (enable_android_build) @import("android") else void;
 const emscripten = @import("emscripten");
+
+// NOTE(jae): 2025-04-13
+// Can set this to true to make this build pull down Android dependencies and test
+// Desk Breaker on Android devices.
+const enable_android_build = false;
 
 const app_name = "Desk Breaker";
 const recommended_zig_version = "0.14.0";
@@ -32,101 +37,83 @@ pub fn build(b: *std.Build) !void {
         exe_name = b.fmt("{s}-{s}", .{ exe_name, exe_postfix });
     }
 
-    const root_target = b.standardTargetOptions(.{});
+    const root_target = blk: {
+        const root_target_query = b.standardTargetOptionsQueryOnly(.{});
+        if (root_target_query.os_tag != null and root_target_query.os_tag.? == .emscripten) {
+            var query = root_target_query;
+            query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
+                // NOTE(jae): 2025-04-06
+                // Not enabling threading (atomics+bulk_memory) because testing on my phone on the same network via "emrun"
+                // sucks without something that can serve HTTPS
+                // .atomics,
+                // .bulk_memory,
+                .exception_handling,
+                // .reference_types,
+            }));
+            break :blk b.resolveTargetQuery(query);
+        }
+        break :blk b.resolveTargetQuery(root_target_query);
+    };
     const optimize = b.standardOptimizeOption(.{});
 
-    var root_target_single = [_]std.Build.ResolvedTarget{root_target};
-    const targets: []std.Build.ResolvedTarget = root_target_single[0..];
+    const targets: []std.Build.ResolvedTarget = blk: {
+        var root_target_single = [_]std.Build.ResolvedTarget{root_target};
+        if (!enable_android_build) {
+            break :blk root_target_single[0..];
+        }
+        const android_targets = android.standardTargets(b, root_target);
+        if (android_targets.len == 0) break :blk root_target_single[0..];
+        break :blk android_targets;
+    };
 
-    // const android_targets = android.standardTargets(b, root_target);
-    // const targets: []std.Build.ResolvedTarget = if (android_targets.len == 0)
-    //     root_target_single[0..]
-    // else
-    //     android_targets;
     // If building with Android, initialize the tools / build
-    // const android_apk: ?*android.APK = blk: {
-    //     if (android_targets.len == 0) {
-    //         break :blk null;
-    //     }
-    //     const android_tools = android.Tools.create(b, .{
-    //         .api_level = .android15,
-    //         .build_tools_version = "35.0.0",
-    //         .ndk_version = "29.0.13113456",
-    //     });
-    //     const apk = android.APK.create(b, android_tools);
-    //
-    //     const key_store_file = android_tools.createKeyStore(android.CreateKey.example());
-    //     apk.setKeyStore(key_store_file);
-    //     apk.setAndroidManifest(b.path("android/AndroidManifest.xml"));
-    //     apk.addResourceDirectory(b.path("android/res"));
-    //
-    //     // Add Java files
-    //     apk.addJavaSourceFile(.{ .file = b.path("android/src/DeskBreakerSDLActivity.java") });
-    //
-    //     // Add SDL3's Java files like SDL.java, SDLActivity.java, HIDDevice.java, etc
-    //     const sdl_dep = b.dependency("sdl", .{
-    //         .optimize = optimize,
-    //         .target = android_targets[0],
-    //     });
-    //     const sdl_java_files = sdl_dep.namedWriteFiles("sdljava");
-    //     for (sdl_java_files.files.items) |file| {
-    //         apk.addJavaSourceFile(.{ .file = file.contents.copy });
-    //     }
-    //     break :blk apk;
-    // };
+    const android_apk = blk: {
+        if (!root_target.result.abi.isAndroid()) {
+            break :blk null;
+        }
+        if (!enable_android_build) {
+            @panic("must set 'enable_android_build' to true");
+        }
+        const android_tools = android.Tools.create(b, .{
+            .api_level = .android15,
+            .build_tools_version = "35.0.0",
+            .ndk_version = "29.0.13113456",
+        });
+        const apk = android.APK.create(b, android_tools);
+
+        const key_store_file = android_tools.createKeyStore(android.CreateKey.example());
+        apk.setKeyStore(key_store_file);
+        apk.setAndroidManifest(b.path("android/AndroidManifest.xml"));
+        apk.addResourceDirectory(b.path("android/res"));
+
+        // Add Java files
+        apk.addJavaSourceFile(.{ .file = b.path("android/src/DeskBreakerSDLActivity.java") });
+
+        // Add SDL3's Java files like SDL.java, SDLActivity.java, HIDDevice.java, etc
+        const sdl_dep = b.dependency("sdl", .{
+            .optimize = optimize,
+            .target = root_target,
+        });
+        const sdl_java_files = sdl_dep.namedWriteFiles("sdljava");
+        for (sdl_java_files.files.items) |file| {
+            apk.addJavaSourceFile(.{ .file = file.contents.copy });
+        }
+        break :blk apk;
+    };
 
     for (targets) |target| {
-        var exe: *std.Build.Step.Compile = if (target.result.abi.isAndroid()) b.addSharedLibrary(.{
-            .name = exe_name,
+        const app = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-        }) else if (target.result.os.tag == .emscripten) b.addStaticLibrary(.{
-            .name = exe_name,
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-        }) else b.addExecutable(.{
-            .name = exe_name,
-            .root_source_file = b.path("src/main.zig"),
-            .target = target,
-            .optimize = optimize,
-            // NOTE(jae): 2024-07-06
-            // Fails to compile on Zig 0.13.0 with single threaded true
-            // when compiling C++
-            // .single_threaded = true,
-            // NOTE(jae): 2024-05-12
-            // Testing with the Zig x86 compiler
-            // .use_llvm = false,
-            // .use_lld = true,
         });
 
-        switch (target.result.os.tag) {
-            .macos => exe.stack_size = 1024 * 1024,
-            .windows => exe.stack_size = 2048 * 1024,
-            else => {}, // use default for untested OS
-        }
-        if (target.result.os.tag == .windows and exe.subsystem == null) {
-            exe.subsystem = .Windows;
-        }
-
-        if (target.result.os.tag == .windows) {
-            exe.addWin32ResourceFile(.{
-                // NOTE(jae): 2025-01-27
-                // RC file references "icon.ico" for the EXE icon
-                .file = b.path("src/resources/win.rc"),
-                // Anything that rc.exe accepts will work here
-                // https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
-                // This sets the default code page to UTF-8
-                .flags = &.{"/c65001"},
-            });
-        }
-
-        const library_optimize = if (!target.result.abi.isAndroid())
+        const library_optimize = if (!target.result.abi.isAndroid() and target.result.os.tag != .emscripten)
+            // Debug builds of libraries make Debug binaries about +33mb
             optimize
         else
-            // In Zig 0.14.0, for Android builds, make sure we build libraries with ReleaseSafe
-            // otherwise we get errors relating to libubsan_rt.a getting RELOCATION errors
+            // In Zig 0.14.0, for Android/Emscripten builds, make sure we build libraries with ReleaseSafe
+            // otherwise we get errors relating to libubsan_rt.a either missing symbols or getting RELOCATION errors
             // https://github.com/silbinarywolf/zig-android-sdk/issues/18
             if (optimize == .Debug) .ReleaseSafe else optimize;
 
@@ -137,18 +124,18 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
             });
             const sdl_lib = sdl_dep.artifact("SDL3");
-            exe.linkLibrary(sdl_lib);
+            app.linkLibrary(sdl_lib);
 
             // NOTE(jae): 2024-07-03
             // Hack for Linux to use the SDL3 version compiled using native Linux toolszig
-            if (target.result.os.tag == .linux and target.result.abi != .android) {
+            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
                 for (sdl_lib.root_module.lib_paths.items) |lib_path| {
-                    exe.addLibraryPath(lib_path);
+                    app.addLibraryPath(lib_path);
                 }
             }
 
             const sdl_module = sdl_dep.module("sdl");
-            exe.root_module.addImport("sdl", sdl_module);
+            app.addImport("sdl", sdl_module);
 
             // NOTE(jae): 2024-07-31
             // Linux can do Mac cross-compilation if we download the macos-sdk lazy dependency
@@ -169,9 +156,9 @@ pub fn build(b: *std.Build) !void {
                     sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
 
                     // add to exe
-                    exe.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                    exe.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                    exe.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
+                    app.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                    app.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                    app.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
                 }
             }
 
@@ -188,9 +175,9 @@ pub fn build(b: *std.Build) !void {
             if (target.result.os.tag != .emscripten) {
                 // NOTE(jae): 2025-02-02
                 // Link with Emscripten toolchains version instead due to setjmp/etc symbols not being found.
-                exe.root_module.linkLibrary(freetype_lib);
+                app.linkLibrary(freetype_lib);
             }
-            exe.root_module.addImport("freetype", freetype_dep.module("freetype"));
+            app.addImport("freetype", freetype_dep.module("freetype"));
             break :blk freetype_lib;
         };
 
@@ -206,8 +193,8 @@ pub fn build(b: *std.Build) !void {
                 .enable_freetype = imgui_enable_freetype,
             });
             const imgui_lib = imgui_dep.artifact("imgui");
-            exe.root_module.linkLibrary(imgui_lib);
-            exe.root_module.addImport("imgui", imgui_dep.module("imgui"));
+            app.linkLibrary(imgui_lib);
+            app.addImport("imgui", imgui_dep.module("imgui"));
 
             // Add <ft2build.h> to ImGui so it can compile with Freetype support
             if (imgui_enable_freetype) {
@@ -230,32 +217,88 @@ pub fn build(b: *std.Build) !void {
             }
         }
 
-        // add zigimg
+        // add wuffs
         {
-            const zigimg_dep = b.dependency("zigimg", .{
+            const wuffs_dep = b.dependency("wuffs", .{
                 .target = target,
                 .optimize = library_optimize,
             });
-            exe.root_module.addImport("zigimg", zigimg_dep.module("zigimg"));
+            app.linkLibrary(wuffs_dep.artifact("wuffs"));
+            app.addImport("wuffs", wuffs_dep.module("wuffs"));
+        }
+
+        const maybe_linkage: ?std.builtin.LinkMode = if (target.result.abi.isAndroid())
+            .dynamic
+        else if (target.result.os.tag == .emscripten)
+            .static
+        else
+            null;
+
+        var exe: *std.Build.Step.Compile = if (maybe_linkage) |linkage|
+            // Android:    zig build -Dtarget=x86_64-linux-android && adb install ./zig-out/bin/desk-breaker.apk
+            // Emscripten: zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast
+            b.addLibrary(.{
+                .name = exe_name,
+                .root_module = app,
+                .linkage = linkage,
+            })
+        else
+            // Desktop: zig build
+            b.addExecutable(.{
+                .name = exe_name,
+                .root_module = app,
+                // NOTE(jae): 2024-07-06
+                // Fails to compile on Zig 0.13.0 with single threaded true
+                // when compiling C++
+                // .single_threaded = true,
+                // NOTE(jae): 2024-05-12
+                // Testing with the Zig x86 compiler
+                // .use_llvm = false,
+            });
+
+        switch (target.result.os.tag) {
+            .macos => exe.stack_size = 1024 * 1024,
+            .windows => exe.stack_size = 2048 * 1024,
+            else => {}, // use default for untested OS
+        }
+
+        if (target.result.os.tag == .windows) {
+            if (optimize != .Debug and exe.subsystem == null) {
+                exe.subsystem = .Windows;
+            }
+            exe.addWin32ResourceFile(.{
+                // NOTE(jae): 2025-01-27
+                // RC file references "icon.ico" for the EXE icon
+                .file = b.path("src/resources/win.rc"),
+                // Anything that rc.exe accepts will work here
+                // https://learn.microsoft.com/en-us/windows/win32/menurc/using-rc-the-rc-command-line-
+                // This sets the default code page to UTF-8
+                .flags = &.{"/c65001"},
+            });
         }
 
         if (target.result.abi.isAndroid()) {
-            @panic("not using Android SDK");
-            // const apk: *android.APK = android_apk orelse @panic("Android APK should be initialized");
-            // const android_dep = b.dependency("android", .{
-            //     .target = target,
-            //     .optimize = optimize,
-            // });
-            // exe.root_module.addImport("android", android_dep.module("android"));
-            //
-            // apk.addArtifact(exe);
+            if (!enable_android_build) {
+                @panic("must set 'enable_android_build' to true");
+            }
+            const apk: *android.APK = android_apk orelse @panic("Android APK should be initialized");
+            const android_dep = b.dependency("android", .{
+                .target = target,
+                .optimize = library_optimize,
+            });
+            app.addImport("android", android_dep.module("android"));
+
+            apk.addArtifact(exe);
         } else if (target.result.os.tag == .emscripten) {
             const em = emscripten.Tools.create(b, .{
                 .version = "3.1.53",
-            }) orelse break;
+            }) orelse return;
 
             const run_step = b.step("run", "Run the application in browser");
-            const emcc_cmd = em.addRunArtifact(exe);
+            const emcc_cmd = em.addRunArtifact(exe, .{
+                .browser = .none,
+                .hostname = "192.168.0.165",
+            });
             run_step.dependOn(&emcc_cmd.step);
 
             const installed_web_html = em.addInstallArtifact(exe);
@@ -269,9 +312,11 @@ pub fn build(b: *std.Build) !void {
             b.getInstallStep().dependOn(&installed_exe.step);
         }
     }
-    // if (android_apk) |apk| {
-    //     apk.installApk();
-    // }
+    if (enable_android_build) {
+        if (android_apk) |apk| {
+            apk.installApk();
+        }
+    }
 
     const test_step = b.step("test", "Run the test suite");
     const test_cmd = b.addRunArtifact(b.addTest(.{

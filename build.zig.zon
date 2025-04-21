@@ -15,12 +15,15 @@
         .zigimg = .{
             .path = "third-party/zigimg",
         },
-        // NOTE(jae): 2025-03-10
+        .wuffs = .{
+            .path = "third-party/wuffs",
+        },
+        // NOTE(jae): 2025-04-13
         // Used as an experiment to run Desk Breaker on Android and validate the Zig Android SDK against a more complicated
         // project.
         // .android = .{
-        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/f0dad83fad71c70cf8310631ae1d23f5bb6228a8.tar.gz",
-        //     .hash = "1220c1b15451d38fd4207105c242feaabfcc1ca2b508889bf5e576d2e41fa7cd295b",
+        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/17aa6475b12bea73cd7d07480b433d2f2d9d7c1c.tar.gz",
+        //     .hash = "1220866c597f08c83998f807ab8fefa203f1cf19615a9af9accf3cb7db02e351d835",
         // },
         // NOTE(jae): 2024-11-05
         // Used as an experiment to run Desk Breaker in browser
