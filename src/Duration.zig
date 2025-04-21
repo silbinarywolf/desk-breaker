@@ -156,12 +156,12 @@ pub fn parseString(str: []const u8) error{InvalidFormat}!Duration {
             }
             return error.InvalidFormat;
         };
-        if (d.kind != .digit) {
+        if (d.tag != .digit) {
             // if (true) @panic(@tagName(d.kind));
             return error.InvalidFormat;
         }
         const ident = l.next() orelse return error.InvalidFormat;
-        if (ident.kind != .ident) {
+        if (ident.tag != .ident) {
             return error.InvalidFormat;
         }
         const digits_str = l.slice(d);

@@ -89,19 +89,19 @@ pub fn next(self: *Lexer) ?Token {
         while (true) {
             // TODO: Consider UTF-8 at this point and use UTF-8 iterator
             var c = self.nextChar() catch |err| switch (err) {
-                error.EOF => return Token.init(.ErrorIncompleteString, top_i, self.i),
+                error.EOF => return Token.init(.error_incomplete_string, top_i, self.i),
             };
             // std.debug.print("c: {c}\n", .{c});
             if (c == '\\') {
                 // If escaping string, skip over it
                 // const prev_i = self.i;
                 const ec = self.nextChar() catch |err| switch (err) {
-                    error.EOF => return Token.init(.ErrorIncompleteControlCode, self.i - 1, self.i),
+                    error.EOF => return Token.init(.error_incomplete_control_code, self.i - 1, self.i),
                 };
                 switch (ec) {
                     '"' => {},
                     '\\' => {},
-                    else => return Token.init(.ErrorInvalidControlCode, self.i - 1, self.i),
+                    else => return Token.init(.error_invalid_control_code, self.i - 1, self.i),
                 }
                 c = ec;
             }
@@ -141,7 +141,7 @@ pub fn next(self: *Lexer) ?Token {
         const tok = Token.init(.ident, top_i, self.i);
         return tok;
     }
-    const tok = Token.init(.ErrorUnexpected, top_i, top_i);
+    const tok = Token.init(.error_unexpected, top_i, top_i);
     return tok;
 }
 
