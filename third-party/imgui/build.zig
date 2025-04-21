@@ -45,13 +45,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .link_libc = true,
     });
-    // NOTE(jae): 2025-03-09
-    // Avoid explicit linking of C++ as it breaks Android build
-    // if we need this in the future, either make it ignored for Android targets
-    // or only use it for OSes that need it to build.
-    if (!target.result.abi.isAndroid()) {
-        lib.linkLibCpp();
-    }
+    lib.linkLibCpp();
 
     // ImGui files
     lib.addCSourceFiles(.{
@@ -136,10 +130,7 @@ pub fn build(b: *std.Build) !void {
 
     // Imgui Translate C-code
     var c_translate = b.addTranslateC(.{
-        // NOTE(jae): 2024-11-05
-        // Translating C-header API only so we use host so that Android builds
-        // will compile correctly.
-        .target = b.graph.host,
+        .target = target,
         .optimize = optimize,
         .root_source_file = b.path("src/imgui.h"),
     });

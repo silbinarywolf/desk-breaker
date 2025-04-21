@@ -6,7 +6,7 @@ const mem = std.mem;
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 
-const SdlPng = @import("SdlPng.zig");
+const Image = @import("Image.zig");
 const UserConfig = @import("UserConfig.zig");
 const Duration = @import("Duration.zig");
 
@@ -228,7 +228,7 @@ allocator: std.mem.Allocator,
 /// stores printed text per-frame and other temporary things
 temp_allocator: std.heap.ArenaAllocator,
 
-icon: SdlPng.Image,
+icon: Image,
 
 // Windows
 
@@ -278,14 +278,14 @@ break_mode: struct {
 ui: UiState,
 
 pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
-    var icon_png = try SdlPng.load(allocator, @embedFile("resources/icon.png"));
-    errdefer icon_png.deinit(allocator);
+    var icon = try Image.loadPng(allocator, @embedFile("resources/icon.png"));
+    errdefer icon.deinit(allocator);
 
     return .{
         .mode = .regular,
         .allocator = allocator,
         .temp_allocator = std.heap.ArenaAllocator.init(allocator),
-        .icon = icon_png,
+        .icon = icon,
         .window = null,
         .tray = null,
         .user_settings = user_settings,
@@ -301,6 +301,7 @@ pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
 
 pub fn deinit(app: *App) void {
     const allocator = app.allocator;
+
     app.ui.ui_allocator.deinit();
     if (app.window) |app_window| {
         app_window.deinit();
@@ -313,15 +314,13 @@ pub fn deinit(app: *App) void {
     for (app.taking_break_windows.items) |*window| {
         window.deinit();
     }
+    app.taking_break_windows.deinit(allocator);
     if (app.tray) |tray| {
         sdl.SDL_DestroyTray(tray);
     }
-    app.taking_break_windows.deinit(allocator);
     app.icon.deinit(allocator);
     app.user_settings.deinit(allocator);
     allocator.destroy(app.user_settings);
-    // NOTE(jae): 2024-11-15: user_settings is freed outside of this
-    // state.user_settings.deinit(state.allocator);
     app.temp_allocator.deinit();
     app.* = undefined;
 }

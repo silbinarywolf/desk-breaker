@@ -1,0 +1,19 @@
+.{
+    .name = .wuffs,
+    .version = "0.1.0",
+    .dependencies = .{
+        .wuffs = .{
+            .path = "upstream/wuffs-0.3",
+            // .url = "https://github.com/google/wuffs-mirror-release-c/archive/refs/tags/v0.3.3.tar.gz",
+            // .hash = "1220bdcf8cf139028c21b20859537bb5b164dcbc3fdefdc137986cb0ec1fee7470a8",
+        },
+    },
+    .paths = .{
+        "LICENSE",
+        "README.md",
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0x67c0c059ee10b2b3,
+}

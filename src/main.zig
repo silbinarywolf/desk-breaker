@@ -53,12 +53,14 @@ fn SDL_main() callconv(.C) void {
     }
 }
 
-pub const os = if (builtin.os.tag == .emscripten) struct {
-    pub const heap = struct {
-        /// Force web browser to use c allocator with Emscripten
-        pub const page_allocator = std.heap.c_allocator;
-    };
-} else std.os;
+// NOTE(jae): 2025-04-13
+// After testing on Emscripten and Android, seemingly not needed anymore.
+// pub const os = if (builtin.os.tag == .emscripten and builtin.abi.isAndroid()) struct {
+//     pub const heap = struct {
+//         /// Force web browser to use c allocator with Emscripten
+//         pub const page_allocator = std.heap.c_allocator;
+//     };
+// } else std.os;
 
 const MousePos = struct {
     x: f32,
@@ -72,20 +74,20 @@ const MousePos = struct {
     }
 };
 
-const GPAConfig: std.heap.GeneralPurposeAllocatorConfig = if (builtin.os.tag == .emscripten) .{
-    // NOTE(jae): 2025-02-03
-    // Must always be 0 even in Debug mode for Zig 0.13.0, otherwise captureStackFrames crashes
-    .stack_trace_frames = 0,
-} else .{
-    // NOTE(jae): 2024-04-21
-    // Safety is true for debug/releaseSafe builds
-    // .safety = true,
-    // Extra debugging options to avoid segfaults
-    // .never_unmap = true,
-    //.retain_metadata = true,
-};
+const has_debug_allocator = (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and
+    (builtin.cpu.arch != .wasm32 and builtin.cpu.arch != .wasm64);
 
-var gpa_allocator: std.heap.GeneralPurposeAllocator(GPAConfig) = .{};
+var debug_allocator = if (has_debug_allocator)
+    std.heap.DebugAllocator(.{
+        // NOTE(jae): 2024-04-21
+        // Safety is true for debug/releaseSafe builds
+        // .safety = true,
+        // Extra debugging options to avoid segfaults
+        // .never_unmap = true,
+        // .retain_metadata = true,
+    }).init
+else
+    void;
 
 var has_opened_from_tray = false;
 
@@ -100,37 +102,43 @@ pub fn unload() !void {}
 
 pub fn main() !void {
     // init app
-    try start(&app_global);
+    const app = &app_global;
+    try start(app);
 
     // run update
-    if (builtin.os.tag == .emscripten) {
+    if (builtin.os.tag != .emscripten) {
+        while (!app.has_quit) {
+            try update(app);
+        }
+        try quit(app);
+    } else {
         std.os.emscripten.emscripten_set_main_loop(struct {
             pub fn emscripten_loop() callconv(.C) void {
-                if (app_global.has_quit) {
+                if (app.has_quit) {
                     std.os.emscripten.emscripten_cancel_main_loop();
-                    quit(&app_global) catch |err| {
+                    quit(app) catch |err| {
                         log.err("application quit had error: {}", .{err});
                         return;
                     };
                     log.debug("application quit", .{});
                     return;
                 }
-                update(&app_global) catch |err| {
+                update(app) catch |err| {
                     log.err("application has error: {}", .{err});
                     std.os.emscripten.emscripten_cancel_main_loop();
                 };
             }
         }.emscripten_loop, 0, 0);
-    } else {
-        while (!app_global.has_quit) {
-            try update(&app_global);
-        }
-        try quit(&app_global);
     }
 }
 
 pub fn start(app: *App) !void {
-    const allocator = gpa_allocator.allocator();
+    const allocator = gpa: {
+        if (has_debug_allocator) break :gpa debug_allocator.allocator();
+        if (builtin.os.tag != .emscripten and (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64)) break :gpa std.heap.wasm_allocator;
+        if (builtin.os.tag == .emscripten) break :gpa std.heap.c_allocator;
+        break :gpa std.heap.smp_allocator;
+    };
 
     // NOTE(jae): 2024-01-12
     // Plan is to use date data for daily data usage storage
@@ -145,13 +153,19 @@ pub fn start(app: *App) !void {
     errdefer global_c_allocator.deinit();
 
     // Load your settings
-    var user_settings: *UserSettings = try allocator.create(UserSettings);
+    var user_settings: *UserSettings = allocator.create(UserSettings) catch |err| {
+        log.err("unable to allocate UserSettings: {}", .{err});
+        return err;
+    };
     errdefer allocator.destroy(user_settings);
 
     user_settings.* = UserConfig.load(allocator) catch |err| switch (err) {
         // If no file found, use default
         error.FileNotFound => UserSettings.init(allocator),
-        else => return err,
+        else => {
+            log.err("unable to load user config: {}", .{err});
+            return err;
+        },
     };
     errdefer user_settings.deinit(allocator);
 
@@ -221,11 +235,16 @@ pub fn start(app: *App) !void {
     // state.user_settings.default_break_time = Duration.init(5 * time.ns_per_s);
 }
 
-pub fn quit(app: *App) !void {
+pub fn quit(app: *App) error{MemoryLeak}!void {
     app.deinit();
     sdl.SDL_Quit();
     global_c_allocator.deinit();
-    _ = gpa_allocator.deinit();
+    if (has_debug_allocator) {
+        if (debug_allocator.deinit() == .leak) {
+            log.err("application has memory leak", .{});
+            return error.MemoryLeak;
+        }
+    }
 }
 
 var frames_without_app_input: u16 = 0;

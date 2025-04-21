@@ -1,16 +1,16 @@
 .{
     .name = .imgui,
-    .version = "0.0.0",
+    .version = "1.91.9",
     .dependencies = .{
         .imgui = .{
             .path = "upstream/imgui",
-            // .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.91.3-docking.tar.gz",
+            // .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.91.9b-docking.tar.gz",
             // .hash = "122097eefc8aaa3c1c8e20c3fbeb0e965f988c28090438a57cc751a97578ef450003",
             // .lazy = true,
         },
         .cimgui = .{
             .path = "upstream/cimgui",
-            // .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.91.3dock.tar.gz",
+            // .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.91.9bdock.tar.gz",
             // .hash = "12204b1441f1407af838a3e6f8423ee9cb2cf7b07114ec077b1ec0a233d4b78672c9",
             // .lazy = true,
         },

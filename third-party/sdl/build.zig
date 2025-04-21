@@ -37,20 +37,22 @@ pub fn build(b: *std.Build) !void {
 
     const use_cmake = target.result.os.tag == .linux and !target.result.abi.isAndroid();
     if (!use_cmake) {
-        const lib = if (!target.result.abi.isAndroid()) b.addStaticLibrary(.{
+        const lib = b.addLibrary(.{
             .name = "SDL3",
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }) else b.addSharedLibrary(.{
-            .name = "SDL3",
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
+            .root_module = b.createModule(.{
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+            .linkage = if (!target.result.abi.isAndroid())
+                .static
+            else
+                .dynamic,
         });
         lib.addCSourceFiles(.{
             .root = sdl_path,
             .files = &generic_src_files,
+            .flags = &.{ "-D_REENTRANT", "-pthread" },
         });
         lib.addIncludePath(sdl_path.path(b, "src")); // SDL_internal.h, etc
         lib.addIncludePath(sdl_api_include_path); // SDL3/*.h, etc
@@ -68,26 +70,12 @@ pub fn build(b: *std.Build) !void {
                 .root = sdl_path,
                 .files = &android_src_files,
             });
-
             lib.root_module.addCSourceFiles(.{
                 .root = sdl_path,
                 .files = &android_src_cpp_files,
                 .flags = &.{"-std=c++11"},
             });
-            // NOTE(jae): 2025-03-10
-            // While redundant in this context, we're expressing here that we workaround an issue
-            // in Zig 0.14.0 where linking C++ causes build errors.
-            // See: https://github.com/silbinarywolf/zig-android-sdk/issues/19
-            if (!target.result.abi.isAndroid()) {
-                lib.linkLibCpp();
-            }
-            // Avoid linking with linkLibCpp() as that causes issues as Zig 0.14.0 attempts to mix
-            // its own C++ includes with those auto-included by the Zig Android SDK.
-            //
-            // However, not linking c++ means when loading on X86_64 systems, you get
-            // unresolved symbol "_Unwind_Resume" when SDL2 is loaded, so to workaround that
-            // we link the "unwind" library
-            lib.linkSystemLibrary("unwind");
+            lib.linkLibCpp();
 
             // This is needed for "src/render/opengles/SDL_render_gles.c" to compile
             lib.root_module.addCMacro("GL_GLEXT_PROTOTYPES", "1");
@@ -199,63 +187,57 @@ pub fn build(b: *std.Build) !void {
                     lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
                 },
                 .emscripten => {
-                    const is_single_threaded = if (lib.root_module.single_threaded) |st| st else false;
-                    if (is_single_threaded) {
-                        lib.addCSourceFiles(.{
+                    var sdl_config = emscriptenConfig;
+
+                    // If single threaded isn't explictly set, infer from the Wasm feature set
+                    if (lib.root_module.single_threaded == null) {
+                        if (target.result.os.tag == .emscripten and
+                            !std.Target.wasm.featureSetHas(target.result.cpu.features, .atomics))
+                        {
+                            lib.root_module.single_threaded = true;
+                        }
+                    }
+
+                    if (lib.root_module.single_threaded == true) {
+                        lib.root_module.addCSourceFiles(.{
                             .root = sdl_path,
                             .files = &sdlsrc.thread.generic.c_files,
                         });
-                        @panic("SDL3: have not setup build to support single threaded");
+                        sdl_config.SDL_THREADS_DISABLED = true;
+                        sdl_config.HAVE_GCC_ATOMICS = false;
                     } else {
-                        lib.addCSourceFiles(.{
+                        if (!std.Target.wasm.featureSetHas(target.result.cpu.features, .atomics)) {
+                            @panic("Must enable atomics for SDL3 emscripten threading");
+                        }
+                        if (!std.Target.wasm.featureSetHas(target.result.cpu.features, .bulk_memory)) {
+                            @panic("Must enable bulk_memory for SDL3 emscripten threading");
+                        }
+                        lib.root_module.addCMacro("__EMSCRIPTEN_PTHREADS__", "1");
+                        sdl_config.HAVE_GCC_ATOMICS = true;
+                        sdl_config.SDL_THREAD_PTHREAD = true;
+                        sdl_config.SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = true;
+                        lib.root_module.addCSourceFiles(.{
                             .root = sdl_path,
                             .files = &sdlsrc.thread.pthread.c_files,
+                            .flags = &.{ "-D_REENTRANT", "-pthread" },
                         });
                     }
 
                     lib.root_module.addCMacro("SDL_PLATFORM_EMSCRIPTEN", "1");
-                    if (!is_single_threaded) {
-                        lib.root_module.addCMacro("__EMSCRIPTEN_PTHREADS__", "1");
-                    }
-                    // NOTE(jae): 2025-02-02
-                    // SDL_iostream.c needs this and doesn't include SDL_build_config.h
-                    lib.root_module.addCMacro("HAVE_STDIO_H", "1");
-                    lib.addCSourceFiles(.{
+                    lib.root_module.addCSourceFiles(.{
                         .root = sdl_path,
                         .files = &emscripten_src_files,
+                        .flags = &.{ "-D_REENTRANT", "-pthread" },
                     });
-
                     lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
                     const config_header = b.addConfigHeader(.{
                         .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{
                             "build_config",
-                            "SDL_build_config_emscripten.h",
+                            "SDL_build_config.h.cmake",
                         })) },
                         .include_path = "SDL_build_config.h",
-                    }, .{});
-                    // const config_header = b.addConfigHeader(.{
-                    //     .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
-                    //     .include_path = "SDL_build_config.h",
-                    // }, SDLConfig{
-                    //     .SDL_TIMER_UNIX = true,
-                    //     .SDL_FILESYSTEM_EMSCRIPTEN = true,
-                    //     .SDL_POWER_EMSCRIPTEN = true,
-                    //     .SDL_JOYSTICK_EMSCRIPTEN = true,
-                    //     .SDL_AUDIO_DRIVER_EMSCRIPTEN = true,
-                    //     .SDL_VIDEO_DRIVER_EMSCRIPTEN = true,
-                    //     .SDL_CAMERA_DRIVER_EMSCRIPTEN = true,
-                    //     .SDL_HAPTIC_DISABLED = true,
-                    //     .HAVE_STDARG_H = true,
-                    //     .HAVE_STDDEF_H = true,
-                    //     .HAVE_STDINT_H = true,
-                    //     // NOTE(jae): 2025-02-02
-                    //     // SDL_iostream.c needs this
-                    //     .HAVE_STDIO_H = true,
-                    //     .SDL_THREAD_PTHREAD = !is_single_threaded,
-                    //     .SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = !is_single_threaded,
-                    // });
-
-                    lib.addConfigHeader(config_header);
+                    }, sdl_config);
+                    lib.root_module.addConfigHeader(config_header);
                     lib.installConfigHeader(config_header);
                 },
                 .linux => {
@@ -551,10 +533,7 @@ pub fn build(b: *std.Build) !void {
 
     // SDL Translate C-code
     var c_translate = b.addTranslateC(.{
-        // NOTE(jae): 2024-11-05
-        // Translating C-header API only so we use host so that Android builds
-        // will compile correctly.
-        .target = b.graph.host,
+        .target = target,
         .optimize = .ReleaseFast,
         .root_source_file = b.path("src/sdl.h"),
     });
@@ -734,6 +713,7 @@ const android_src_cpp_files = sdlsrc.hidapi.android.cpp_files;
 
 const emscripten_src_files = sdlsrc.audio.emscripten.c_files ++
     sdlsrc.audio.dummy.c_files ++
+    sdlsrc.camera.dummy.c_files ++
     sdlsrc.camera.emscripten.c_files ++
     sdlsrc.filesystem.emscripten.c_files ++
     sdlsrc.haptic.dummy.c_files ++
@@ -741,7 +721,9 @@ const emscripten_src_files = sdlsrc.audio.emscripten.c_files ++
     sdlsrc.locale.emscripten.c_files ++
     sdlsrc.misc.emscripten.c_files ++
     sdlsrc.power.emscripten.c_files ++
+    sdlsrc.video.dummy.c_files ++
     sdlsrc.video.emscripten.c_files ++
+    sdlsrc.video.offscreen.c_files ++
     sdlsrc.loadso.dlopen.c_files ++
     sdlsrc.audio.disk.c_files ++
     sdlsrc.render.opengl.c_files ++
@@ -803,6 +785,184 @@ const linux_src_files = sdlsrc.audio.aaudio.c_files ++
     sdlsrc.video.x11.c_files ++
     sdlsrc.video.wayland.c_files ++
     dummy_src_files;
+
+/// NOTE(jae): 2025-04-05
+/// Last version of SDL_build_config_emscripten: https://github.com/libsdl-org/SDL/blob/c48fbbb067bb21e91f0aa300d115b4819947ecc3/include/build_config/SDL_build_config_emscripten.h
+/// Reference to older config: https://github.com/libsdl-org/SDL/issues/11236#issuecomment-2436438570
+const emscriptenConfig: SDLConfig = .{
+    // .HAVE_GCC_ATOMICS = true, // Enabled conditionally depending on Wasm build settings
+    // LibC headers
+    .HAVE_LIBC = true,
+    .HAVE_ALLOCA_H = true,
+    .HAVE_FLOAT_H = true,
+    .HAVE_ICONV_H = true,
+    .HAVE_INTTYPES_H = true,
+    .HAVE_LIMITS_H = true,
+    .HAVE_MALLOC_H = true,
+    .HAVE_MATH_H = true,
+    .HAVE_MEMORY_H = true,
+    .HAVE_SIGNAL_H = true,
+    .HAVE_STDARG_H = true,
+    // .HAVE_STDBOOL_H = true,
+    .HAVE_STDDEF_H = true,
+    .HAVE_STDINT_H = true,
+    .HAVE_STDIO_H = true,
+    .HAVE_STDLIB_H = true,
+    .HAVE_STRINGS_H = true,
+    .HAVE_STRING_H = true,
+    .HAVE_SYS_TYPES_H = true,
+    .HAVE_WCHAR_H = true,
+
+    // C library functions
+    .HAVE_DLOPEN = true,
+    .HAVE_MALLOC = true,
+    // .HAVE_CALLOC = true,
+    // .HAVE_REALLOC = true,
+    .HAVE_FDATASYNC = true,
+    // .HAVE_FREE = true,
+    .HAVE_GETENV = true,
+    .HAVE_GETHOSTNAME = true,
+    .HAVE_SETENV = true,
+    .HAVE_PUTENV = true,
+    .HAVE_UNSETENV = true,
+    .HAVE_ABS = true,
+    .HAVE_BCOPY = true,
+    .HAVE_MEMSET = true,
+    .HAVE_MEMCPY = true,
+    .HAVE_MEMMOVE = true,
+    .HAVE_MEMCMP = true,
+    .HAVE_WCSLEN = true,
+    .HAVE_WCSNLEN = true,
+    // .HAVE_WCSDUP = true,
+    .HAVE_WCSSTR = true,
+    .HAVE_WCSCMP = true,
+    .HAVE_WCSNCMP = true,
+    .HAVE_WCSTOL = true,
+    .HAVE_STRLEN = true,
+    .HAVE_STRNLEN = true,
+    .HAVE_STRLCPY = true,
+    .HAVE_STRLCAT = true,
+    .HAVE_STRPBRK = true,
+    .HAVE_INDEX = true,
+    .HAVE_RINDEX = true,
+    .HAVE_STRCHR = true,
+    .HAVE_STRRCHR = true,
+    .HAVE_STRSTR = true,
+    .HAVE_STRTOK_R = true,
+    .HAVE_STRTOL = true,
+    .HAVE_STRTOUL = true,
+    .HAVE_STRTOLL = true,
+    .HAVE_STRTOULL = true,
+    .HAVE_STRTOD = true,
+    .HAVE_ATOI = true,
+    .HAVE_ATOF = true,
+    .HAVE_STRCMP = true,
+    .HAVE_STRNCMP = true,
+    // .HAVE_STRCASESTR = true,
+    // .HAVE_SSCANF = true,
+    .HAVE_VSSCANF = true,
+    .HAVE_VSNPRINTF = true,
+    .HAVE_ACOS = true,
+    .HAVE_ACOSF = true,
+    .HAVE_ASIN = true,
+    .HAVE_ASINF = true,
+    .HAVE_ATAN = true,
+    .HAVE_ATANF = true,
+    .HAVE_ATAN2 = true,
+    .HAVE_ATAN2F = true,
+    .HAVE_CEIL = true,
+    .HAVE_CEILF = true,
+    .HAVE_COPYSIGN = true,
+    .HAVE_COPYSIGNF = true,
+    .HAVE_COS = true,
+    .HAVE_COSF = true,
+    .HAVE_EXP = true,
+    .HAVE_EXPF = true,
+    .HAVE_FABS = true,
+    .HAVE_FABSF = true,
+    .HAVE_FLOOR = true,
+    .HAVE_FLOORF = true,
+    .HAVE_FMOD = true,
+    .HAVE_FMODF = true,
+    .HAVE_ISINF = true,
+    .HAVE_ISINFF = true,
+    .HAVE_ISINF_FLOAT_MACRO = true,
+    .HAVE_ISNAN = true,
+    .HAVE_ISNANF = true,
+    .HAVE_ISNAN_FLOAT_MACRO = true,
+    .HAVE_LOG = true,
+    .HAVE_LOGF = true,
+    .HAVE_LOG10 = true,
+    .HAVE_LOG10F = true,
+    .HAVE_LROUND = true,
+    .HAVE_LROUNDF = true,
+    .HAVE_MODF = true,
+    .HAVE_MODFF = true,
+    .HAVE_POW = true,
+    .HAVE_POWF = true,
+    .HAVE_ROUND = true,
+    .HAVE_ROUNDF = true,
+    .HAVE_SCALBN = true,
+    .HAVE_SCALBNF = true,
+    .HAVE_SIN = true,
+    .HAVE_SINF = true,
+    .HAVE_SQRT = true,
+    .HAVE_SQRTF = true,
+    .HAVE_TAN = true,
+    .HAVE_TANF = true,
+    .HAVE_TRUNC = true,
+    .HAVE_TRUNCF = true,
+    .HAVE_FOPEN64 = true,
+    .HAVE_FSEEKO = true,
+    .HAVE_FSEEKO64 = true,
+    .HAVE_POSIX_FALLOCATE = true,
+    .HAVE_SIGACTION = true,
+    .HAVE_SA_SIGACTION = true,
+    .HAVE_ST_MTIM = true,
+    .HAVE_SETJMP = true,
+    .HAVE_NANOSLEEP = true,
+    .HAVE_GMTIME_R = true,
+    .HAVE_LOCALTIME_R = true,
+    .HAVE_NL_LANGINFO = true,
+    .HAVE_SYSCONF = true,
+    .HAVE_CLOCK_GETTIME = true,
+    .HAVE_GETPAGESIZE = true,
+    .HAVE_ICONV = true,
+    .HAVE_POLL = true,
+    .HAVE__EXIT = true,
+    // End of C library functions
+
+    .HAVE_O_CLOEXEC = true,
+
+    // .SDL_THREADS_DISABLED = true, // Enabled conditionally depending on Wasm build settings
+    // .SDL_THREAD_PTHREAD = true, // Enabled conditionally depending on Wasm build settings
+    // .SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = true, // Enabled conditionally depending on Wasm build settings
+    .SDL_AUDIO_DRIVER_DISK = true,
+    .SDL_AUDIO_DRIVER_DUMMY = true,
+    .SDL_AUDIO_DRIVER_EMSCRIPTEN = true,
+    .SDL_JOYSTICK_EMSCRIPTEN = true,
+    .SDL_JOYSTICK_VIRTUAL = true,
+    .SDL_HAPTIC_DUMMY = true,
+    .SDL_PROCESS_DUMMY = true,
+    .SDL_SENSOR_DUMMY = true,
+    .SDL_LOADSO_DLOPEN = true,
+    .SDL_TIME_UNIX = true,
+    .SDL_TIMER_UNIX = true,
+    .SDL_VIDEO_DRIVER_DUMMY = true,
+    .SDL_VIDEO_DRIVER_EMSCRIPTEN = true,
+    .SDL_VIDEO_DRIVER_OFFSCREEN = true,
+    .SDL_VIDEO_RENDER_GPU = true,
+    .SDL_VIDEO_RENDER_OGL_ES2 = true,
+    .SDL_VIDEO_OPENGL_ES2 = true,
+    .SDL_VIDEO_OPENGL_EGL = true,
+    .SDL_POWER_EMSCRIPTEN = true,
+    .SDL_FILESYSTEM_EMSCRIPTEN = true,
+    // .SDL_STORAGE_GENERIC = true,
+    .SDL_FSOPS_POSIX = true,
+    .SDL_CAMERA_DRIVER_DUMMY = true,
+    .SDL_CAMERA_DRIVER_EMSCRIPTEN = true,
+    .DYNAPI_NEEDS_DLOPEN = true,
+};
 
 /// NOTE(jae): 2024-10-24
 /// This configuration was copy-pasted out of my SDL_build_config.h file after creating it

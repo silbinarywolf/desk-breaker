@@ -4,7 +4,7 @@ const unicode = std.unicode;
 const testing = std.testing;
 const assert = std.debug.assert;
 
-const TokenKind = enum {
+const Tag = enum {
     ident,
     equal,
     newline,
@@ -13,20 +13,20 @@ const TokenKind = enum {
     digit, // number with no decimal places
 
     // Error tokens
-    ErrorUnexpected,
-    ErrorInvalidControlCode,
-    ErrorIncompleteControlCode,
-    ErrorIncompleteString,
+    error_unexpected,
+    error_invalid_control_code,
+    error_incomplete_control_code,
+    error_incomplete_string,
 };
 
 const Token = struct {
-    kind: TokenKind,
+    tag: Tag,
     start: u32,
     end: u32,
 
-    fn init(kind: TokenKind, start: u32, end: u32) Token {
+    fn init(tag: Tag, start: u32, end: u32) Token {
         return .{
-            .kind = kind,
+            .tag = tag,
             .start = start,
             .end = end,
         };
@@ -89,19 +89,19 @@ pub fn next(self: *Lexer) ?Token {
         while (true) {
             // TODO: Consider UTF-8 at this point and use UTF-8 iterator
             var c = self.nextChar() catch |err| switch (err) {
-                error.EOF => return Token.init(.ErrorIncompleteString, top_i, self.i),
+                error.EOF => return Token.init(.error_incomplete_string, top_i, self.i),
             };
             // std.debug.print("c: {c}\n", .{c});
             if (c == '\\') {
                 // If escaping string, skip over it
                 // const prev_i = self.i;
                 const ec = self.nextChar() catch |err| switch (err) {
-                    error.EOF => return Token.init(.ErrorIncompleteControlCode, self.i - 1, self.i),
+                    error.EOF => return Token.init(.error_incomplete_control_code, self.i - 1, self.i),
                 };
                 switch (ec) {
                     '"' => {},
                     '\\' => {},
-                    else => return Token.init(.ErrorInvalidControlCode, self.i - 1, self.i),
+                    else => return Token.init(.error_invalid_control_code, self.i - 1, self.i),
                 }
                 c = ec;
             }
@@ -141,7 +141,7 @@ pub fn next(self: *Lexer) ?Token {
         const tok = Token.init(.ident, top_i, self.i);
         return tok;
     }
-    const tok = Token.init(.ErrorUnexpected, top_i, top_i);
+    const tok = Token.init(.error_unexpected, top_i, top_i);
     return tok;
 }
 
@@ -167,7 +167,7 @@ const Lexer = @This();
 test "incomplete string" {
     var l = try Lexer.init("\"my string");
     const tok = l.next() orelse return error.ExpectedToken;
-    try testing.expectEqual(TokenKind.ErrorIncompleteString, tok.kind);
+    try testing.expectEqual(Tag.error_incomplete_string, tok.tag);
     // TODO: Improve this to not include the quote
     try testing.expectEqualSlices(u8, "\"my string", l.slice(tok));
 }
@@ -177,31 +177,31 @@ test "working config" {
     // First key value
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.ident, tok.kind);
+        try testing.expectEqual(Tag.ident, tok.tag);
     }
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.equal, tok.kind);
+        try testing.expectEqual(Tag.equal, tok.tag);
     }
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.string, tok.kind);
+        try testing.expectEqual(Tag.string, tok.tag);
     }
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.newline, tok.kind);
+        try testing.expectEqual(Tag.newline, tok.tag);
     }
     // Next key value
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.ident, tok.kind);
+        try testing.expectEqual(Tag.ident, tok.tag);
     }
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.equal, tok.kind);
+        try testing.expectEqual(Tag.equal, tok.tag);
     }
     {
         const tok = l.next() orelse return error.MissingToken;
-        try testing.expectEqual(TokenKind.digit, tok.kind);
+        try testing.expectEqual(Tag.digit, tok.tag);
     }
 }

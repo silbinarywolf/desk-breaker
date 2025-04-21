@@ -137,7 +137,7 @@ pub fn init(options: Options) !@This() {
     // NOTE(jae): This call is needed for multiple windows, ie. creation of the second window
     imgui.igSetCurrentContext(imgui_context);
 
-    const imgui_io = &imgui.igGetIO()[0];
+    const imgui_io = &imgui.igGetIO_ContextPtr(imgui_context)[0];
     imgui_io.IniFilename = null; // disable imgui.ini
     imgui_io.IniSavingRate = -1; // disable imgui.ini
 

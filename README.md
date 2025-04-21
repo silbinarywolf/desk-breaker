@@ -1,4 +1,4 @@
-# <img src="src/icon.png" width="32" height="32"> Desk Breaker
+# <img src="src/resources/icon.png" width="32" height="32"> Desk Breaker
 
 ![Continuous integration](https://github.com/silbinarywolf/desk-breaker/actions/workflows/ci.yml/badge.svg)
 
