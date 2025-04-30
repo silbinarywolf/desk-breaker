@@ -15,18 +15,24 @@ pub fn render(app: *App) !void {
     for (app.taking_break_windows.items) |*window| {
         imgui.igSetCurrentContext(window.imgui_context);
 
-        const viewport = &imgui.igGetMainViewport()[0];
+        const viewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
+            continue; // If no viewport skip
+        };
         const viewport_pos = viewport.Pos;
         const viewport_size = viewport.Size;
-        imgui.igSetNextWindowPos(viewport_pos, 0, .{});
-        imgui.igSetNextWindowSize(viewport_size, 0);
+        imgui.igSetNextWindowPos(viewport_pos, imgui.ImGuiCond_None, .{});
+        imgui.igSetNextWindowSize(viewport_size, imgui.ImGuiCond_None);
+        if (!imgui.igBegin("###taking_break", null, App.ImGuiDefaultWindowFlags)) {
+            continue;
+        }
+        defer imgui.igEnd();
 
         var has_triggered_exiting_break_mode = false;
         const required_esc_presses = 30;
 
         // Top-Left
-        imgui.igSetNextWindowPos(viewport_pos, 0, .{ .x = 0, .y = 0 });
-        if (imgui.igBegin("break-top-left", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
+        imgui.igSetNextWindowPos(viewport_pos, imgui.ImGuiCond_Always, .{ .x = 0, .y = 0 });
+        if (imgui.igBegin("###break-top-left", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
             defer imgui.igEnd();
 
             imgui.igText(try app.tprint("Time till break is over: {s}", .{
@@ -36,7 +42,7 @@ pub fn render(app: *App) !void {
 
         // Top-Right
         imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = 0 }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 0 });
-        if (imgui.igBegin("break-top-right", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (imgui.igBegin("###break-top-right", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
             defer imgui.igEnd();
 
             if (imgui.igButton("Exit", .{})) {
@@ -56,7 +62,7 @@ pub fn render(app: *App) !void {
 
         // Center
         imgui.igSetNextWindowPos(.{ .x = viewport_size.x / 2, .y = viewport_size.y / 2 }, imgui.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
-        if (imgui.igBegin("break-center", null, App.ImGuiDefaultWindowFlags)) {
+        if (imgui.igBegin("###break-center", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
 
             const has_active_timers = timercheck: {

@@ -4,9 +4,10 @@ const time = std.time;
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 const android = @import("android");
+const windows = @import("windows.zig");
+const datetime = @import("datetime.zig");
 
 const winregistry = @import("winregistry.zig");
-const DateTime = @import("DateTime.zig");
 const UserConfig = @import("UserConfig.zig");
 const GlobalCAllocator = @import("GlobalCAllocator.zig");
 const Duration = @import("Duration.zig");
@@ -101,6 +102,27 @@ var app_global: App = undefined;
 pub fn unload() !void {}
 
 pub fn main() !void {
+    if (builtin.os.tag == .windows) {
+        // Check if application is already running
+        // - Debug mode has its own unique ID so I can be running the release build and my own testing build simultaneously
+        //
+        // https://stackoverflow.com/a/14176581
+        const unique_application_name = if (builtin.mode == .Debug)
+            "da5cd5eb-0d82-476a-9280-af68ae22a64d"
+        else
+            "b15383a6-be9d-418b-9aa9-c1c462d93431";
+        _ = windows.createMutex(null, false, unique_application_name) catch |err| switch (err) {
+            error.AlreadyExists => {
+                log.debug("application already running", .{});
+                return;
+            },
+            else => {
+                log.err("unexpected CreateMutex error: {}", .{err});
+                return err;
+            },
+        };
+    }
+
     // init app
     const app = &app_global;
     try start(app);
@@ -534,12 +556,14 @@ pub fn update(app: *App) !void {
         if (app.window) |app_window| appwindowblk: {
             imgui.igSetCurrentContext(app_window.imgui_context);
 
-            const viewport = &imgui.igGetMainViewport()[0];
+            const viewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
+                break :appwindowblk; // If no viewport skip
+            };
             const viewport_pos = viewport.Pos;
             const viewport_size = viewport.Size;
 
-            imgui.igSetNextWindowPos(viewport_pos, 0, .{});
-            imgui.igSetNextWindowSize(viewport_size, 0);
+            imgui.igSetNextWindowPos(viewport_pos, imgui.ImGuiCond_None, .{});
+            imgui.igSetNextWindowSize(viewport_size, imgui.ImGuiCond_None);
             if (!imgui.igBegin("###mainwindow", null, App.ImGuiDefaultWindowFlags)) {
                 break :appwindowblk;
             }
