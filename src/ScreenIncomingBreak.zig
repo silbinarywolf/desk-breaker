@@ -15,16 +15,15 @@ pub fn render(app: *App) !void {
     for (app.popup_windows.items) |*window| {
         imgui.igSetCurrentContext(window.imgui_context);
 
-        const viewport: *imgui.ImGuiViewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
-            // If no viewport skip
-            continue;
+        const viewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
+            continue; // If no viewport skip
         };
         const viewport_pos = viewport.Pos;
         const viewport_size = viewport.Size;
         imgui.igSetNextWindowPos(viewport_pos, 0, .{});
         imgui.igSetNextWindowSize(viewport_size, 0);
 
-        if (!imgui.igBegin("incoming_break_window", null, App.ImGuiDefaultWindowFlags)) {
+        if (!imgui.igBegin("###incoming_break_window", null, App.ImGuiDefaultWindowFlags)) {
             // if not rendering
             continue;
         }

@@ -14,7 +14,7 @@ pub const Format = enum {
 };
 
 pub fn loadPng(allocator: std.mem.Allocator, image_buffer: []const u8) !Image {
-    const PixelFormat: Image.Format = .bgra32;
+    const PixelFormat: Image.Format = .rgba32;
     // NOTE(jae): 2025-04-19
     // Not sure if this Wuffs format translates correctly endianness-wise so
     // this might be completely incorrect on big-endian systems (ie. Nintendo Wii)
@@ -28,8 +28,9 @@ pub fn loadPng(allocator: std.mem.Allocator, image_buffer: []const u8) !Image {
         .bgra32 => sdl.SDL_PIXELFORMAT_BGRA32, // little endian (SDL_PIXELFORMAT_BGRA32 == SDL_PIXELFORMAT_ARGB8888), big endian (SDL_PIXELFORMAT_BGRA32 == SDL_PIXELFORMAT_BGRA8888)
     };
 
-    var decoder = try wuffszig.PngDecoder.init(allocator, image_buffer);
+    var decoder = try wuffszig.PngDecoder.init(allocator);
     defer decoder.deinit();
+    decoder.setStream(image_buffer);
     const header = try decoder.decodeHeader();
     const destination_info = try wuffszig.DestinationHeader.calculate(header.width, header.height, wuffs_pixel_format);
 

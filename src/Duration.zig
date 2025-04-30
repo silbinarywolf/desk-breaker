@@ -8,22 +8,19 @@ const testing = std.testing;
 
 const Lexer = @import("Lexer.zig");
 
-nanoseconds: u64,
+nanoseconds: i64,
 
-pub fn init(nanoseconds: u64) Duration {
+pub fn init(nanoseconds: i64) Duration {
     return .{ .nanoseconds = nanoseconds };
 }
 
 pub fn diff(self: Duration, time_elapsed_in_nanoseconds: u64) Duration {
-    if (self.nanoseconds <= time_elapsed_in_nanoseconds) {
-        return .{ .nanoseconds = 0 };
-    }
     return .{
-        .nanoseconds = self.nanoseconds - time_elapsed_in_nanoseconds,
+        .nanoseconds = self.nanoseconds - @as(i64, @intCast(time_elapsed_in_nanoseconds)),
     };
 }
 
-pub fn milliseconds(self: *const Duration) u64 {
+pub fn milliseconds(self: *const Duration) i64 {
     return self.nanoseconds / time.ns_per_ms;
 }
 
@@ -184,7 +181,7 @@ pub fn parseString(str: []const u8) error{InvalidFormat}!Duration {
         return error.InvalidFormat;
     }
     return .{
-        .nanoseconds = nanoseconds,
+        .nanoseconds = @intCast(nanoseconds),
     };
 }
 

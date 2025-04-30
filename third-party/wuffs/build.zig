@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) !void {
         .root_source_file = wuffs_src_file,
     });
     c_translate.defineCMacroRaw("WUFFS_CONFIG__STATIC_FUNCTIONS");
+    // c_translate.defineCMacroRaw("WUFFS_IMPLEMENTATION");
     // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULES");
     // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__ADLER32");
     // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__BASE");
