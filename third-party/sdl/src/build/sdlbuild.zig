@@ -134,6 +134,7 @@ pub const SDLConfig = struct {
     HAVE_MEMFD_CREATE: bool = false,
     HAVE_POSIX_FALLOCATE: bool = false,
     HAVE_SIGACTION: bool = false,
+    HAVE_SIGTIMEDWAIT: bool = false,
     HAVE_SA_SIGACTION: bool = false,
     HAVE_ST_MTIM: bool = false,
     HAVE_SETJMP: bool = false,

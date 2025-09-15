@@ -8,11 +8,13 @@ pub fn build(b: *std.Build) !void {
     const wuffs_src_file = wuffs_dep.path("release/c/wuffs-v0.3.c");
 
     // files
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "wuffs",
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
     lib.root_module.addCMacro("WUFFS_IMPLEMENTATION", "");
 

@@ -41,7 +41,7 @@ pub fn render(app: *App) !void {
         };
 
         imgui.igTextWrapped(heading_text);
-        imgui.igTextWrapped(try app.tprint("{s}", .{next_timer.time_till_next_break}));
+        imgui.igTextWrapped(try app.tprint("{f}", .{next_timer.time_till_next_break.formatLong()}));
 
         const user_defined_incoming_break_message = app.user_settings.settings.incoming_break_message;
         if (user_defined_incoming_break_message.len > 0) {

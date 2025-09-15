@@ -7,6 +7,11 @@ const SDLBuildGenerator = @import("tools/gen_sdlbuild.zig").SDLBuildGenerator;
 const SDLConfig = @import("src/build/sdlbuild.zig").SDLConfig;
 const sdlsrc = @import("src/build/sdlbuild.zig");
 
+const Platform = enum {
+    none,
+    psp,
+};
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -35,7 +40,15 @@ pub fn build(b: *std.Build) !void {
         try gen.formatAndWriteFile(b.pathJoin(&.{ b.path("").getPath(b), "src", "build", "sdlbuild.zig" }));
     }
 
-    const use_cmake = target.result.os.tag == .linux and !target.result.abi.isAndroid();
+    // Set endianness explicitly for arches like the PSP
+    const sdl_byteorder = switch (target.result.cpu.arch.endian()) {
+        .little => "SDL_LIL_ENDIAN",
+        .big => "SDL_BIG_ENDIAN",
+    };
+
+    const platform = b.option(Platform, "platform", "The platform to build for. (ie. PSP)") orelse .none;
+
+    const use_cmake = target.result.os.tag == .linux and !target.result.abi.isAndroid() and platform == .none;
     if (!use_cmake) {
         const lib = b.addLibrary(.{
             .name = "SDL3",
@@ -64,6 +77,9 @@ pub fn build(b: *std.Build) !void {
 
         // Used for SDL_egl.h and SDL_opengles2.h
         lib.root_module.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
+
+        // Set endianness explicitly for arches like the PSP
+        lib.root_module.addCMacro("SDL_BYTEORDER", sdl_byteorder);
 
         if (target.result.abi.isAndroid()) {
             lib.root_module.addCSourceFiles(.{
@@ -116,6 +132,50 @@ pub fn build(b: *std.Build) !void {
             const java_write_files = b.addNamedWriteFiles("sdljava");
             for (java_files) |java_file_basename| {
                 _ = java_write_files.addCopyFile(java_dir.path(b, java_file_basename), java_file_basename);
+            }
+        } else if (platform == .psp) {
+            const use_sdl3_directly = false;
+
+            if (use_sdl3_directly) {
+                lib.root_module.root_source_file = b.path("src/stub.zig");
+            } else {
+                lib.root_module.addCSourceFiles(.{
+                    .root = sdl_path,
+                    .files = &psp_src_files,
+                });
+            }
+
+            // This enables the SDL_PLATFORM_PSP macro within SDL
+            lib.root_module.addCMacro("__PSP__", "1");
+            lib.root_module.addCMacro("SDL_PLATFORM_PSP", "1");
+
+            const sdl_config = pspBuildConfig;
+
+            lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+            const config_header = b.addConfigHeader(.{
+                .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{
+                    "build_config",
+                    "SDL_build_config.h.cmake",
+                })) },
+                .include_path = "SDL_build_config.h",
+            }, sdl_config);
+            lib.root_module.addConfigHeader(config_header);
+            lib.installConfigHeader(config_header);
+
+            // Taken from: https://github.com/libsdl-org/SDL/blob/release-3.2.16/CMakeLists.txt#L2790
+            if (use_sdl3_directly) {
+                lib.root_module.linkSystemLibrary("SDL3", .{});
+            } else {
+                // lib.root_module.linkSystemLibrary("GL", .{ .weak = true });
+                // lib.linkSystemLibrary("pspvram");
+                // lib.linkSystemLibrary("pspaudio");
+                // lib.linkSystemLibrary("pspvfpu");
+                // lib.linkSystemLibrary("pspdisplay");
+                // lib.linkSystemLibrary("pspgu");
+                // lib.linkSystemLibrary("pspge");
+                // lib.linkSystemLibrary("psphprm");
+                // lib.linkSystemLibrary("pspctrl");
+                // lib.linkSystemLibrary("psppower");
             }
         } else {
             switch (target.result.os.tag) {
@@ -366,7 +426,6 @@ pub fn build(b: *std.Build) !void {
                         .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
                         .include_path = "SDL_build_config.h",
                     }, SDLConfig{});
-
                     lib.addConfigHeader(config_header);
                     lib.installConfigHeader(config_header);
                 },
@@ -395,14 +454,17 @@ pub fn build(b: *std.Build) !void {
         //   libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
         //   libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev fcitx-libs-dev \
         //   libpipewire-0.3-dev libwayland-dev libdecor-0-dev
-        const lib = b.addStaticLibrary(.{
+        const lib = b.addLibrary(.{
             .name = "SDL3",
-            // NOTE(jae): 2024-07-02
-            // Need empty file so that Zig build won't complain
-            .root_source_file = b.path("src/linux.zig"),
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
+            .linkage = .static,
+            .root_module = b.createModule(.{
+                // NOTE(jae): 2024-07-02
+                // Need empty file so that Zig build won't complain
+                .root_source_file = b.path("src/stub.zig"),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
         });
 
         // Add -Dtarget and -Dcpu arguments to the SDL build
@@ -537,6 +599,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = .ReleaseFast,
         .root_source_file = b.path("src/sdl.h"),
     });
+    // Set endianness explicitly for arches like the PSP
+    c_translate.defineCMacro("SDL_BYTEORDER", sdl_byteorder);
     c_translate.addIncludePath(sdl_api_include_path);
 
     var module = b.addModule("sdl", .{
@@ -544,6 +608,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .root_source_file = c_translate.getOutput(),
     });
+    // Set endianness explicitly for arches like the PSP
+    module.addCMacro("SDL_BYTEORDER", sdl_byteorder);
     module.addIncludePath(sdl_api_include_path);
 }
 
@@ -660,7 +726,6 @@ const darwin_src_files = sdlsrc.audio.disk.c_files ++
     sdlsrc.render.opengl.c_files ++
     sdlsrc.render.opengles2.c_files ++
     sdlsrc.thread.pthread.c_files ++
-    sdlsrc.tray.unix.c_files ++
     sdlsrc.video.offscreen.c_files ++
     dummy_src_files;
 
@@ -785,6 +850,32 @@ const linux_src_files = sdlsrc.audio.aaudio.c_files ++
     sdlsrc.video.x11.c_files ++
     sdlsrc.video.wayland.c_files ++
     dummy_src_files;
+
+// Playstation Portable source files (not Vita)
+const psp_src_files = sdlsrc.audio.dummy.c_files ++
+    sdlsrc.audio.psp.c_files ++
+    sdlsrc.filesystem.psp.c_files ++
+    sdlsrc.filesystem.posix.c_files ++ // From CmakeLists.txt for 'PSP', SDL_sysfsops.c
+    sdlsrc.joystick.psp.c_files ++
+    sdlsrc.power.psp.c_files ++
+    // Only need these files from: sdlsrc.thread.generic.c_files
+    [_][]const u8{
+        "src/thread/generic/SDL_syscond.c",
+        "src/thread/generic/SDL_systls.c",
+        "src/thread/generic/SDL_sysrwlock.c",
+    } ++
+    sdlsrc.thread.psp.c_files ++
+    sdlsrc.locale.psp.c_files ++
+    sdlsrc.render.psp.c_files ++
+    sdlsrc.sensor.dummy.c_files ++
+    sdlsrc.time.psp.c_files ++
+    sdlsrc.timer.psp.c_files ++
+    sdlsrc.tray.dummy.c_files ++
+    sdlsrc.misc.dummy.c_files ++
+    sdlsrc.video.offscreen.c_files ++
+    sdlsrc.video.psp.c_files;
+
+pub const pspBuildConfig: SDLConfig = @import("src/build/psp_build_config.zig").config;
 
 /// NOTE(jae): 2025-04-05
 /// Last version of SDL_build_config_emscripten: https://github.com/libsdl-org/SDL/blob/c48fbbb067bb21e91f0aa300d115b4819947ecc3/include/build_config/SDL_build_config_emscripten.h

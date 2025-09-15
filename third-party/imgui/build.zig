@@ -39,13 +39,30 @@ pub fn build(b: *std.Build) !void {
     // So we can just pull down cimgui as an external dependency, fake that structure here
     const zig_cimgui_headers_path = b.path("cimgui_headers");
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "imgui",
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
+        .linkage = .static,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        }),
     });
     lib.linkLibCpp();
+
+    // Settings
+    lib.root_module.addCMacro("IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS", "1");
+    lib.root_module.addCMacro("IMGUI_DISABLE_FILE_FUNCTIONS", "1");
+    // lib.root_module.addCMacro("IMGUI_DISABLE_DEMO_WINDOWS", "1");
+    // lib.root_module.addCMacro("IMGUI_DISABLE_DEBUG_TOOLS", "1");
+
+    const default_cpp_flags = [_][]const u8{ "-std=c++11", "-nostdinc++" };
+    const psp_cpp_flags = default_cpp_flags ++ [_][]const u8{ "-fno-exceptions", "-fno-rtti", "-fno-use-cxa-atexit" };
+
+    const cpp_flags: []const []const u8 = switch (target.result.os.tag) {
+        .freestanding => &psp_cpp_flags,
+        else => &default_cpp_flags,
+    };
 
     // ImGui files
     lib.addCSourceFiles(.{
@@ -57,7 +74,7 @@ pub fn build(b: *std.Build) !void {
             "imgui_tables.cpp",
             "imgui_widgets.cpp",
         },
-        .flags = &.{"-std=c++11"},
+        .flags = cpp_flags,
     });
     lib.addIncludePath(imgui_include_path);
 
@@ -75,7 +92,7 @@ pub fn build(b: *std.Build) !void {
             .files = &.{
                 "misc/freetype/imgui_freetype.cpp",
             },
-            .flags = &.{"-std=c++11"},
+            .flags = cpp_flags,
         });
         lib.addIncludePath(imgui.path(b, "misc/freetype"));
 
@@ -91,13 +108,19 @@ pub fn build(b: *std.Build) !void {
 
     // ImGui SDL3 backend files
     {
-        lib.addCSourceFiles(.{
+        // Set endianness explicitly for arches like the PSP
+        const sdl_byteorder = switch (target.result.cpu.arch.endian()) {
+            .little => "SDL_LIL_ENDIAN",
+            .big => "SDL_BIG_ENDIAN",
+        };
+        lib.root_module.addCMacro("SDL_BYTEORDER", sdl_byteorder);
+        lib.root_module.addCSourceFiles(.{
             .root = imgui,
             .files = &.{
                 "backends/imgui_impl_sdl3.cpp",
                 "backends/imgui_impl_sdlrenderer3.cpp",
             },
-            .flags = &.{"-std=c++11"},
+            .flags = cpp_flags,
         });
         // NOTE(jae): 2024-07-01
         // We add the <SDL.h> include dependency in the parent build.zig
@@ -115,7 +138,7 @@ pub fn build(b: *std.Build) !void {
         .files = &.{
             "cimgui.cpp",
         },
-        .flags = &.{"-std=c++11"},
+        .flags = cpp_flags,
     });
     lib.addIncludePath(cimgui_include_path);
     lib.addIncludePath(zig_cimgui_headers_path);
@@ -134,6 +157,9 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .root_source_file = b.path("src/imgui.h"),
     });
+    if (has_freetype) {
+        c_translate.defineCMacro("IMGUI_ENABLE_FREETYPE", "1");
+    }
     c_translate.addIncludePath(cimgui_include_path);
     c_translate.addIncludePath(zig_cimgui_headers_path);
     c_translate.addIncludePath(zig_imgui_backend_include_path);

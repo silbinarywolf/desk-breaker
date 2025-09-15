@@ -1,6 +1,7 @@
 const std = @import("std");
 const wuffs = @import("wuffs");
 const sdl = @import("sdl");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const assert = std.debug.assert;
@@ -195,7 +196,11 @@ pub const PngDecoder = struct {
         // If I compiled the translate-c with "WUFFS_IMPLEMENTATION" then we can just get the size of the decode struct directly.
         // - 64-bit windows - PNG decoder sizeof: 44632, align: 8
         const decoder_size_of = wuffs.sizeof__wuffs_png__decoder();
-        const png_decoder_bytes = try allocator.alignedAlloc(u8, 16, decoder_size_of);
+        const png_decoder_alignment = std.mem.Alignment.@"16";
+        const png_decoder_bytes = try allocator.alignedAlloc(u8, if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
+            png_decoder_alignment.toByteUnits()
+        else
+            png_decoder_alignment, decoder_size_of);
         errdefer allocator.free(png_decoder_bytes);
         const decoder: *wuffs.wuffs_png__decoder = @ptrCast(png_decoder_bytes);
 
@@ -349,7 +354,11 @@ pub const PngDecoder = struct {
             break :blk @as(u32, @intCast(max_incl));
         };
 
-        const work_buffer = try self.allocator.alignedAlloc(u8, 16, work_buffer_length);
+        const work_buffer_alignment = std.mem.Alignment.@"16";
+        const work_buffer = try self.allocator.alignedAlloc(u8, if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
+            work_buffer_alignment.toByteUnits()
+        else
+            work_buffer_alignment, work_buffer_length);
         defer self.allocator.free(work_buffer);
 
         // As per documentation, keep decoding frames until "end of data" is reached.

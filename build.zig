@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const android = if (enable_android_build) @import("android") else void;
 const emscripten = @import("emscripten");
+const psp = @import("psp");
 
 // NOTE(jae): 2025-04-13
 // Can set this to true to make this build pull down Android dependencies and test
@@ -9,7 +10,7 @@ const emscripten = @import("emscripten");
 const enable_android_build = false;
 
 const app_name = "Desk Breaker";
-const recommended_zig_version = "0.14.0";
+const recommended_zig_version = "0.15.1";
 
 pub fn build(b: *std.Build) !void {
     switch (comptime builtin.zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {
@@ -18,7 +19,7 @@ pub fn build(b: *std.Build) !void {
             @compileError("The minimum version of Zig required to compile " ++ app_name ++ " is " ++ recommended_zig_version ++ ", found " ++ @import("builtin").zig_version_string ++ ".");
         },
         .gt => {
-            const colors = std.io.getStdErr().supportsAnsiEscapeCodes();
+            const colors = std.fs.File.stderr().supportsAnsiEscapeCodes();
             std.debug.print(
                 "{s}WARNING:\n" ++ app_name ++ " recommends Zig version '{s}', but found '{s}', build may fail...{s}\n\n\n",
                 .{
@@ -37,8 +38,54 @@ pub fn build(b: *std.Build) !void {
         exe_name = b.fmt("{s}-{s}", .{ exe_name, exe_postfix });
     }
 
-    const root_target = blk: {
+    const platform = b.option(Platform, "platform", "The platform to build for. (ie. PSP)") orelse .none;
+
+    const root_target = target_blk: {
+        switch (platform) {
+            .none => {}, // do nothing
+            .psp => {
+                // EXPERIMENTAL: Try to get it working with Zig
+                var feature_set = std.Target.Cpu.Feature.Set.empty;
+                feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.single_float));
+                feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.noabicalls));
+
+                var remove_feature_set = std.Target.Cpu.Feature.Set.empty;
+                remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
+                remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fp64));
+                // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fpxx));
+
+                const query: std.Target.Query = .{
+                    .cpu_arch = .mipsel,
+                    .os_tag = .freestanding,
+                    // .abi = .musleabi,
+                    .abi = .none, // NOTE(jae): using this only because Zig has a "mipsel" C library for it
+                    // Sony Allegrex is an extended Mips2 + VFPU
+                    //.cpu_model = .baseline,
+                    .cpu_model = .{ .explicit = &std.Target.mips.cpu.mips2 },
+                    .cpu_features_add = feature_set,
+                    .cpu_features_sub = remove_feature_set,
+                };
+                const target = b.resolveTargetQuery(query);
+                break :target_blk target;
+            },
+        }
+
+        // If no platform defined, use Zig default targetting: -Dtarget
         const root_target_query = b.standardTargetOptionsQueryOnly(.{});
+
+        // If targetting wasi
+        if (root_target_query.os_tag != null and root_target_query.os_tag.? == .wasi) {
+            // EXPERIMENT: See if I can target and build a WASM file of non-trivial application without Emscripten
+            var query = root_target_query;
+            query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
+                .atomics,
+                .bulk_memory,
+                .exception_handling, // Added to resolve freetype setjmp/longjmp compilation issues
+            }));
+            break :target_blk b.resolveTargetQuery(query);
+        }
+
+        // If targetting emscripten, add additional features
         if (root_target_query.os_tag != null and root_target_query.os_tag.? == .emscripten) {
             var query = root_target_query;
             query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
@@ -50,17 +97,15 @@ pub fn build(b: *std.Build) !void {
                 .exception_handling,
                 // .reference_types,
             }));
-            break :blk b.resolveTargetQuery(query);
+            break :target_blk b.resolveTargetQuery(query);
         }
-        break :blk b.resolveTargetQuery(root_target_query);
+        break :target_blk b.resolveTargetQuery(root_target_query);
     };
     const optimize = b.standardOptimizeOption(.{});
 
     const targets: []std.Build.ResolvedTarget = blk: {
         var root_target_single = [_]std.Build.ResolvedTarget{root_target};
-        if (!enable_android_build) {
-            break :blk root_target_single[0..];
-        }
+        if (!enable_android_build) break :blk root_target_single[0..];
         const android_targets = android.standardTargets(b, root_target);
         if (android_targets.len == 0) break :blk root_target_single[0..];
         break :blk android_targets;
@@ -68,20 +113,17 @@ pub fn build(b: *std.Build) !void {
 
     // If building with Android, initialize the tools / build
     const android_apk = blk: {
-        if (!root_target.result.abi.isAndroid()) {
-            break :blk null;
-        }
-        if (!enable_android_build) {
-            @panic("must set 'enable_android_build' to true");
-        }
-        const android_tools = android.Tools.create(b, .{
+        if (targets.len == 0 or !targets[0].result.abi.isAndroid()) break :blk null;
+        if (!enable_android_build) @panic("must set 'enable_android_build' to true");
+
+        const android_sdk = android.Sdk.create(b, .{});
+        const apk = android.Apk.create(android_sdk, .{
             .api_level = .android15,
             .build_tools_version = "35.0.0",
             .ndk_version = "29.0.13113456",
         });
-        const apk = android.APK.create(b, android_tools);
 
-        const key_store_file = android_tools.createKeyStore(android.CreateKey.example());
+        const key_store_file = android_sdk.createKeyStore(.example);
         apk.setKeyStore(key_store_file);
         apk.setAndroidManifest(b.path("android/AndroidManifest.xml"));
         apk.addResourceDirectory(b.path("android/res"));
@@ -92,7 +134,7 @@ pub fn build(b: *std.Build) !void {
         // Add SDL3's Java files like SDL.java, SDLActivity.java, HIDDevice.java, etc
         const sdl_dep = b.dependency("sdl", .{
             .optimize = optimize,
-            .target = root_target,
+            .target = targets[0],
         });
         const sdl_java_files = sdl_dep.namedWriteFiles("sdljava");
         for (sdl_java_files.files.items) |file| {
@@ -106,6 +148,10 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .single_threaded = if (platform == .psp)
+                true
+            else
+                null,
         });
 
         const library_optimize = if (!target.result.abi.isAndroid() and target.result.os.tag != .emscripten)
@@ -122,16 +168,22 @@ pub fn build(b: *std.Build) !void {
             const sdl_dep = b.dependency("sdl", .{
                 .optimize = library_optimize,
                 .target = target,
+                .platform = platform,
             });
             const sdl_lib = sdl_dep.artifact("SDL3");
-            app.linkLibrary(sdl_lib);
 
-            // NOTE(jae): 2024-07-03
-            // Hack for Linux to use the SDL3 version compiled using native Linux toolszig
-            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+            if (platform == .psp) {
+                // TODO: Make PSPSDK tools just include this
+                app.linkSystemLibrary("SDL3", .{});
+            } else if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+                // NOTE(jae): 2024-07-03
+                // Hack for Linux to use the SDL3 version compiled using native Linux tools
+                app.linkLibrary(sdl_lib);
                 for (sdl_lib.root_module.lib_paths.items) |lib_path| {
                     app.addLibraryPath(lib_path);
                 }
+            } else {
+                app.linkLibrary(sdl_lib);
             }
 
             const sdl_module = sdl_dep.module("sdl");
@@ -170,11 +222,13 @@ pub fn build(b: *std.Build) !void {
             var freetype_dep = b.dependency("freetype", .{
                 .target = target,
                 .optimize = library_optimize,
+                .platform = platform,
             });
             const freetype_lib = freetype_dep.artifact("freetype");
-            if (target.result.os.tag != .emscripten) {
+            if (target.result.os.tag != .emscripten and platform != .psp) {
                 // NOTE(jae): 2025-02-02
-                // Link with Emscripten toolchains version instead due to setjmp/etc symbols not being found.
+                // - Link with Emscripten toolchains version instead due to setjmp/etc symbols not being found.
+                // - Link with PSP toolchains version to avoid issues with compilation being different
                 app.linkLibrary(freetype_lib);
             }
             app.addImport("freetype", freetype_dep.module("freetype"));
@@ -229,7 +283,7 @@ pub fn build(b: *std.Build) !void {
 
         const maybe_linkage: ?std.builtin.LinkMode = if (target.result.abi.isAndroid())
             .dynamic
-        else if (target.result.os.tag == .emscripten)
+        else if (target.result.os.tag == .emscripten or platform == .psp)
             .static
         else
             null;
@@ -278,10 +332,9 @@ pub fn build(b: *std.Build) !void {
         }
 
         if (target.result.abi.isAndroid()) {
-            if (!enable_android_build) {
-                @panic("must set 'enable_android_build' to true");
-            }
-            const apk: *android.APK = android_apk orelse @panic("Android APK should be initialized");
+            if (!enable_android_build) @panic("must set 'enable_android_build' to true");
+
+            const apk: *android.Apk = android_apk orelse @panic("Android APK should be initialized");
             const android_dep = b.dependency("android", .{
                 .target = target,
                 .optimize = library_optimize,
@@ -304,25 +357,54 @@ pub fn build(b: *std.Build) !void {
             const installed_web_html = em.addInstallArtifact(exe);
             b.getInstallStep().dependOn(&installed_web_html.step);
         } else {
-            const run_step = b.step("run", "Run the application");
-            const run_cmd = b.addRunArtifact(exe);
-            run_step.dependOn(&run_cmd.step);
+            if (platform == .psp) {
+                const psp_dep = b.lazyDependency("psp", .{
+                    .target = target,
+                    .optimize = optimize,
+                }) orelse return;
 
-            const installed_exe = b.addInstallArtifact(exe, .{});
-            b.getInstallStep().dependOn(&installed_exe.step);
+                app.addImport("psp", psp_dep.module("psp"));
+                // exe.linkLibrary(psp_dep.artifact("pspgu"));
+
+                const psptool = psp.Tools.create(b, .{}) orelse return;
+                // psptool.addStandardLibrary(exe);
+                psptool.buildWithDocker(exe);
+
+                const installed_exe = b.addInstallArtifact(exe, .{});
+                b.getInstallStep().dependOn(&installed_exe.step);
+            } else {
+                const run_step = b.step("run", "Run the application");
+                const run_cmd = b.addRunArtifact(exe);
+                run_step.dependOn(&run_cmd.step);
+
+                const installed_exe = b.addInstallArtifact(exe, .{});
+                b.getInstallStep().dependOn(&installed_exe.step);
+            }
         }
     }
     if (enable_android_build) {
         if (android_apk) |apk| {
-            apk.installApk();
+            const installed_apk = apk.addInstallApk();
+            b.getInstallStep().dependOn(&installed_apk.step);
+
+            const android_sdk = apk.sdk;
+            const run_step = b.step("run", "Install and run the application on an Android device");
+            const adb_install = android_sdk.addAdbInstall(installed_apk.source);
+            const adb_start = android_sdk.addAdbStart("com.silbinarywolf.deskbreaker/com.silbinarywolf.deskbreaker.DeskBreakerSDLActivity");
+            adb_start.step.dependOn(&adb_install.step);
+            run_step.dependOn(&adb_start.step);
         }
     }
 
+    // note(jae): 2025-09-15
+    // Currently broken, I want to refactor the "Duration" stuff later anyway
     const test_step = b.step("test", "Run the test suite");
     const test_cmd = b.addRunArtifact(b.addTest(.{
-        .root_source_file = b.path("src/testsuite.zig"),
-        .target = root_target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/testsuite.zig"),
+            .target = root_target,
+            .optimize = optimize,
+        }),
     }));
     test_step.dependOn(&test_cmd.step);
 
@@ -354,3 +436,8 @@ pub fn build(b: *std.Build) !void {
         all_targets_step.dependOn(&build_cmd.step);
     }
 }
+
+const Platform = enum {
+    none,
+    psp,
+};

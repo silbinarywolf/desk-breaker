@@ -40,9 +40,10 @@ IMGUI_IMPL_API void     ImGui_ImplSDLRenderer3_NewFrame(void);
 IMGUI_IMPL_API void     ImGui_ImplSDLRenderer3_RenderDrawData(struct ImDrawData* draw_data, struct SDL_Renderer* renderer);
 
 // Called by Init/NewFrame/Shutdown
-IMGUI_IMPL_API bool     ImGui_ImplSDLRenderer3_CreateFontsTexture();
-IMGUI_IMPL_API void     ImGui_ImplSDLRenderer3_DestroyFontsTexture();
 IMGUI_IMPL_API bool     ImGui_ImplSDLRenderer3_CreateDeviceObjects();
 IMGUI_IMPL_API void     ImGui_ImplSDLRenderer3_DestroyDeviceObjects();
+
+// (Advanced) Use e.g. if you need to precisely control the timing of texture updates (e.g. for staged rendering), by setting ImDrawData::Textures = NULL to handle this manually.
+IMGUI_IMPL_API void     ImGui_ImplSDLRenderer3_UpdateTexture(struct ImTextureData* tex);
 
 #endif // #ifndef IMGUI_DISABLE

@@ -1,6 +1,5 @@
 const std = @import("std");
 const windows = std.os.windows;
-const WINAPI = windows.WINAPI;
 const SECURITY_ATTRIBUTES = windows.SECURITY_ATTRIBUTES;
 const DWORD = windows.DWORD;
 const BOOL = windows.BOOL;
@@ -43,4 +42,4 @@ pub extern "kernel32" fn CreateMutexA(
     lpSecurityAttributes: ?*const SECURITY_ATTRIBUTES,
     bInitialOwner: BOOL,
     lpName: LPCSTR,
-) callconv(WINAPI) DWORD;
+) callconv(.winapi) DWORD;

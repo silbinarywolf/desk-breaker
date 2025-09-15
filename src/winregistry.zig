@@ -12,7 +12,6 @@ const LPCSTR = windows.LPCSTR;
 const LSTATUS = windows.LSTATUS;
 const REGSAM = windows.REGSAM;
 const ULONG = windows.ULONG;
-const WINAPI = windows.WINAPI;
 
 pub extern "advapi32" fn RegSetValueExW(
     hKey: HKEY,
@@ -21,12 +20,12 @@ pub extern "advapi32" fn RegSetValueExW(
     dwType: DWORD,
     lpData: ?*anyopaque,
     cbData: DWORD,
-) callconv(WINAPI) LSTATUS;
+) callconv(.winapi) LSTATUS;
 
 pub extern "advapi32" fn RegDeleteValueW(
     hKey: HKEY,
     lpValueName: LPCWSTR,
-) callconv(WINAPI) LSTATUS;
+) callconv(.winapi) LSTATUS;
 
 const OpenOptions = struct {
     /// Sets the KEY_WOW64_32KEY access flag.
