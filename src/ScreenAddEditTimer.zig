@@ -78,9 +78,11 @@ pub fn render(app: *App) !void {
                 .timer => "Unnamed Timer",
                 .alarm => "Unnamed Alarm",
             };
-            t.name = try @TypeOf(t.name).fromSlice(default_name);
+            if (t.name.len > 0) app.allocator.free(t.name);
+            t.name = try app.allocator.dupeZ(u8, default_name);
         } else {
-            t.name = try @TypeOf(t.name).fromSlice(timer_name);
+            if (t.name.len > 0) app.allocator.free(t.name);
+            t.name = try app.allocator.dupeZ(u8, timer_name);
         }
         var should_save_or_create = false;
         switch (t.kind) {
@@ -107,7 +109,7 @@ pub fn render(app: *App) !void {
         if (should_save_or_create) {
             if (ui_timer.id == -1) {
                 // Create
-                try app.user_settings.timers.append(t);
+                try app.user_settings.timers.append(app.allocator, t);
                 ui_timer.id = @intCast(app.user_settings.timers.items.len - 1);
             } else {
                 // Save

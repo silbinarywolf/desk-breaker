@@ -26,10 +26,10 @@ window: *sdl.SDL_Window,
 window_properties: u32,
 renderer: *sdl.SDL_Renderer,
 imgui_context: *imgui.ImGuiContext,
-imgui_font_atlas: *imgui.ImFontAtlas,
+// imgui_font_atlas: *imgui.ImFontAtlas,
 imgui_new_frame: bool,
 
-pub fn init(options: Options) !@This() {
+pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
     const props = sdl.SDL_CreateProperties();
     if (props == 0) {
         log.err("SDL_CreateProperties failed: {s}", .{sdl.SDL_GetError()});
@@ -38,36 +38,36 @@ pub fn init(options: Options) !@This() {
     errdefer sdl.SDL_DestroyProperties(props);
 
     if (options.title.len > 0) {
-        if (!sdl.SDL_SetStringProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TITLE_STRING, options.title)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetStringProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TITLE_STRING, options.title)) return error.SdlFailed;
     }
     if (options.resizeable) {
-        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true)) return error.SdlFailed;
     }
     if (!options.focusable) {
         // SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, defaults to true
-        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, false)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, false)) return error.SdlFailed;
     }
     if (options.borderless) {
         // SDL_PROP_WINDOW_CREATE_FOCUSABLE_BOOLEAN, defaults to true
-        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, true)) return error.SdlFailed;
     }
     if (options.always_on_top) {
-        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_ALWAYS_ON_TOP_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_ALWAYS_ON_TOP_BOOLEAN, true)) return error.SdlFailed;
     }
     if (options.mouse_grabbed) {
-        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_MOUSE_GRABBED_BOOLEAN, true)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_MOUSE_GRABBED_BOOLEAN, true)) return error.SdlFailed;
     }
     if (options.x) |x| {
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_X_NUMBER, x)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_X_NUMBER, x)) return error.SdlFailed;
     }
     if (options.y) |y| {
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_Y_NUMBER, y)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_Y_NUMBER, y)) return error.SdlFailed;
     }
     if (options.width) |width| {
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width)) return error.SdlFailed;
     }
     if (options.height) |height| {
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height)) return error.SdlSetPropertyFailed;
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height)) return error.SdlFailed;
     }
 
     const window = sdl.SDL_CreateWindowWithProperties(props) orelse {
@@ -79,7 +79,7 @@ pub fn init(options: Options) !@This() {
         if (options.icon) |icon| {
             if (!sdl.SDL_SetWindowIcon(window, icon)) {
                 log.err("unable to set window icon: {s}", .{sdl.SDL_GetError()});
-                return error.SDLFailed;
+                return error.SdlFailed;
             }
         }
     }
@@ -96,7 +96,7 @@ pub fn init(options: Options) !@This() {
     };
     const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, default_renderer) orelse {
         log.err("unable to create renderer: {s}", .{sdl.SDL_GetError()});
-        return error.SDLFailed;
+        return error.SdlFailed;
     };
     errdefer sdl.SDL_DestroyRenderer(renderer);
 
@@ -108,27 +108,21 @@ pub fn init(options: Options) !@This() {
         }
     }
 
-    // NOTE(jae): 2024-11-07
-    // Using embedded font data that isn't owned by the atlas
-    var font_config = &imgui.ImFontConfig_ImFontConfig()[0];
-    defer imgui.ImFontConfig_destroy(font_config);
-    font_config.FontDataOwnedByAtlas = false;
-
     // NOTE(jae): 2024-06-11
     // Each context needs its own font atlas or issues occur with rendering
-    const font_data = @embedFile("resources/fonts/Lato-Regular.ttf");
-    const imgui_font_atlas: *imgui.ImFontAtlas = imgui.ImFontAtlas_ImFontAtlas();
-    errdefer imgui.ImFontAtlas_destroy(imgui_font_atlas);
-    _ = imgui.ImFontAtlas_AddFontFromMemoryTTF(
-        imgui_font_atlas,
-        @constCast(@ptrCast(font_data[0..].ptr)),
-        font_data.len,
-        28,
-        font_config,
-        null,
-    );
+    // const font_data = @embedFile("resources/fonts/Lato-Regular.ttf");
+    // const imgui_font_atlas: *imgui.ImFontAtlas = imgui.ImFontAtlas_ImFontAtlas();
+    // errdefer imgui.ImFontAtlas_destroy(imgui_font_atlas);
+    // _ = imgui.ImFontAtlas_AddFontFromMemoryTTF(
+    //     imgui_font_atlas,
+    //     @ptrCast(@constCast(font_data[0..].ptr)),
+    //     font_data.len,
+    //     28,
+    //     font_config,
+    //     null,
+    // );
 
-    const imgui_context = imgui.igCreateContext(imgui_font_atlas) orelse {
+    const imgui_context = imgui.igCreateContext(null) orelse {
         log.err("unable to create imgui context: {s}", .{sdl.SDL_GetError()});
         return error.ImguiFailed;
     };
@@ -137,9 +131,34 @@ pub fn init(options: Options) !@This() {
     // NOTE(jae): This call is needed for multiple windows, ie. creation of the second window
     imgui.igSetCurrentContext(imgui_context);
 
+    const main_scale = sdl.SDL_GetDisplayContentScale(sdl.SDL_GetPrimaryDisplay());
+    const style = &imgui.igGetStyle()[0];
+    imgui.ImGuiStyle_ScaleAllSizes(style, main_scale); // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+    style.FontScaleDpi = main_scale; // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
+
     const imgui_io = &imgui.igGetIO_ContextPtr(imgui_context)[0];
     imgui_io.IniFilename = null; // disable imgui.ini
     imgui_io.IniSavingRate = -1; // disable imgui.ini
+    imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+    // imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_DockingEnable; // Enable Docking
+    imgui_io.Fonts[0].FontLoader = imgui.ImGuiFreeType_GetFontLoader();
+
+    // NOTE(jae): 2024-11-07
+    // Using embedded font data that isn't owned by the atlas
+    {
+        const font_config = &imgui.ImFontConfig_ImFontConfig()[0];
+        defer imgui.ImFontConfig_destroy(font_config);
+
+        const font_data = @embedFile("resources/fonts/Lato-Regular.ttf");
+        font_config.FontData = @ptrCast(@constCast(font_data[0..].ptr));
+        font_config.FontDataSize = font_data.len;
+        font_config.FontDataOwnedByAtlas = false;
+        // font_config.FontLoader = imgui.ImGuiFreeType_GetFontLoader();
+        font_config.SizePixels = 28;
+
+        const font = imgui.ImFontAtlas_AddFont(imgui_io.Fonts, font_config);
+        imgui.igPushFont(font, 0.0);
+    }
 
     _ = imgui.ImGui_ImplSDL3_InitForSDLRenderer(@ptrCast(window), @ptrCast(renderer));
     errdefer imgui.ImGui_ImplSDL3_Shutdown();
@@ -177,7 +196,7 @@ pub fn init(options: Options) !@This() {
         .window_properties = props,
         .renderer = renderer,
         .imgui_context = imgui_context,
-        .imgui_font_atlas = imgui_font_atlas,
+        // .imgui_font_atlas = imgui_font_atlas,
         // True if we called "igNewFrame"
         .imgui_new_frame = true,
     };
@@ -201,7 +220,7 @@ pub fn deinit(self: *Window) void {
         imgui.ImGui_ImplSDL3_Shutdown();
     }
     imgui.igDestroyContext(self.imgui_context);
-    imgui.ImFontAtlas_destroy(self.imgui_font_atlas);
+    // imgui.ImFontAtlas_destroy(self.imgui_font_atlas);
     sdl.SDL_DestroyRenderer(self.renderer);
     sdl.SDL_DestroyWindow(self.window);
     sdl.SDL_DestroyProperties(self.window_properties);
@@ -219,14 +238,6 @@ pub fn imguiNewFrame(window: *Window) void {
     imgui.ImGui_ImplSDL3_NewFrame();
     imgui.igNewFrame();
     window.imgui_new_frame = true;
-}
-
-pub fn imguiRender(window: *Window) void {
-    assert(window.imgui_new_frame);
-    imgui.igSetCurrentContext(window.imgui_context);
-    imgui.igRender();
-    imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(window.renderer));
-    window.imgui_new_frame = false;
 }
 
 pub fn getDisplayUsableBoundsFromIndex(display_index: u32) ?sdl.SDL_Rect {

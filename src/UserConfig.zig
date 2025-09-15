@@ -39,7 +39,7 @@ pub const Timer = struct {
     kind: TimerKind,
 
     // Common
-    name: []const u8,
+    name: [:0]const u8,
 
     // Timer
     timer_duration: ?Duration = null,
@@ -79,7 +79,18 @@ version: u32 = CurrentVersion,
 settings: Settings = .{},
 timers: []Timer,
 
-pub fn load(allocator: std.mem.Allocator) !UserSettings {
+const LoadError = std.fs.File.OpenError ||
+    DataDirPathError ||
+    std.fs.File.GetSeekPosError ||
+    std.posix.ReadError ||
+    std.json.ParseError(std.json.Scanner) ||
+    error{InvalidConfigVersion};
+
+pub fn load(allocator: std.mem.Allocator) LoadError!UserSettings {
+    if (builtin.os.tag == .freestanding or builtin.abi == .none) {
+        return error.FileNotFound;
+    }
+
     const path = get_data_dir_path(allocator) catch |err| switch (err) {
         error.AppDataDirUnavailable => {
             // If missing $HOME environment variable and not in portable mode
@@ -93,7 +104,12 @@ pub fn load(allocator: std.mem.Allocator) !UserSettings {
     var dir = try std.fs.openDirAbsolute(path, .{});
     defer dir.close();
 
-    const config_file_data = try dir.readFileAlloc(allocator, "config.json", 1024 * 1024 * 1024);
+    var file = try dir.openFile("config.json", .{});
+    defer file.close();
+    const stat_size = std.math.cast(usize, try file.getEndPos()) orelse return error.FileTooBig;
+    var config_file_data = try allocator.alloc(u8, stat_size);
+    const read_all_size = try file.readAll(config_file_data);
+    config_file_data = config_file_data[0..read_all_size];
     defer allocator.free(config_file_data);
 
     const file_version = verblk: {
@@ -109,7 +125,7 @@ pub fn load(allocator: std.mem.Allocator) !UserSettings {
             // Old format
             const userconfig_parsed = try std.json.parseFromSlice(Version1, allocator, config_file_data, .{});
             defer userconfig_parsed.deinit();
-            const userconfig = &userconfig_parsed.value;
+            const userconfig: *const Version1 = &userconfig_parsed.value;
 
             var user_settings: UserSettings = .{
                 .settings = .{
@@ -121,9 +137,9 @@ pub fn load(allocator: std.mem.Allocator) !UserSettings {
                 .timers = try std.ArrayList(StateTimer).initCapacity(allocator, userconfig.timers.len),
             };
             for (userconfig.timers) |*t| {
-                try user_settings.timers.append(.{
+                try user_settings.timers.append(allocator, .{
                     .kind = t.kind,
-                    .name = try StateTimer.TimerName.fromSlice(t.name),
+                    .name = try allocator.dupeZ(u8, t.name),
                     .timer_duration = t.timer_duration,
                 });
             }
@@ -144,9 +160,9 @@ pub fn load(allocator: std.mem.Allocator) !UserSettings {
 
             // Copy timers
             for (userconfig.timers) |*t| {
-                try user_settings.timers.append(.{
+                try user_settings.timers.append(allocator, .{
                     .kind = t.kind,
-                    .name = try StateTimer.TimerName.fromSlice(t.name),
+                    .name = try allocator.dupeZ(u8, t.name),
                     .timer_duration = t.timer_duration,
                 });
             }
@@ -184,9 +200,9 @@ pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !v
     for (user_settings.timers.items) |*t| {
         switch (t.kind) {
             .timer => {
-                try timers.append(.{
+                try timers.append(allocator, .{
                     .kind = t.kind,
-                    .name = t.name.slice(),
+                    .name = t.name,
                     .timer_duration = t.timer_duration,
                 });
             },
@@ -199,7 +215,8 @@ pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !v
         .settings = user_settings.settings,
         .timers = timers.items,
     };
-    const json_data = try std.json.stringifyAlloc(allocator, &user_config, .{
+
+    const json_data = try std.json.Stringify.valueAlloc(allocator, &user_config, .{
         .whitespace = .indent_tab,
         .emit_null_optional_fields = false,
     });

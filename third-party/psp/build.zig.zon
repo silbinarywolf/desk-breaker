@@ -1,0 +1,43 @@
+.{
+    .name = .psp,
+    .version = "0.0.1",
+    .dependencies = .{
+        // .gcc = .{
+        //     .path = "upstream/gcc",
+        //     // .url = "git+https://github.com/pspdev/gcc?ref=allegrex-v15.1.1#33e5b187fa86c429c8827f6e12f120eab7d51c9e",
+        //     // .hash = "1220ec32dd895ad3500b6a4b661f1b0404562242ec92f56c5a14627faa78bd198f6e",
+        //     // .lazy = true,
+        // },
+        // .pspsdk = .{
+        //     .path = "upstream/pspsdk",
+        //     // .url = "git+https://github.com/pspdev/pspsdk#4ec0eef96f69eb7b9463d066f393d8a6646d8256",
+        //     // .hash = "1320ec32dd895ad3500b6a4b661f1b0404562242ec92f56c5a14627faa78bd198f6e", // TODO
+        //     // .lazy = true,
+        // },
+        // .pspgl = .{
+        //     .path = "upstream/pspgl",
+        //     // .url = "git+https://github.com/pspdev/pspgl#de4260adf56d06516ec46018d404ca77e0b61748",
+        //     // .hash = "1320ec32dd895ad3500b6a4b661f1b0404562242ec92f56c5a14627faa78bd198f6e", // TODO
+        //     // .lazy = true,
+        // },
+        // .libpspvram = .{
+        //     .path = "upstream/libpspvram",
+        //     // .url = "git+https://github.com/pspdev/libpspvram#e31a5d56ffbd995901ffe532b795ce008c5dc307",
+        //     // .hash = "1920ec32dd895ad3500b6a4b661f1b0404562242ec92f56c5a14627faa78bd198f6e", // TODO
+        //     // .lazy = true,
+        // },
+        // .libzpsp = .{
+        //     .path = "upstream/libzpsp",
+        //     // .url = "git+https://github.com/zPSP-Dev/libzpsp#836d9cd94809071996cc788b429961f128de843e",
+        //     // .hash = "libzpsp-0.0.0-NAgUb598BQBMsjLg55ZXDzHlzeZ2fg3TbgZUfgaoeerR",
+        // },
+    },
+    .paths = .{
+        "LICENSE",
+        "README.md",
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+    .fingerprint = 0xffa7ea4b8bba6d32,
+}

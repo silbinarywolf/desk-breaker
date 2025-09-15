@@ -28,7 +28,7 @@ pub fn render(app: *App) !void {
                     }
 
                     var is_enabled = t.timer_started != null;
-                    if (imgui.igCheckbox(try app.tprint("{s} - {s}", .{ t.name.slice(), duration_left }), &is_enabled)) {
+                    if (imgui.igCheckbox(try app.tprint("{s} - {f}", .{ t.name, duration_left.formatLong() }), &is_enabled)) {
                         if (!is_enabled) {
                             t.timer_started = null;
                         } else {
@@ -51,8 +51,8 @@ pub fn render(app: *App) !void {
                         // .duration_time = if (t.timer_duration) |td| td. else "",
                     };
                     app.ui.screen = .timer;
-                    _ = try std.fmt.bufPrintZ(ui_timer.name[0..], "{s}", .{t.name.slice()});
-                    if (t.timer_duration) |td| _ = try std.fmt.bufPrintZ(ui_timer.duration_time[0..], "{sh}", .{td});
+                    _ = try std.fmt.bufPrintZ(ui_timer.name[0..], "{s}", .{t.name});
+                    if (t.timer_duration) |td| _ = try std.fmt.bufPrintZ(ui_timer.duration_time[0..], "{f}", .{td.formatShort()});
                 }
             }
         }
@@ -89,24 +89,21 @@ pub fn render(app: *App) !void {
         }
 
         if (app.snooze_activity_break_timer) |*snooze_timer| {
-            imgui.igText(try app.tprint("Snooze timer over in: {s}", .{
-                app.user_settings.snooze_duration_or_default().diff(snooze_timer.read()),
+            imgui.igText(try app.tprint("Snooze timer over in: {f}", .{
+                app.user_settings.snooze_duration_or_default().diff(snooze_timer.read()).formatLong(),
             }));
         } else if (app.user_settings.settings.is_activity_break_enabled) {
-            const time_till_activity_break_format = "Time till activity break: {s}";
-            if (app.mode == .taking_break) {
-                imgui.igText(try app.tprint(time_till_activity_break_format, .{
-                    "(Currently happening)",
-                }));
-            } else if (app.is_user_mouse_active) {
-                imgui.igText(try app.tprint(time_till_activity_break_format, .{
-                    app.user_settings.time_till_break_or_default().diff(app.activity_timer.read()),
-                }));
-            } else {
-                imgui.igText(try app.tprint(time_till_activity_break_format, .{
-                    "(No mouse activity)",
-                }));
-            }
+            const time_till_activity_break_prefix = "Time till activity break: ";
+            const time_till_activity_break = if (app.mode == .taking_break)
+                time_till_activity_break_prefix ++ "(Currently happening)"
+            else if (app.is_user_mouse_active)
+                try app.tprint(time_till_activity_break_prefix ++ "{f}", .{
+                    app.user_settings.time_till_break_or_default().diff(app.activity_timer.read()).formatLong(),
+                })
+            else
+                time_till_activity_break_prefix ++ "(No mouse activity)";
+
+            imgui.igText(time_till_activity_break);
         }
 
         // DEBUG: Add debug info
@@ -122,7 +119,7 @@ pub fn render(app: *App) !void {
                 imgui.igText("DEBUG: Time since last activity: (none detected)");
             }
             if (app.time_till_next_timer_complete()) |next_timer| {
-                imgui.igText(try app.tprint("DEBUG: Time till popout: {s}", .{next_timer.time_till_next_break}));
+                imgui.igText(try app.tprint("DEBUG: Time till popout: {f}", .{next_timer.time_till_next_break.formatLong()}));
             }
         }
     }

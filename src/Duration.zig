@@ -24,16 +24,105 @@ pub fn milliseconds(self: *const Duration) i64 {
     return self.nanoseconds / time.ns_per_ms;
 }
 
-pub fn format(
-    self: Duration,
-    comptime fmt: []const u8,
-    _: std.fmt.FormatOptions,
-    out_stream: anytype,
-) !void {
-    if (fmt.len == 0) std.fmt.invalidFmtError(fmt, self);
-    if (comptime std.mem.eql(u8, fmt, "s")) {
+pub fn writeString(self: *const Duration, writer: *std.io.AnyWriter) std.io.Writer.Error!void {
+    if (self.nanoseconds < 1 * time.ns_per_s) {
+        try std.fmt.format(writer, "0 seconds", .{});
+        return;
+    }
+    var ns = self.nanoseconds;
+    if (ns >= time.ns_per_day) {
+        const days = @divFloor(ns, time.ns_per_day);
+        ns -= days * time.ns_per_day;
+        if (days == 1) {
+            try std.fmt.format(writer, "{} day", .{days});
+        } else {
+            try std.fmt.format(writer, "{} days", .{days});
+        }
+    }
+    if (ns >= time.ns_per_hour) {
+        if (ns != self.nanoseconds) {
+            try writer.writeByte(' ');
+        }
+        const hours = @divFloor(ns, time.ns_per_hour);
+        ns -= hours * time.ns_per_hour;
+        if (hours == 1) {
+            try std.fmt.format(writer, "{} hour", .{hours});
+        } else {
+            try std.fmt.format(writer, "{} hours", .{hours});
+        }
+    }
+    if (ns >= time.ns_per_min) {
+        if (ns != self.nanoseconds) {
+            try writer.writeByte(' ');
+        }
+        const minutes = @divFloor(ns, time.ns_per_min);
+        ns -= minutes * time.ns_per_min;
+        if (minutes == 1) {
+            try std.fmt.format(writer, "{} minute", .{minutes});
+        } else {
+            try std.fmt.format(writer, "{} minutes", .{minutes});
+        }
+    }
+    if (ns >= time.ns_per_s) {
+        if (ns != self.nanoseconds) {
+            try writer.writeByte(' ');
+        }
+        const seconds = @divFloor(ns, time.ns_per_s);
+        ns -= seconds * time.ns_per_s;
+        if (seconds == 1) {
+            try std.fmt.format(writer, "{} second", .{seconds});
+        } else {
+            try std.fmt.format(writer, "{} seconds", .{seconds});
+        }
+    }
+}
+
+const UsesOldFormatter = (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14);
+
+/// formatLong will format duration as "1 day 3 hours 58 minutes 1 second"
+pub fn formatLong(self: Duration) if (UsesOldFormatter) OldFormatter(FormatLongDuration) else FormatLongDuration {
+    const formatter: FormatLongDuration = .{ .nanoseconds = self.nanoseconds };
+    return if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
+        .{ .formatter = formatter }
+    else
+        formatter;
+}
+
+/// formatShort will format duration as "1d 3h 58m 1s"
+pub fn formatShort(self: Duration) if (UsesOldFormatter) OldFormatter(FormatShortDuration) else FormatShortDuration {
+    const formatter: FormatShortDuration = .{ .nanoseconds = self.nanoseconds };
+    return if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
+        .{ .formatter = formatter }
+    else
+        formatter;
+}
+
+/// Deprecated: Temporary until Zig 0.15+ is out
+pub fn OldFormatter(Formatter: type) type {
+    return struct {
+        formatter: Formatter,
+
+        pub fn format(
+            self: @This(),
+            comptime fmt: []const u8,
+            _: std.fmt.FormatOptions,
+            writer: anytype,
+        ) @TypeOf(writer).Error!void {
+            if (fmt.len == 0) std.fmt.invalidFmtError(fmt, self);
+            if (!comptime std.mem.eql(u8, fmt, "f")) std.fmt.invalidFmtError(fmt, self);
+            var any_writer = if (@hasDecl(@TypeOf(writer), "any")) writer.any() else writer;
+            try self.formatter.format(&any_writer);
+        }
+    };
+}
+
+/// Format duration as "1 day 3 hours 58 minutes 1 second"
+const FormatLongDuration = struct {
+    nanoseconds: i64,
+
+    pub inline fn format(self: FormatLongDuration, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.nanoseconds < 1 * time.ns_per_s) {
-            try std.fmt.format(out_stream, "0 seconds", .{});
+            try writer.writeAll("0 seconds");
             return;
         }
         var ns = self.nanoseconds;
@@ -41,51 +130,55 @@ pub fn format(
             const days = @divFloor(ns, time.ns_per_day);
             ns -= days * time.ns_per_day;
             if (days == 1) {
-                try std.fmt.format(out_stream, "{} day", .{days});
+                try writer.print("{} day", .{days});
             } else {
-                try std.fmt.format(out_stream, "{} days", .{days});
+                try writer.print("{} days", .{days});
             }
         }
         if (ns >= time.ns_per_hour) {
             if (ns != self.nanoseconds) {
-                try out_stream.writeByte(' ');
+                try writer.writeByte(' ');
             }
             const hours = @divFloor(ns, time.ns_per_hour);
             ns -= hours * time.ns_per_hour;
             if (hours == 1) {
-                try std.fmt.format(out_stream, "{} hour", .{hours});
+                try writer.print("{} hour", .{hours});
             } else {
-                try std.fmt.format(out_stream, "{} hours", .{hours});
+                try writer.print("{} hours", .{hours});
             }
         }
         if (ns >= time.ns_per_min) {
             if (ns != self.nanoseconds) {
-                try out_stream.writeByte(' ');
+                try writer.writeByte(' ');
             }
             const minutes = @divFloor(ns, time.ns_per_min);
             ns -= minutes * time.ns_per_min;
             if (minutes == 1) {
-                try std.fmt.format(out_stream, "{} minute", .{minutes});
+                try writer.print("{} minute", .{minutes});
             } else {
-                try std.fmt.format(out_stream, "{} minutes", .{minutes});
+                try writer.print("{} minutes", .{minutes});
             }
         }
         if (ns >= time.ns_per_s) {
             if (ns != self.nanoseconds) {
-                try out_stream.writeByte(' ');
+                try writer.writeByte(' ');
             }
             const seconds = @divFloor(ns, time.ns_per_s);
             ns -= seconds * time.ns_per_s;
             if (seconds == 1) {
-                try std.fmt.format(out_stream, "{} second", .{seconds});
+                try writer.print("{} second", .{seconds});
             } else {
-                try std.fmt.format(out_stream, "{} seconds", .{seconds});
+                try writer.print("{} seconds", .{seconds});
             }
         }
-        return;
     }
-    // sh stands for shorthand lmao
-    if (comptime std.mem.eql(u8, fmt, "sh")) {
+};
+
+/// Format duration as "1d 3h 58m 1s"
+const FormatShortDuration = struct {
+    nanoseconds: i64,
+
+    pub inline fn format(self: FormatShortDuration, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.nanoseconds < 1 * time.ns_per_s) {
             // empty string
             return;
@@ -94,36 +187,34 @@ pub fn format(
         if (ns >= time.ns_per_day) {
             const days = @divFloor(ns, time.ns_per_day);
             ns -= days * time.ns_per_day;
-            try std.fmt.format(out_stream, "{}d", .{days});
+            try writer.print("{}d", .{days});
         }
         if (ns >= time.ns_per_hour) {
             if (ns != self.nanoseconds) {
-                try out_stream.writeByte(' ');
+                try writer.writeByte(' ');
             }
             const hours = @divFloor(ns, time.ns_per_hour);
             ns -= hours * time.ns_per_hour;
-            try std.fmt.format(out_stream, "{}h", .{hours});
+            try writer.print("{}h", .{hours});
         }
         if (ns >= time.ns_per_min) {
             if (ns != self.nanoseconds) {
-                try out_stream.writeByte(' ');
+                try writer.writeByte(' ');
             }
             const minutes = @divFloor(ns, time.ns_per_min);
             ns -= minutes * time.ns_per_min;
-            try std.fmt.format(out_stream, "{}m", .{minutes});
+            try writer.print("{}m", .{minutes});
         }
         if (ns >= time.ns_per_s) {
             if (ns != self.nanoseconds) {
-                try out_stream.writeByte(' ');
+                try writer.writeByte(' ');
             }
             const seconds = @divFloor(ns, time.ns_per_s);
             ns -= seconds * time.ns_per_s;
-            try std.fmt.format(out_stream, "{}s", .{seconds});
+            try writer.print("{}s", .{seconds});
         }
-        return;
     }
-    return std.fmt.invalidFmtError(fmt, self);
-}
+};
 
 pub fn parseOptionalString(str: []const u8) error{InvalidFormat}!?Duration {
     if (str.len == 0) {
@@ -197,7 +288,7 @@ pub fn jsonParseFromValue(_: std.mem.Allocator, source: std.json.Value, _: std.j
 }
 
 pub fn jsonStringify(self: @This(), jws: anytype) !void {
-    try jws.print("\"{sh}\"", .{self});
+    try jws.print("\"{f}\"", .{self.formatShort()});
 }
 
 const Duration = @This();

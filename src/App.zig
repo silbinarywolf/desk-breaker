@@ -53,12 +53,10 @@ pub const TimerKind = enum(c_int) {
 };
 
 pub const Timer = struct {
-    pub const TimerName = std.BoundedArray(u8, 128);
-
     kind: TimerKind,
 
     // Common
-    name: TimerName = .{},
+    name: [:0]const u8 = &.{},
 
     // Alarm
     // alarm_time: ?Time = null,
@@ -75,6 +73,10 @@ pub const Timer = struct {
 
     // // Alarm
     // alarm_time: i64 = 0,
+
+    pub fn deinit(t: *Timer, allocator: std.mem.Allocator) void {
+        if (t.name.len > 0) allocator.free(t.name);
+    }
 };
 
 pub const UserSettings = struct {
@@ -87,16 +89,17 @@ pub const UserSettings = struct {
     settings: UserConfig.Settings,
     timers: std.ArrayList(Timer),
 
-    pub fn init(allocator: std.mem.Allocator) @This() {
-        return .{
-            .settings = .{},
-            .timers = std.ArrayList(Timer).init(allocator),
-        };
-    }
+    pub const default: UserSettings = .{
+        .settings = .{},
+        .timers = .{},
+    };
 
     pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
         self.settings.deinit(allocator);
-        self.timers.deinit();
+        for (self.timers.items) |*t| {
+            t.deinit(allocator);
+        }
+        self.timers.deinit(allocator);
     }
 
     pub fn time_till_break_or_default(self: *const @This()) Duration {
@@ -186,7 +189,7 @@ const UiState = struct {
         } = .{},
     },
     options_metadata: struct {
-        display_names_buf: std.BoundedArray(u8, 4096) = std.BoundedArray(u8, 4096){},
+        display_names_buf: [4096:0]u8 = std.mem.zeroes([4096:0]u8),
     },
 
     /// allocBuffer will get a temporary buffer to use for UI elements
@@ -198,7 +201,7 @@ const UiState = struct {
     pub fn allocDuration(self: *@This(), duration: ?Duration) error{ OutOfMemory, NoSpaceLeft }![:0]u8 {
         const buf = try self.allocBuffer();
         buf[0] = '\x00';
-        if (duration) |td| _ = try std.fmt.bufPrintZ(buf, "{sh}", .{td});
+        if (duration) |td| _ = try std.fmt.bufPrintZ(buf, "{f}", .{td.formatShort()});
         // NOTE(jae): 2025-01-31
         // Return the full buffer for use with ImGui, this is why we ignore bufPrintZ
         return buf;
@@ -241,7 +244,10 @@ taking_break_windows: std.ArrayListUnmanaged(Window) = .{},
 /// set to true to quit the application at the start of the next frame
 has_quit: bool = false,
 
-/// if set to true, will minimize to system tray
+/// set to true if the operating supports system tray
+has_tray_support: bool = false,
+
+/// if set to true, will minimize to system tray on the next frame
 minimize_to_tray: bool = false,
 
 // user settings are not owned by this struct and must be freed by the creator.
@@ -281,12 +287,29 @@ pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
     var icon = try Image.loadPng(allocator, @embedFile("resources/icon.png"));
     errdefer icon.deinit(allocator);
 
+    // detect tray support
+    const has_tray_support: bool = blk: {
+        // NOTE(jae): 2025-05-25 - https://github.com/libsdl-org/SDL/issues/13119
+        // Workaround issue where calling SDL_CreateTray before creating a window triggers SDL_EVENT_QUIT
+        const last_window_close_hint = sdl.SDL_GetHint(sdl.SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE);
+        defer _ = sdl.SDL_SetHint(sdl.SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, last_window_close_hint);
+        assert(sdl.SDL_SetHint(sdl.SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE, "0"));
+
+        const tray = sdl.SDL_CreateTray(null, App.Name) orelse {
+            log.debug("CreateTray failed: {s}", .{sdl.SDL_GetError()});
+            break :blk false;
+        };
+        sdl.SDL_DestroyTray(tray);
+        break :blk true;
+    };
+
     return .{
         .mode = .regular,
         .allocator = allocator,
         .temp_allocator = std.heap.ArenaAllocator.init(allocator),
         .icon = icon,
         .window = null,
+        .has_tray_support = has_tray_support,
         .tray = null,
         .user_settings = user_settings,
         .activity_timer = try std.time.Timer.start(),
@@ -326,8 +349,12 @@ pub fn deinit(app: *App) void {
 }
 
 /// tprint will allocate temporary text into a buffer that will stop existing next render frame
-pub fn tprint(self: *App, comptime fmt: []const u8, args: anytype) std.fmt.AllocPrintError![:0]u8 {
-    return std.fmt.allocPrintZ(self.temp_allocator.allocator(), fmt, args);
+pub fn tprint(self: *App, comptime fmt: []const u8, args: anytype) error{OutOfMemory}![:0]u8 {
+    if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14) {
+        return std.fmt.allocPrintZ(self.temp_allocator.allocator(), fmt, args);
+    } else {
+        return std.fmt.allocPrintSentinel(self.temp_allocator.allocator(), fmt, args, 0);
+    }
 }
 
 /// check if a timers criteria has been triggered

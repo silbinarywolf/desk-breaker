@@ -35,8 +35,8 @@ pub fn render(app: *App) !void {
         if (imgui.igBegin("###break-top-left", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
             defer imgui.igEnd();
 
-            imgui.igText(try app.tprint("Time till break is over: {s}", .{
-                app.break_mode.duration.diff(app.break_mode.timer.read()),
+            imgui.igText(try app.tprint("Time till break is over: {f}", .{
+                app.break_mode.duration.diff(app.break_mode.timer.read()).formatLong(),
             }));
         }
 
@@ -95,7 +95,7 @@ pub fn render(app: *App) !void {
 
                             // Show timer with time left
                             const duration_left = timer_duration.diff(timer_started.read());
-                            imgui.igText(try app.tprint("{s} - {s}", .{ t.name.slice(), duration_left }));
+                            imgui.igText(try app.tprint("{s} - {f}", .{ t.name[0..], duration_left.formatLong() }));
                         },
                         .alarm => @panic("TODO: Handle listing alarm"),
                     }
@@ -117,7 +117,7 @@ pub fn render(app: *App) !void {
 
             if (app.break_mode.held_down_timer) |*exit_timer| {
                 imgui.igText(
-                    try app.tprint("Will exit in: {s}", .{app.user_settings.exit_time_or_default().diff(exit_timer.read())}),
+                    try app.tprint("Will exit in: {f}", .{app.user_settings.exit_time_or_default().diff(exit_timer.read()).formatLong()}),
                 );
             }
 

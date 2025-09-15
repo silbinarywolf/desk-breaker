@@ -4,6 +4,7 @@ const time = std.time;
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 const android = @import("android");
+const psp = @import("psp");
 const windows = @import("windows.zig");
 const datetime = @import("datetime.zig");
 
@@ -25,13 +26,40 @@ const ScreenTakingBreak = @import("ScreenTakingBreak.zig");
 const log = std.log.default;
 const assert = std.debug.assert;
 
+comptime {
+    if (builtin.cpu.arch.isMIPS()) {
+        asm (psp.module_info("Zig PSP App", 0, 1, 0));
+    }
+}
+
 /// custom standard options for Android
 pub const std_options: std.Options = if (builtin.abi.isAndroid())
     .{
         .logFn = android.logFn,
     }
+else if (builtin.os.tag == .freestanding)
+    .{
+        .logFn = SDL_logFn,
+    }
 else
     .{};
+
+/// SDL_logFn can be used for freestanding platforms
+fn SDL_logFn(
+    comptime message_level: std.log.Level,
+    comptime scope: @TypeOf(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const prefix = if (scope == .default) "" else @tagName(scope) ++ ": ";
+    var buf: [500]u8 = undefined;
+    const line = std.fmt.bufPrintZ(&buf, prefix ++ format, args) catch l: {
+        buf[buf.len - 3 ..][0..3].* = "...".*;
+        break :l &buf;
+    };
+    sdl.SDL_Log(line[0..].ptr);
+    _ = message_level;
+}
 
 // custom panic handler for Android
 pub const panic = if (builtin.abi.isAndroid())
@@ -42,11 +70,22 @@ else
 comptime {
     if (builtin.abi.isAndroid()) {
         @export(&SDL_main, .{ .name = "SDL_main", .linkage = .strong });
+    } else if (builtin.os.tag == .freestanding) {
+        // @export(&psp_main, .{ .name = "main", .linkage = .strong });
+        // @export(&freestanding_start, .{ .name = "__start", .linkage = .strong });
     }
 }
 
+fn psp_main() callconv(.c) void {
+    _ = std.start.callMain();
+}
+
+fn freestanding_start() callconv(.c) void {
+    _ = std.start.callMain();
+}
+
 /// This needs to be exported for Android builds
-fn SDL_main() callconv(.C) void {
+fn SDL_main() callconv(.c) void {
     if (comptime builtin.abi.isAndroid()) {
         _ = std.start.callMain();
     } else {
@@ -76,7 +115,7 @@ const MousePos = struct {
 };
 
 const has_debug_allocator = (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) and
-    (builtin.cpu.arch != .wasm32 and builtin.cpu.arch != .wasm64);
+    (builtin.cpu.arch != .wasm32 and builtin.cpu.arch != .wasm64 and builtin.os.tag != .freestanding);
 
 var debug_allocator = if (has_debug_allocator)
     std.heap.DebugAllocator(.{
@@ -127,6 +166,10 @@ pub fn main() !void {
     const app = &app_global;
     try start(app);
 
+    if (builtin.os.tag == .freestanding) {
+        @panic("TODO: Implement support for other platforms if using freestanding (like calling SDL functions only)");
+    }
+
     // run update
     if (builtin.os.tag != .emscripten) {
         while (!app.has_quit) {
@@ -135,7 +178,7 @@ pub fn main() !void {
         try quit(app);
     } else {
         std.os.emscripten.emscripten_set_main_loop(struct {
-            pub fn emscripten_loop() callconv(.C) void {
+            pub fn emscripten_loop() callconv(.c) void {
                 if (app.has_quit) {
                     std.os.emscripten.emscripten_cancel_main_loop();
                     quit(app) catch |err| {
@@ -158,7 +201,7 @@ pub fn start(app: *App) !void {
     const allocator = gpa: {
         if (has_debug_allocator) break :gpa debug_allocator.allocator();
         if (builtin.os.tag != .emscripten and (builtin.cpu.arch == .wasm32 or builtin.cpu.arch == .wasm64)) break :gpa std.heap.wasm_allocator;
-        if (builtin.os.tag == .emscripten) break :gpa std.heap.c_allocator;
+        if (builtin.os.tag == .emscripten or (builtin.os.tag == .freestanding and builtin.link_libc)) break :gpa std.heap.c_allocator;
         break :gpa std.heap.smp_allocator;
     };
 
@@ -183,7 +226,7 @@ pub fn start(app: *App) !void {
 
     user_settings.* = UserConfig.load(allocator) catch |err| switch (err) {
         // If no file found, use default
-        error.FileNotFound => UserSettings.init(allocator),
+        error.FileNotFound => UserSettings.default,
         else => {
             log.err("unable to load user config: {}", .{err});
             return err;
@@ -191,11 +234,15 @@ pub fn start(app: *App) !void {
     };
     errdefer user_settings.deinit(allocator);
 
-    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
+    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
         log.err("unable to initialize SDL: {s}", .{sdl.SDL_GetError()});
         return error.SDLInitializationFailed;
     }
     errdefer sdl.SDL_Quit();
+
+    if (builtin.os.tag == .freestanding) {
+        @panic("TODO: Implement support for other platforms if using freestanding (like calling SDL functions only)");
+    }
 
     app.* = try App.init(allocator, user_settings);
     errdefer app.deinit();
@@ -214,17 +261,16 @@ pub fn start(app: *App) !void {
     };
 
     // setup tray
-    app.tray = switch (builtin.os.tag) {
-        .windows => sdl.SDL_CreateTray(app.icon.surface, App.Name) orelse blk: {
+    if (app.has_tray_support) {
+        app.tray = sdl.SDL_CreateTray(app.icon.surface, App.Name) orelse blk: {
             const err = sdl.SDL_GetError();
             if (err != null) {
                 log.err("unable to initialize SDL tray: {s}", .{err});
                 return error.SDLInitializationFailed;
             }
             break :blk null;
-        },
-        else => null,
-    };
+        };
+    }
 
     // initialize tray
     if (app.tray) |tray| {
@@ -234,15 +280,15 @@ pub fn start(app: *App) !void {
         };
         if (sdl.SDL_InsertTrayEntryAt(tray_menu, -1, "Open", sdl.SDL_TRAYENTRY_BUTTON)) |tray_entry| {
             sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
-                pub fn callback(_: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
+                pub fn callback(_: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.c) void {
                     has_opened_from_tray = true;
                 }
             }.callback, app);
         }
         if (sdl.SDL_InsertTrayEntryAt(tray_menu, -1, "Quit", sdl.SDL_TRAYENTRY_BUTTON)) |tray_entry| {
             sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
-                pub fn callback(app_ptr: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.C) void {
-                    const app_in_tray: *App = @alignCast(@ptrCast(app_ptr));
+                pub fn callback(app_ptr: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.c) void {
+                    const app_in_tray: *App = @ptrCast(@alignCast(app_ptr));
                     app_in_tray.has_quit = true;
                 }
             }.callback, app);
@@ -671,10 +717,21 @@ pub fn update(app: *App) !void {
             pub fn renderWindow(window: *Window) void {
                 const renderer = window.renderer;
 
+                // Setup ImGui Context + Render Scale
+                assert(window.imgui_new_frame);
+                imgui.igSetCurrentContext(window.imgui_context);
+                imgui.igRender();
+                const io = &imgui.igGetIO_ContextPtr(imgui.igGetCurrentContext())[0];
+                _ = sdl.SDL_SetRenderScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
+
+                // Clear screen
                 _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
                 _ = sdl.SDL_RenderClear(renderer);
 
-                window.imguiRender();
+                // Render ImGui Draw Calls
+                imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(window.renderer));
+                window.imgui_new_frame = false;
+
                 if (!sdl.SDL_RenderPresent(renderer)) {
                     // TODO: Handle not rendering?
                     @panic("SDL_RenderPresent failed for main application window");

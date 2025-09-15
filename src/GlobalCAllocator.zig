@@ -1,6 +1,7 @@
 //! Setup allocation functions for third-party C libraries like SDL, ImGui, etc
 
 const std = @import("std");
+const builtin = @import("builtin");
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 const assert = std.debug.assert;
@@ -13,7 +14,9 @@ var global_c_allocator: ?GlobalCAllocator = null;
 var global_c_allocator_mutex: std.Thread.Mutex = .{};
 
 const debug_log_allocs = false;
-const default_alignment = 16;
+
+const default_alignment_size = 16;
+const default_alignment = if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 14) default_alignment_size else std.mem.Alignment.@"16";
 
 allocator: std.mem.Allocator,
 allocations: std.AutoHashMap(usize, usize),
@@ -98,9 +101,9 @@ pub inline fn realloc(self: *@This(), ptr: ?*anyopaque, size: usize) ?*anyopaque
 
     const old_size = if (ptr != null) self.allocations.get(@intFromPtr(ptr.?)).? else 0;
     const old_mem = if (old_size > 0)
-        @as([*]align(default_alignment) u8, @ptrCast(@alignCast(ptr)))[0..old_size]
+        @as([*]align(default_alignment_size) u8, @ptrCast(@alignCast(ptr)))[0..old_size]
     else
-        @as([*]align(default_alignment) u8, undefined)[0..0];
+        @as([*]align(default_alignment_size) u8, undefined)[0..0];
 
     const new_mem = self.allocator.realloc(old_mem, size) catch @panic("c_allocator: out of memory");
 
@@ -121,12 +124,12 @@ pub inline fn free(self: *@This(), maybe_ptr: ?*anyopaque) void {
     defer if (debug_log_allocs) log.debug("free: end {?}", .{maybe_ptr});
 
     const size = self.allocations.fetchRemove(@intFromPtr(ptr)).?.value;
-    const mem = @as([*]align(default_alignment) u8, @ptrCast(@alignCast(ptr)))[0..size];
+    const mem = @as([*]align(default_alignment_size) u8, @ptrCast(@alignCast(ptr)))[0..size];
 
     self.allocator.free(mem);
 }
 
-fn sdlMalloc(size: usize) callconv(.C) ?*anyopaque {
+fn sdlMalloc(size: usize) callconv(.c) ?*anyopaque {
     global_c_allocator_mutex.lock();
     defer global_c_allocator_mutex.unlock();
 
@@ -134,7 +137,7 @@ fn sdlMalloc(size: usize) callconv(.C) ?*anyopaque {
     return self.malloc(size);
 }
 
-fn sdlCalloc(elements: usize, size_of_each: usize) callconv(.C) ?*anyopaque {
+fn sdlCalloc(elements: usize, size_of_each: usize) callconv(.c) ?*anyopaque {
     global_c_allocator_mutex.lock();
     defer global_c_allocator_mutex.unlock();
 
@@ -142,7 +145,7 @@ fn sdlCalloc(elements: usize, size_of_each: usize) callconv(.C) ?*anyopaque {
     return self.calloc(elements, size_of_each);
 }
 
-fn sdlRealloc(ptr: ?*anyopaque, size: usize) callconv(.C) ?*anyopaque {
+fn sdlRealloc(ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
     global_c_allocator_mutex.lock();
     defer global_c_allocator_mutex.unlock();
 
@@ -150,7 +153,7 @@ fn sdlRealloc(ptr: ?*anyopaque, size: usize) callconv(.C) ?*anyopaque {
     return self.realloc(ptr, size);
 }
 
-fn sdlFree(ptr: ?*anyopaque) callconv(.C) void {
+fn sdlFree(ptr: ?*anyopaque) callconv(.c) void {
     global_c_allocator_mutex.lock();
     defer global_c_allocator_mutex.unlock();
 
@@ -158,14 +161,14 @@ fn sdlFree(ptr: ?*anyopaque) callconv(.C) void {
     return self.free(ptr);
 }
 
-fn imguiMalloc(size: usize, user_context: ?*anyopaque) callconv(.C) ?*anyopaque {
+fn imguiMalloc(size: usize, user_context: ?*anyopaque) callconv(.c) ?*anyopaque {
     const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context));
     global_c_allocator_mutex.lock();
     defer global_c_allocator_mutex.unlock();
     return self.malloc(size);
 }
 
-fn imguiFree(ptr: ?*anyopaque, user_context: ?*anyopaque) callconv(.C) void {
+fn imguiFree(ptr: ?*anyopaque, user_context: ?*anyopaque) callconv(.c) void {
     const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context));
     global_c_allocator_mutex.lock();
     defer global_c_allocator_mutex.unlock();
@@ -174,28 +177,28 @@ fn imguiFree(ptr: ?*anyopaque, user_context: ?*anyopaque) callconv(.C) void {
 
 const GlobalCAllocator = @This();
 
-// fn stbiRealloc(ptr: ?*anyopaque, size: usize) callconv(.C) ?*anyopaque {
+// fn stbiRealloc(ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
 //     return cRealloc(ptr, size);
 // }
 
-// extern var stbiFreePtr: ?*const fn (maybe_ptr: ?*anyopaque) callconv(.C) void;
+// extern var stbiFreePtr: ?*const fn (maybe_ptr: ?*anyopaque) callconv(.c) void;
 
-// extern var stbttFreePtr: ?*const fn (maybe_ptr: ?*anyopaque) callconv(.C) void;
+// extern var stbttFreePtr: ?*const fn (maybe_ptr: ?*anyopaque) callconv(.c) void;
 
-// fn stbiFree(maybe_ptr: ?*anyopaque) callconv(.C) void {
+// fn stbiFree(maybe_ptr: ?*anyopaque) callconv(.c) void {
 //     cFree(maybe_ptr);
 // }
 
-// fn stbttFree(maybe_ptr: ?*anyopaque) callconv(.C) void {
+// fn stbttFree(maybe_ptr: ?*anyopaque) callconv(.c) void {
 //     cFree(maybe_ptr);
 // }
 
-// fn stbttMalloc(size: usize) callconv(.C) ?*anyopaque {
+// fn stbttMalloc(size: usize) callconv(.c) ?*anyopaque {
 //     return cMalloc(size);
 // }
 
-// fn stbiMalloc(size: usize) callconv(.C) ?*anyopaque {
+// fn stbiMalloc(size: usize) callconv(.c) ?*anyopaque {
 //     return cMalloc(size);
 // }
 
-// extern var stbiReallocPtr: ?*const fn (ptr: ?*anyopaque, size: usize) callconv(.C) ?*anyopaque;
+// extern var stbiReallocPtr: ?*const fn (ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque;

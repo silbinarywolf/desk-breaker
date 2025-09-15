@@ -407,7 +407,9 @@ fn emSdkUpstreamPath(tools: *Tools, emsdk_lazy_path: LazyPath) LazyPath {
 fn emSdkPath(b: *Build) ?LazyPath {
     // NOTE(jae): 2025-02-03
     // Consider discovery method that just uses "emsdk" in PATH
-    const this_dep: *Build.Dependency = b.lazyDependency("emscripten", .{}) orelse @panic("must call emscripten module 'zig-emscripten-sdk' in your root module");
+    const name = "Emscripten";
+    const this_module_name = "emscripten";
+    const this_dep: *Build.Dependency = b.lazyDependency(this_module_name, .{}) orelse @panic(b.fmt("must call {s} module '{s}' in your root module", .{ name, this_module_name }));
     const emsdk_dep = this_dep.builder.lazyDependency("emsdk", .{}) orelse return null;
     const emsdk_path = emsdk_dep.path("");
     return emsdk_path;

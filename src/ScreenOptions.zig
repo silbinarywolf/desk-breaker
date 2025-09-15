@@ -36,7 +36,7 @@ pub fn open(app: *App) !void {
     };
 
     // TODO: Switch each item to new temporary allocator
-    if (app.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{sh}", .{td});
+    if (app.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{f}", .{td.formatShort()});
     if (app.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{app.user_settings.settings.incoming_break_message});
     if (app.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| {
         if (max_snoozes == UserConfig.Settings.MaxSnoozesDisabled) {
@@ -78,13 +78,14 @@ pub fn open(app: *App) !void {
         const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
         defer sdl.SDL_free(display_list_or_err);
         if (display_list_or_err != null) {
+            var writer = std.Io.Writer.fixed(&app.ui.options_metadata.display_names_buf);
             const display_list = display_list_or_err[0..@intCast(display_count)];
             for (display_list, 0..) |display_id, i| {
                 const name_c_str = sdl.SDL_GetDisplayName(display_id);
                 if (name_c_str == null) {
                     continue;
                 }
-                try app.ui.options_metadata.display_names_buf.writer().print("{d}: {s}\x00", .{ i, name_c_str });
+                try writer.print("{d}: {s}\x00", .{ i, name_c_str });
             }
         }
     }
@@ -113,7 +114,7 @@ pub fn render(app: *App) !void {
         _ = imgui.igCombo_Str(
             "Display",
             &display_index_ui,
-            ui_metadata.display_names_buf.buffer[0..],
+            ui_metadata.display_names_buf[0..],
             0,
         );
         if (display_index_ui >= 0) {
@@ -132,7 +133,7 @@ pub fn render(app: *App) !void {
 
     if (imgui.igInputTextWithHint(
         "Time till break",
-        try app.tprint("default: {sh}", .{app.user_settings.default_time_till_break}),
+        try app.tprint("default: {f}", .{app.user_settings.default_time_till_break.formatShort()}),
         ui_options.time_till_break[0..].ptr,
         ui_options.time_till_break.len,
         0,
@@ -147,7 +148,7 @@ pub fn render(app: *App) !void {
 
     if (imgui.igInputTextWithHint(
         "Break time",
-        try app.tprint("default: {sh}", .{app.user_settings.default_break_time}),
+        try app.tprint("default: {f}", .{app.user_settings.default_break_time.formatShort()}),
         ui_options.break_time[0..].ptr,
         ui_options.break_time.len,
         0,
@@ -167,7 +168,7 @@ pub fn render(app: *App) !void {
         const error_message = &ui_options.errors.incoming_break;
         if (imgui.igInputTextWithHint(
             "Incoming break",
-            try app.tprint("default: {sh}", .{default_value}),
+            try app.tprint("default: {f}", .{default_value.formatShort()}),
             current_value[0..].ptr,
             current_value.len,
             0,
