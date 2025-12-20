@@ -10,7 +10,7 @@ const psp = @import("psp");
 const enable_android_build = false;
 
 const app_name = "Desk Breaker";
-const recommended_zig_version = "0.15.1";
+const recommended_zig_version = "0.15.2";
 
 pub fn build(b: *std.Build) !void {
     switch (comptime builtin.zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {

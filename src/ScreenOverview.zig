@@ -88,21 +88,24 @@ pub fn render(app: *App) !void {
             imgui.igText(try app.tprint("Times snoozed: {d}", .{app.snooze_times}));
         }
 
-        if (app.snooze_activity_break_timer) |*snooze_timer| {
-            imgui.igText(try app.tprint("Snooze timer over in: {f}", .{
-                app.user_settings.snooze_duration_or_default().diff(snooze_timer.read()).formatLong(),
-            }));
-        } else if (app.user_settings.settings.is_activity_break_enabled) {
+        // Time till activity break
+        if (app.user_settings.settings.is_activity_break_enabled) {
             const time_till_activity_break_prefix = "Time till activity break: ";
-            const time_till_activity_break = if (app.mode == .taking_break)
-                time_till_activity_break_prefix ++ "(Currently happening)"
-            else if (app.is_user_mouse_active)
-                try app.tprint(time_till_activity_break_prefix ++ "{f}", .{
-                    app.user_settings.time_till_break_or_default().diff(app.activity_timer.read()).formatLong(),
-                })
-            else
-                time_till_activity_break_prefix ++ "(No mouse activity)";
-
+            const time_till_activity_break: [:0]const u8 =
+                if (app.is_game_active)
+                    time_till_activity_break_prefix ++ "(paused, game running)"
+                else if (app.snooze_activity_break_timer) |*snooze_timer|
+                    try app.tprint("Snooze timer over in: {f}", .{
+                        app.user_settings.snooze_duration_or_default().diff(snooze_timer.read()).formatLong(),
+                    })
+                else if (app.mode == .taking_break)
+                    time_till_activity_break_prefix ++ "(Currently happening)"
+                else if (!app.is_user_active)
+                    time_till_activity_break_prefix ++ "(No user activity)"
+                else
+                    try app.tprint(time_till_activity_break_prefix ++ "{f}", .{
+                        app.user_settings.time_till_break_or_default().diff(app.activity_timer.read()).formatLong(),
+                    });
             imgui.igText(time_till_activity_break);
         }
 
@@ -117,6 +120,9 @@ pub fn render(app: *App) !void {
                 imgui.igText("DEBUG: Time since last activity: %d", time_in_seconds);
             } else {
                 imgui.igText("DEBUG: Time since last activity: (none detected)");
+            }
+            if (!app.has_global_mouse_support) {
+                imgui.igText("DEBUG: No global mouse support");
             }
             if (app.time_till_next_timer_complete()) |next_timer| {
                 imgui.igText(try app.tprint("DEBUG: Time till popout: {f}", .{next_timer.time_till_next_break.formatLong()}));
