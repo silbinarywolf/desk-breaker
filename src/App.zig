@@ -247,6 +247,9 @@ has_quit: bool = false,
 /// set to true if the operating supports system tray
 has_tray_support: bool = false,
 
+/// If using something like Wayland with no global mouse
+has_global_mouse_support: bool = true,
+
 /// if set to true, will minimize to system tray on the next frame
 minimize_to_tray: bool = false,
 
@@ -261,7 +264,10 @@ activity_timer: time.Timer,
 // if you click snooze, a shorter timer will start
 snooze_activity_break_timer: ?time.Timer = null,
 
-is_user_mouse_active: bool = false,
+is_user_active: bool = false,
+
+process_check_timer: time.Timer,
+is_game_active: bool = false,
 
 /// amount of times snooze button was hit
 snooze_times: u32 = 0,
@@ -313,6 +319,7 @@ pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
         .tray = null,
         .user_settings = user_settings,
         .activity_timer = try std.time.Timer.start(),
+        .process_check_timer = try std.time.Timer.start(),
         .ui = .{
             .ui_allocator = std.heap.ArenaAllocator.init(allocator),
             .timer = undefined,
@@ -378,6 +385,10 @@ pub fn time_till_next_timer_complete(app: *App) ?NextTimer {
                 can_trigger_activity_break = false;
             }
         }
+        if (app.is_game_active) {
+            can_trigger_activity_break = false;
+        }
+
         if (can_trigger_activity_break) {
             switch (app.mode) {
                 .regular, .incoming_break => {

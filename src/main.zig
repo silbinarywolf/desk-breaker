@@ -8,6 +8,7 @@ const psp = @import("psp");
 const windows = @import("windows.zig");
 const datetime = @import("datetime.zig");
 
+const ProcessList = @import("ProcessList.zig");
 const winregistry = @import("winregistry.zig");
 const UserConfig = @import("UserConfig.zig");
 const GlobalCAllocator = @import("GlobalCAllocator.zig");
@@ -295,6 +296,20 @@ pub fn start(app: *App) !void {
         }
     }
 
+    // If using Wayland set that we have no global mouse support
+    if (builtin.os.tag == .linux) {
+        const video_driver_c = sdl.SDL_GetCurrentVideoDriver();
+        if (video_driver_c != null) {
+            const video_driver = std.mem.span(sdl.SDL_GetCurrentVideoDriver());
+            if (std.mem.eql(u8, video_driver, "wayland")) {
+                app.has_global_mouse_support = false;
+            }
+        }
+    }
+    if (!app.has_global_mouse_support) {
+        app.is_user_active = true;
+    }
+
     // Setup initial "previous mouse position"
     _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
 
@@ -520,6 +535,163 @@ pub fn update(app: *App) !void {
             }
         }
 
+        // Check process list every N seconds
+        if (ProcessList.is_supported and
+            app.process_check_timer.read() >= 5 * time.ns_per_s)
+        {
+            // Reset timer
+            app.process_check_timer.reset();
+
+            // Check each process
+            var pl = try ProcessList.open();
+            defer pl.close();
+            const has_process_running_that_should_halt_activity_timer = procblk: {
+                while (try pl.next()) |entry| {
+                    const filepath = entry.exe_filepath;
+
+                    // Debug process name
+                    log.info("process: {s}", .{entry.exe_filepath});
+
+                    // By default disallow any application launched from the Steam directory
+                    //
+                    // This pattern covers both the default folder and additional folders
+                    // - Default:               C:/Steam/steamapps/common/Expedition 33
+                    // - Custom Additional HDD: D:/SteamLibrary/steamapps/common/Among Us
+                    if (std.mem.indexOfPos(u8, filepath, 0, "/steamapps/common/") != null) {
+                        // Current app matches a Steam application
+                        var has_match = true;
+
+                        // Steam has tools as well, so we have a whitelist to allow various tools/servers/etc
+                        const steamapps_allow_contains_list = [_][]const u8{
+                            // Source SDK
+                            "/steamapps/common/SourceSDK",
+                            // VR
+                            "/steamapps/common/SteamVR",
+                            "/steamapps/common/OVR Toolkit",
+                            "/steamapps/common/OVR_AdvancedSettings",
+                            // Game Engine / Tools
+                            "/steamapps/common/gamemaker_studio",
+                            "/steamapps/common/Substance 3D Designer 2022",
+                            // Dedicated Servers
+                            "/steamapps/common/PalServer",
+                            // - /steamapps/common/Project Zomboid Dedicated Server
+                            // - /steamapps/common/Source 2007 Dedicated Server
+                            // - /steamapps/common/Left 4 Dead 2 Dedicated Server
+                            // - /steamapps/common/Age of Chivalry Dedicated Server
+                            " Dedicated Server",
+                            // Dedicated Servers
+                            // - steamapps/common/SatisfactoryDedicatedServer
+                            "DedicatedServer",
+                            // Chivalry Dedicated Servers
+                            // - steamapps/common/chivalry_ded_server
+                            // - steamapps/common/chivalry_dw_ded_server
+                            "_ded_server",
+                            // Game Modding
+                            "/steamapps/common/Automation_SDK",
+                            "/steamapps/common/RustSDK",
+                            "/steamapps/common/Project Zomboid Modding Tools",
+                            "/left 4 dead 2/bin/", // ie. /bin/hammer.exe, /bin/hlfaceposer.exe, root directory of "left 4 dead 2" has the actual exe
+                            // Games (UI heavy, interruption won't cause game over states)
+                            "/steamapps/common/Automation",
+                        };
+                        for (steamapps_allow_contains_list) |allow_contains| {
+                            has_match = has_match and std.mem.indexOfPos(u8, filepath, 0, allow_contains) == null;
+                        }
+                        if (has_match) {
+                            break :procblk true;
+                        }
+                    }
+
+                    // Check Minecraft Launcher games
+                    {
+                        var has_match = false;
+                        const minecraft_launcher_disallow_contains_list = [_][]const u8{
+                            "/Minecraft", // Java Edition, from main launcher: C:/Program Files/WindowsApps/Microsoft.4297127D64EC6_2.5.2.0_x64__8wekyb3d8bbwe/Minecraft.exe
+                            "/Minecraft.Windows", // Bedrock Edition, from main launcher: C:/Program Files/WindowsApps/MICROSOFT.MINECRAFTUWP_1.21.13101.0_x64__8wekyb3d8bbwe/Minecraft.Windows.exe
+                        };
+                        for (minecraft_launcher_disallow_contains_list) |allow_contains| {
+                            has_match = has_match and std.mem.indexOfPos(u8, filepath, 0, allow_contains) == null;
+                        }
+                        if (has_match) {
+                            // Exclude processes like the Minecraft Launcher itself
+                            const minecraft_launcher_allow_contains_list = [_][]const u8{
+                                "/Minecraft Launcher/Content",
+                            };
+                            for (minecraft_launcher_allow_contains_list) |allow_contains| {
+                                has_match = has_match and std.mem.indexOfPos(u8, filepath, 0, allow_contains) == null;
+                            }
+                            if (has_match) {
+                                break :procblk true;
+                            }
+                        }
+                    }
+
+                    // Check misc applications
+                    {
+                        const disallow_contains_list_os = if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid())
+                            [_][]const u8{
+                                // "/Dolphin" // Excluded on Linux by default as it has a File Explorer called Dolphin
+                            }
+                        else
+                            [_][]const u8{
+                                "/Dolphin", // Don't exclude on Linux by default as it has a File Explorer called Dolphin
+                            };
+                        const disallow_contains_list = [_][]const u8{
+                            // Emulation
+                            "/retroarch",
+                            "/duckstation-", // ie. duckstation-qt-x64-ReleaseLTCG.exe
+                            "/ePSXe",
+                            "/pcsxr",
+                            "/mednafen",
+                            "/fceux",
+                            "/mGBA",
+                            "/mupen64plus",
+                            "/bsnes",
+                            "/snes9x",
+                            "/VisualBoyAdvance",
+                            "/Cemu",
+                            "/shadPS4", // ie. shadPS4QtLauncher.exe
+                            "/Ryujinx",
+                            "/xemu",
+                            "/xenia",
+                            // Games
+                            "/soh", // Ship of Harkinian
+                            "/BarkleyV120",
+                            "/AgosClient",
+                            "/Bubsy3d",
+                            "/starsector", // Untested, may not work due to running under Java. Can be installed anywhere, "starsector.exe"
+                        } ++ disallow_contains_list_os;
+
+                        var has_match = false;
+                        for (disallow_contains_list) |disallow_contains| {
+                            has_match = has_match or std.mem.indexOfPos(u8, filepath, 0, disallow_contains) != null;
+                        }
+                        if (has_match) {
+                            break :procblk true;
+                        }
+                    }
+                }
+                break :procblk false;
+            };
+            if (has_process_running_that_should_halt_activity_timer) {
+                if (!app.is_game_active) {
+                    app.is_game_active = true;
+                }
+            } else {
+                if (app.is_game_active) {
+                    if (app.user_settings.settings.is_activity_break_enabled) {
+                        const time_till_next_break = app.user_settings.time_till_break_or_default().diff(app.activity_timer.read());
+                        // TODO: Make activity timer give 2 minute interval instead of just resetting if below 2 mins
+                        if (time_till_next_break.nanoseconds <= 120 * time.ns_per_s) {
+                            app.activity_timer.reset();
+                            app.snooze_activity_break_timer = null;
+                        }
+                    }
+                    app.is_game_active = false;
+                }
+            }
+        }
+
         // Detect activity and handle timers to pop-up break window
         {
             // Detect global mouse movement
@@ -531,21 +703,24 @@ pub fn update(app: *App) !void {
                 diff.y >= 5)
             {
                 app.time_since_last_input = try std.time.Timer.start();
-                app.is_user_mouse_active = true;
+                app.is_user_active = true;
             }
 
-            if (app.mode == .regular) {
-                // Track time using computer
-                if (app.time_since_last_input) |*time_since_last_input| {
-                    // TODO: Make inactivity time a variable
-                    const inactivity_duration = 5 * std.time.ns_per_min;
-                    if (time_since_last_input.read() > inactivity_duration) {
-                        app.is_user_mouse_active = false;
+            // Only make inactive if we have global mouse support
+            if (app.has_global_mouse_support) {
+                if (app.mode == .regular) {
+                    // Track time using computer
+                    if (app.time_since_last_input) |*time_since_last_input| {
+                        // TODO: Make inactivity time a variable
+                        const inactivity_duration = 5 * std.time.ns_per_min;
+                        if (time_since_last_input.read() > inactivity_duration) {
+                            app.is_user_active = false;
+                            app.activity_timer.reset();
+                        }
+                    } else {
                         app.activity_timer.reset();
+                        app.is_user_active = false;
                     }
-                } else {
-                    app.activity_timer.reset();
-                    app.is_user_mouse_active = false;
                 }
             }
 
@@ -554,7 +729,7 @@ pub fn update(app: *App) !void {
                 .regular, .incoming_break => {
                     if (app.time_till_next_timer_complete()) |next_timer| {
                         if (next_timer.time_till_next_break.nanoseconds <= 0) {
-                            const detect_computer_in_sleep_mode = blk: {
+                            const computer_was_in_sleep_mode = blk: {
                                 // If it's an activity timer or sleep timer and the difference in time
                                 // is over N seconds in the past, assume the computer was in sleep mode for a long
                                 // period of time and ignore the break logic.
@@ -565,7 +740,7 @@ pub fn update(app: *App) !void {
                                 }
                                 break :blk false;
                             };
-                            if (!detect_computer_in_sleep_mode) {
+                            if (!computer_was_in_sleep_mode) {
                                 try app.change_mode(.taking_break);
                             } else {
                                 app.activity_timer.reset();
