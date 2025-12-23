@@ -248,6 +248,9 @@ pub fn start(app: *App) !void {
     app.* = try App.init(allocator, user_settings);
     errdefer app.deinit();
 
+    // setup process list
+    try app.process_list.init();
+
     // setup main application window
     app.window = blk: {
         const main_app_window = try allocator.create(Window);
@@ -543,14 +546,19 @@ pub fn update(app: *App) !void {
             app.process_check_timer.reset();
 
             // Check each process
-            var pl = try ProcessList.open();
+            var pl = &app.process_list;
+            try pl.open(app.temp_allocator.allocator());
             defer pl.close();
             const has_process_running_that_should_halt_activity_timer = procblk: {
                 while (try pl.next()) |entry| {
                     const filepath = entry.exe_filepath;
+                    const jar_arguments = entry.jar_arguments;
 
                     // Debug process name
-                    log.info("process: {s}", .{entry.exe_filepath});
+                    // if (jar_filepaths.len > 0)
+                    //     log.info("java process: {s}", .{entry.jar_filepaths})
+                    // else
+                    //     log.info("process: {s}", .{entry.exe_filepath});
 
                     // By default disallow any application launched from the Steam directory
                     //
@@ -609,13 +617,27 @@ pub fn update(app: *App) !void {
                             "/Minecraft", // Java Edition, from main launcher: C:/Program Files/WindowsApps/Microsoft.4297127D64EC6_2.5.2.0_x64__8wekyb3d8bbwe/Minecraft.exe
                             "/Minecraft.Windows", // Bedrock Edition, from main launcher: C:/Program Files/WindowsApps/MICROSOFT.MINECRAFTUWP_1.21.13101.0_x64__8wekyb3d8bbwe/Minecraft.Windows.exe
                         };
-                        for (minecraft_launcher_disallow_contains_list) |allow_contains| {
-                            has_match = has_match and std.mem.indexOfPos(u8, filepath, 0, allow_contains) == null;
+                        for (minecraft_launcher_disallow_contains_list) |disallow_contains| {
+                            has_match = has_match or std.mem.indexOfPos(u8, filepath, 0, disallow_contains) != null;
+                        }
+                        if (jar_arguments.len > 0) {
+                            const minecraft_jar_disallow_contains_list = if (builtin.os.tag == .windows)
+                                [_][]const u8{
+                                    "\\libraries\\com\\mojang\\", // Java Edition, from regular/terrible launcher (2025): C:\Users\Jae\AppData\Roaming\.minecraft\libraries\com\mojang\brigadier\1.3.10\brigadier-1.3.10.jar
+                                }
+                            else
+                                [_][]const u8{
+                                    "/libraries/com/mojang/", // Java Edition, from Prism Launcher on Linux/Bazzite: /var/home/USER/.var/app/org.prismlauncher.PrismLauncher/data/PrismLauncher/libraries/com/mojang/minecraft/1.21.11/minecraft-1.21.11-client.jar"
+                                };
+                            for (minecraft_jar_disallow_contains_list) |disallow_jar_contains| {
+                                has_match = has_match or std.mem.indexOfPos(u8, jar_arguments, 0, disallow_jar_contains) != null;
+                            }
                         }
                         if (has_match) {
                             // Exclude processes like the Minecraft Launcher itself
                             const minecraft_launcher_allow_contains_list = [_][]const u8{
-                                "/Minecraft Launcher/Content",
+                                "/Minecraft Launcher/Content", // Windows
+                                "/minecraft-launcher", // Linux, /var/home/jae/.minecraft/launcher/minecraft-launcher
                             };
                             for (minecraft_launcher_allow_contains_list) |allow_contains| {
                                 has_match = has_match and std.mem.indexOfPos(u8, filepath, 0, allow_contains) == null;
@@ -626,15 +648,30 @@ pub fn update(app: *App) !void {
                         }
                     }
 
+                    // Check misc Java applications
+                    if (jar_arguments.len > 0) {
+                        const jar_disallow_contains_list = [_][]const u8{
+                            // Starsector
+                            "com.fs.starfarer", // -Dcom.fs.starfarer.settings.paths.saves=..\\saves -Dcom.fs.starfarer.settings.paths.screenshots=..\\screenshots -Dcom.fs.starfarer.settings.paths.mods=..\\mods -Dcom.fs.starfarer.settings.paths.logs=. -classpath janino.jar;commons-compiler.jar;commons-compiler-jdk.jar;starfarer.api.jar;starfarer_obf.jar;jogg-0.0.7.jar;jorbis-0.0.15.jar;json.jar;lwjgl.jar;jinput.jar;log4j-1.2.9.jar;lwjgl_util.jar;fs.sound_obf.jar;fs.common_obf.jar;xstream-1.4.10.jar;txw2-3.0.2.jar;jaxb-api-2.4.0-b180830.0359.jar;webp-imageio-0.1.6.jar com.fs.starfarer.StarfarerLauncher
+                        };
+                        var has_match = false;
+                        for (jar_disallow_contains_list) |disallow_jar_contains| {
+                            has_match = has_match or std.mem.indexOfPos(u8, jar_arguments, 0, disallow_jar_contains) != null;
+                        }
+                        if (has_match) {
+                            break :procblk true;
+                        }
+                    }
+
                     // Check misc applications
                     {
-                        const disallow_contains_list_os = if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid())
+                        const disallow_contains_list_os = if (comptime builtin.os.tag == .linux)
                             [_][]const u8{
-                                // "/Dolphin" // Excluded on Linux by default as it has a File Explorer called Dolphin
+                                "/dolphin-emu", // Gamecube/Wii emulator. Linux/Flatpak, /app/bin/dolphin-emu
                             }
                         else
                             [_][]const u8{
-                                "/Dolphin", // Don't exclude on Linux by default as it has a File Explorer called Dolphin
+                                "/Dolphin", // Gamecube/Wii emulator. Don't exclude on Linux by default as it has a File Explorer called Dolphin
                             };
                         const disallow_contains_list = [_][]const u8{
                             // Emulation
