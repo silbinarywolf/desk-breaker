@@ -9,6 +9,7 @@ const imgui = @import("imgui");
 const Image = @import("Image.zig");
 const UserConfig = @import("UserConfig.zig");
 const Duration = @import("Duration.zig");
+const ProcessList = @import("ProcessList.zig");
 
 const Window = @import("Window.zig");
 
@@ -265,9 +266,10 @@ activity_timer: time.Timer,
 snooze_activity_break_timer: ?time.Timer = null,
 
 is_user_active: bool = false,
-
-process_check_timer: time.Timer,
 is_game_active: bool = false,
+
+process_list: ProcessList,
+process_check_timer: time.Timer,
 
 /// amount of times snooze button was hit
 snooze_times: u32 = 0,
@@ -319,6 +321,7 @@ pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
         .tray = null,
         .user_settings = user_settings,
         .activity_timer = try std.time.Timer.start(),
+        .process_list = undefined, // Init after
         .process_check_timer = try std.time.Timer.start(),
         .ui = .{
             .ui_allocator = std.heap.ArenaAllocator.init(allocator),
@@ -348,6 +351,7 @@ pub fn deinit(app: *App) void {
     if (app.tray) |tray| {
         sdl.SDL_DestroyTray(tray);
     }
+    app.process_list.deinit();
     app.icon.deinit(allocator);
     app.user_settings.deinit(allocator);
     allocator.destroy(app.user_settings);
