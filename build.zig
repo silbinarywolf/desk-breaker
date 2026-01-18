@@ -48,7 +48,9 @@ pub fn build(b: *std.Build) !void {
         switch (platform) {
             .none => {}, // do nothing
             .psp => {
-                // EXPERIMENTAL: Try to get it working with Zig
+                // EXPERIMENTAL: Get it working with Zig via ofmt=.c
+                // zig build -Doptimize=ReleaseFast -Dplatform=psp
+
                 var feature_set = std.Target.Cpu.Feature.Set.empty;
                 feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.single_float));
                 // feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
@@ -184,16 +186,7 @@ pub fn build(b: *std.Build) !void {
             });
             const sdl_lib = sdl_dep.artifact("SDL3");
 
-            if (platform == .psp) {
-                // TODO: Make PSPSDK tools just include this
-                // app.linkSystemLibrary("SDL3", .{});
-                // NOTE(jae): 2024-07-03
-                // Hack for Linux to use the SDL3 version compiled using native Linux tools
-                app.linkLibrary(sdl_lib);
-                for (sdl_lib.root_module.lib_paths.items) |lib_path| {
-                    app.addLibraryPath(lib_path);
-                }
-            } else if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
                 // NOTE(jae): 2024-07-03
                 // Hack for Linux to use the SDL3 version compiled using native Linux tools
                 app.linkLibrary(sdl_lib);
@@ -301,20 +294,25 @@ pub fn build(b: *std.Build) !void {
         // add Wayland module if building on Linux
         if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
             if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
-                const wayland = @import("zig_wayland");
-                var scanner = wayland.Scanner.create(b, .{});
-
-                const wayland_protocols_dep = b.dependency("wayland_protocols", .{});
-                scanner.addCustomProtocol(wayland_protocols_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
-                scanner.generate("ext_idle_notifier_v1", 2);
-                scanner.generate("wl_seat", 5);
-
-                // NOTE(jae): 2026-01-03
-                // Inlined the generated Zig file as "wayland-gen.zig"
-                app.addImport("_wayland", b.createModule(.{
-                    .root_source_file = scanner.result,
-                }));
                 app.linkSystemLibrary("wayland-client", .{});
+
+                // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
+                const add_generated_wayland_module = false;
+                if (add_generated_wayland_module) {
+                    const wayland = @import("zig_wayland");
+                    var scanner = wayland.Scanner.create(b, .{});
+
+                    const wayland_protocols_dep = b.dependency("wayland_protocols", .{});
+                    scanner.addCustomProtocol(wayland_protocols_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
+                    scanner.generate("ext_idle_notifier_v1", 2);
+                    scanner.generate("wl_seat", 5);
+
+                    // NOTE(jae): 2026-01-03
+                    // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
+                    app.addImport("_wayland", b.createModule(.{
+                        .root_source_file = scanner.result,
+                    }));
+                }
             }
         }
 
@@ -396,29 +394,23 @@ pub fn build(b: *std.Build) !void {
 
             const installed_web_html = em.addInstallArtifact(exe);
             b.getInstallStep().dependOn(&installed_web_html.step);
+        } else if (platform == .psp) {
+            const psp_dep = b.lazyDependency("psp", .{
+                .target = target,
+                .optimize = optimize,
+            }) orelse return;
+
+            app.addImport("psp", psp_dep.module("psp"));
+
+            const psptool = psp.Tools.create(b, .{}) orelse return;
+            psptool.buildWithNativeSdk(exe);
         } else {
-            if (platform == .psp) {
-                const psp_dep = b.lazyDependency("psp", .{
-                    .target = target,
-                    .optimize = optimize,
-                }) orelse return;
+            const run_step = b.step("run", "Run the application");
+            const run_cmd = b.addRunArtifact(exe);
+            run_step.dependOn(&run_cmd.step);
 
-                app.addImport("psp", psp_dep.module("psp"));
-                // exe.linkLibrary(psp_dep.artifact("pspgu"));
-
-                const psptool = psp.Tools.create(b, .{}) orelse return;
-                psptool.buildWithNativeSdk(exe);
-
-                // const installed_exe = b.addInstallArtifact(exe, .{});
-                // b.getInstallStep().dependOn(&installed_exe.step);
-            } else {
-                const run_step = b.step("run", "Run the application");
-                const run_cmd = b.addRunArtifact(exe);
-                run_step.dependOn(&run_cmd.step);
-
-                const installed_exe = b.addInstallArtifact(exe, .{});
-                b.getInstallStep().dependOn(&installed_exe.step);
-            }
+            const installed_exe = b.addInstallArtifact(exe, .{});
+            b.getInstallStep().dependOn(&installed_exe.step);
         }
     }
     if (enable_android_build) {
