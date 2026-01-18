@@ -500,6 +500,8 @@ static void VULKAN_DestroyTexture(SDL_Renderer *renderer, SDL_Texture *texture);
 static void VULKAN_DestroyBuffer(VULKAN_RenderData *rendererData, VULKAN_Buffer *vulkanBuffer);
 static void VULKAN_DestroyImage(VULKAN_RenderData *rendererData, VULKAN_Image *vulkanImage);
 static void VULKAN_ResetCommandList(VULKAN_RenderData *rendererData);
+static void VULKAN_EnsureCommandBuffer(VULKAN_RenderData *rendererData);
+static void VULKAN_RecordPipelineImageBarrier(VULKAN_RenderData *rendererData, VkAccessFlags sourceAccessMask, VkAccessFlags destAccessMask, VkPipelineStageFlags srcStageFlags, VkPipelineStageFlags dstStageFlags, VkImageLayout destLayout, VkImage image, VkImageLayout *imageLayout);
 static bool VULKAN_FindMemoryTypeIndex(VULKAN_RenderData *rendererData, uint32_t typeBits, VkMemoryPropertyFlags requiredFlags, VkMemoryPropertyFlags desiredFlags, uint32_t *memoryTypeIndexOut);
 static VkResult VULKAN_CreateWindowSizeDependentResources(SDL_Renderer *renderer);
 static VkDescriptorPool VULKAN_AllocateDescriptorPool(VULKAN_RenderData *rendererData);
@@ -862,7 +864,19 @@ static VkResult VULKAN_AllocateImage(VULKAN_RenderData *rendererData, SDL_Proper
             return result;
         }
     } else {
-        imageOut->imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageOut->imageLayout = (VkImageLayout)SDL_GetNumberProperty(create_props, SDL_PROP_TEXTURE_CREATE_VULKAN_LAYOUT_NUMBER, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+
+    if (imageOut->imageLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        VULKAN_EnsureCommandBuffer(rendererData);
+        VULKAN_RecordPipelineImageBarrier(rendererData,
+            VK_ACCESS_NONE,
+            VK_ACCESS_SHADER_READ_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            imageOut->image,
+            &imageOut->imageLayout);
     }
 
     VkImageViewCreateInfo imageViewCreateInfo = { 0 };
@@ -2954,7 +2968,7 @@ static bool VULKAN_UpdateTexture(SDL_Renderer *renderer, SDL_Texture *texture,
     Uint32 numPlanes = VULKAN_VkFormatGetNumPlanes(textureData->mainImage.format);
     if (numPlanes == 2) {
         // NV12/NV21 data
-        int UVbpp = VULKAN_GetBytesPerPixel(textureData->mainImage.format, 1);
+        int UVbpp = (int)VULKAN_GetBytesPerPixel(textureData->mainImage.format, 1);
         int Ypitch = srcPitch;
         int UVpitch = (srcPitch + (UVbpp - 1)) & ~(UVbpp - 1);
         const Uint8 *plane0 = (const Uint8 *)srcPixels;

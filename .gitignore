@@ -7,6 +7,9 @@ imgui.ini
 # ignore vscode
 .vscode/launch.json
 
+# ignore Zed
+.zed
+
 # for inlined dependencies, ignore files that we won't use
 dependency/**/.png
 dependency/**/.ico
