@@ -2,8 +2,9 @@ test {
     @import("std").testing.refAllDecls(@This());
 }
 
-pub const user = @import("user.zig");
-
+const std = @import("std");
+const builtin = @import("builtin");
+const user = @import("user.zig");
 // const psp = @import("psp");
 // const psptypes = @import("psp");
 // const debug = @import("debug.zig");
@@ -11,22 +12,52 @@ pub const user = @import("user.zig");
 const root = @import("root");
 
 /// If there's an issue this is the internal exit (wait 10 seconds and exit).
-pub fn exitErr() void {
+pub inline fn exitErr() void {
     // Hang for 10 seconds for error reporting
-    const stat = user.sceKernelDelayThread(10 * 1000 * 1000);
-    _ = stat;
+    _ = user.sceKernelDelayThread(10 * 1000 * 1000);
     user.sceKernelExitGame();
 }
+
+extern fn __libcglue_init(argc: c_int, argv: [*c][*c]u8) callconv(.c) void;
+extern fn __libcglue_deinit() callconv(.c) void;
+extern fn _init() callconv(.c) void;
+extern fn _fini() callconv(.c) void;
 
 // const has_std_os = if (@hasDecl(root, "os")) true else false;
 const bad_main_ret = @compileError("Where is this from?!");
 
 /// This calls your main function as a thread.
-pub fn _module_main_thread(argc: c_uint, _: ?*anyopaque) callconv(.c) c_int {
-    _ = argc;
+///
+/// args - Size (in bytes) of the argp parameter.
+/// argp = Pointer to program arguments.  Each argument is a NUL-terminated string.
+///
+/// Based off of: https://github.com/pspdev/pspsdk/blob/master/src/startup/crt0_prx.c#L59
+pub fn _module_main_thread(arg_count_in_bytes: c_uint, argp: [*c]u8) callconv(.c) c_int {
+    // Get C arguments
+    const ARG_MAX = 19;
+    var argv: [ARG_MAX + 1][*c]u8 = undefined;
+    var argc: u32 = 0;
+    var argp_offset: u32 = 0;
+    while (argp_offset < arg_count_in_bytes and argc < ARG_MAX) : (argc += 1) {
+        const arg = argp[argp_offset..];
+        argp_offset += std.mem.len(arg) + 1;
+        argv[argc] = arg;
+    }
+    // _ = argc;
+
     // if (has_std_os) {
     // pspos.system.__pspOsInit(argv);
     // }
+
+    if (builtin.link_libc) {
+        // Call libc initialization hook
+        __libcglue_init(@intCast(argc), argv[0..argc].ptr);
+    }
+
+    if (builtin.link_libcpp) {
+        // Init can contain C++ constructors that require working threading
+        _init();
+    }
 
     switch (@typeInfo(@typeInfo(@TypeOf(root.main)).@"fn".return_type.?)) {
         .noreturn => {
@@ -155,6 +186,13 @@ comptime {
     );
 }
 
+// export const __syslib_exports: [4]usize linksection(".rodata.sceResident") = [_]usize{
+//     0xD632ACDB,
+//     0xF01D73A7,
+//     @intFromPtr(&module_start),
+//     @intFromPtr(&module_info),
+// };
+
 fn intToString(int: u32, buf: []u8) ![]const u8 {
     return try @import("std").fmt.bufPrint(buf, "{}", .{int});
 }
@@ -171,7 +209,10 @@ pub fn module_info(comptime name: []const u8, comptime attrib: u16, comptime maj
     buf = undefined;
     const count = intToString(27 - name.len, &buf) catch unreachable;
 
+    // NOTE: .glob exports the module_info symbol
     return (
+        \\.globl module_info
+        \\
         \\.section .rodata.sceModuleInfo, "a", @progbits
         \\module_info:
         \\.align 5
@@ -201,27 +242,45 @@ const default_main_thread_name = "zig_user_main";
 
 const default_stack_size_in_bytes = 256 * 1024;
 
+comptime {
+    @export(&module_start, .{ .name = "module_start" });
+    @export(&_exit, .{ .name = "_exit" });
+    // if (builtin.link_libcpp) {
+    //     // NOTE(jae): 2026-01-16
+    //     // __dso_handle comes from C++, even if we stub this psp-fixup-imports gets "size of text section and nid section do not match"
+    //     @export(&__dso_handle, .{ .name = "__dso_handle" });
+    // }
+}
+
+// stub __dso_handle for C++ code
+//fn __dso_handle() callconv(.c) void {}
+
 /// Entry point - launches main through the thread above.
-export fn module_start(argc: c_uint, argv: ?*anyopaque) c_int {
+/// See C example here: https://github.com/pspdev/pspsdk/blob/ae4731159b272ec03157b14fe9ca4ad58687aa3e/src/startup/crt0.c#L119
+fn module_start(argc: c_uint, argv: ?*anyopaque) callconv(.c) c_int {
     const thread_id = user.sceKernelCreateThread(
         default_main_thread_name,
         &_module_main_thread,
         32,
         default_stack_size_in_bytes,
-        0b10000000000000000100000000000000,
+        .{ .user = true, .vfpu = true },
         null,
     );
     return user.sceKernelStartThread(thread_id, argc, argv);
 }
 
-export fn _exit(status: c_int) callconv(.c) noreturn {
+fn _exit(status: c_int) callconv(.c) noreturn {
     _ = status;
 
-    // call global destructors
-    // _fini();
+    if (builtin.link_libcpp) {
+        // call global c++ destructors
+        _fini();
+    }
 
-    // uninitialize libcglue
-    // __libcglue_deinit();
+    if (builtin.link_libc) {
+        // uninitialize libcglue
+        __libcglue_deinit();
+    }
 
     user.sceKernelExitGame();
     // if (&sce_newlib_nocreate_thread_in_start != NULL) {
@@ -233,5 +292,15 @@ export fn _exit(status: c_int) callconv(.c) noreturn {
     while (true) {} // Avoid warning
 }
 
-/// stub __dso_handle for C++ code
-export fn __dso_handle() callconv(.c) void {}
+// https://github.com/pspdev/pspsdk/blob/1e93cff63655988a29bc0ec1e3fffc5ba578bcc0/src/user/pspmoduleinfo.h
+// const SceModuleInfo = extern struct {
+//     attribute: u16,
+//     version: [2]u8,
+//     name: [27]u8,
+//     terminal: u8,
+//     gp_value: ?*anyopaque,
+//     ent_top: ?*anyopaque,
+//     ent_end: ?*anyopaque,
+//     stub_top: ?*anyopaque,
+//     stub_end: ?*anyopaque,
+// };

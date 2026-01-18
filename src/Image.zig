@@ -47,7 +47,7 @@ pub fn loadPng(allocator: std.mem.Allocator, image_buffer: []const u8) !Image {
         destination_buffer.ptr,
         @intCast(destination_stride_or_pitch),
     ) orelse {
-        return error.SdlCreateSurfaceFromFailed;
+        return error.SdlFailed;
     };
     errdefer sdl.SDL_DestroySurface(surface);
 

@@ -5,7 +5,7 @@ const imgui = @import("imgui");
 const UserConfig = @import("UserConfig.zig");
 const Duration = @import("Duration.zig");
 const App = @import("App.zig");
-const Timer = App.Timer;
+const StateTimer = App.StateTimer;
 
 const log = std.log.scoped(.ScreenAddEditTimer);
 const assert = std.debug.assert;
@@ -69,7 +69,7 @@ pub fn render(app: *App) !void {
     const is_new = ui_timer.id == -1;
     const save_label: [:0]const u8 = if (is_new) "Create" else "Save";
     if (imgui.igButton(save_label, .{})) {
-        var t: Timer = .{
+        var t: StateTimer = .{
             .kind = ui_timer.kind,
         };
         const timer_name = std.mem.span(ui_timer.name[0..].ptr);

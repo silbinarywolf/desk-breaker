@@ -178,7 +178,7 @@ static void _BDisplayModeToSdlDisplayMode(display_mode *bmode, SDL_DisplayMode *
     get_refresh_rate(*bmode, &mode->refresh_rate_numerator, &mode->refresh_rate_denominator);
 
 #if WRAP_BMODE
-    SDL_DisplayModeData *data = (SDL_DisplayModeData*)SDL_calloc(1, sizeof(SDL_DisplayModeData));
+    SDL_DisplayModeData *data = (SDL_DisplayModeData *)SDL_calloc(1, sizeof(SDL_DisplayModeData));
     data->bmode = bmode;
 
     mode->internal = data;
@@ -265,7 +265,7 @@ bool HAIKU_SetDisplayMode(SDL_VideoDevice *_this, SDL_VideoDisplay *display, SDL
     // Get the current screen
     BScreen bscreen;
     if (!bscreen.IsValid()) {
-        printf(__FILE__": %d - ERROR: BAD SCREEN\n", __LINE__);
+        return SDL_SetError("Invalid screen");
     }
 
     // Set the mode using the driver data

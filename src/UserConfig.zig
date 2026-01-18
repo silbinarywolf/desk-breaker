@@ -9,7 +9,7 @@ const testing = std.testing;
 
 const App = @import("App.zig");
 const UserSettings = App.UserSettings;
-const StateTimer = App.Timer;
+const StateTimer = App.StateTimer;
 const TimerKind = App.TimerKind;
 
 const Duration = @import("Duration.zig");
@@ -87,10 +87,9 @@ const LoadError = std.fs.File.OpenError ||
     error{InvalidConfigVersion};
 
 pub fn load(allocator: std.mem.Allocator) LoadError!UserSettings {
-    if (builtin.os.tag == .freestanding or builtin.abi == .none) {
+    if (builtin.os.tag == .freestanding) {
         return error.FileNotFound;
     }
-
     const path = get_data_dir_path(allocator) catch |err| switch (err) {
         error.AppDataDirUnavailable => {
             // If missing $HOME environment variable and not in portable mode
@@ -174,9 +173,13 @@ pub fn load(allocator: std.mem.Allocator) LoadError!UserSettings {
 }
 
 pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {
+    if (builtin.os.tag == .freestanding) {
+        // Save not supported on freestanding
+        return;
+    }
     const path = get_data_dir_path(allocator) catch |err| switch (err) {
         error.AppDataDirUnavailable => {
-            // If unavailable like on Android, do nothing
+            // If unavailable on an operating system, like Android, do nothing
             return;
         },
         else => return err,

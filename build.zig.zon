@@ -2,6 +2,7 @@
 .{
     .name = .desk_breaker,
     .version = "0.0.0",
+    .minimum_zig_version = "0.15.2",
     .dependencies = .{
         .sdl = .{
             .path = "third-party/sdl",
@@ -18,12 +19,26 @@
         .wuffs = .{
             .path = "third-party/wuffs",
         },
+        .zig_wayland = .{
+            .path = "third-party/zig-wayland",
+            // .url = "https://codeberg.org/ifreund/zig-wayland/archive/f2480d25764a50ed2fe29f49e4209c074a557f46.tar.gz",
+            // .hash = "wayland-0.5.0-dev-lQa1kvTUAQCsD8AobfOXJA_-TVG-WTYXju68OZ8L85RM",
+        },
+        .wayland_protocols = .{
+            .path = "third-party/wayland-protocols",
+        },
+        // Wayland Handling
+        // .shimizu = .{
+        //     .url = "git+https://git.klaji.dev/klaji/shimizu?ref=0.1.1#ded824ed136179ef5fd0d49a0138d02ef7fbd755",
+        //     .hash = "shimizu-0.1.1-irfMUUAwBAD8QD5BxR2ojneUIYRA5-LbOgGRcuXQzZXj",
+        //     .lazy = true,
+        // },
         // NOTE(jae): 2025-04-13
         // Used as an experiment to run Desk Breaker on Android and validate the Zig Android SDK against a more complicated
         // project.
         // .android = .{
-        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/4caa73ed574c96536a1c47e14d2746fa1f3bb795.tar.gz",
-        //     .hash = "1220267217ab73b2c23bf895acb15816ac68b0082faba69072526cce11ccc7d04c41",
+        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/941fc65ad732a3374d1c01eace2158eea324887d.tar.gz",
+        //     .hash = "android-0.2.0-7iz7QnXiAQDeKz9QSJFXowVap3mLsf04GnoIyeWGhgCp",
         // },
         // NOTE(jae): 2024-11-05
         // Used as an experiment to run Desk Breaker in browser
@@ -38,10 +53,10 @@
             .lazy = true,
         },
         // NOTE(jae): 2024-07-31
-        // Experiment with MacOS cross-compilation
+        // Experiment with MacOS cross-compilation, works on Linux only due to symlinks
         .macos_sdk = .{
             .url = "https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz",
-            .hash = "1220370aa34744d76093a36bf29a67da94ad5c5888ee79c2bbc89e2e2a9572d1ab19",
+            .hash = "N-V-__8AADKfNEc3CqNHRNdgk6Nr8ppn2pStXFiI7nnCu8ie",
             .lazy = true,
         },
     },

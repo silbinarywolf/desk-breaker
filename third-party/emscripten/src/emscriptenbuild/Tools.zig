@@ -25,7 +25,10 @@ pub const Options = struct {
 
 pub fn create(b: *Build, options: Options) ?*Tools {
     const emsdk_path = emSdkPath(b) orelse return null;
-    const python_path = std.process.getEnvVarOwned(b.allocator, "EMSDK_PYTHON") catch "python";
+    const python_path = if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 15)
+        b.graph.env_map.get("EMSDK_PYTHON") orelse "python"
+    else
+        b.graph.environ_map.get("EMSDK_PYTHON") orelse "python";
     const tools = b.allocator.create(Tools) catch @panic("OOM");
     tools.* = .{
         .b = b,
@@ -79,9 +82,12 @@ pub fn addEmccCommand(tools: *Tools, artifact: *Step.Compile) *Emcc {
             }
         }
     }
-    if (artifact.want_lto) |want_lto| {
-        if (want_lto) {
-            emcc.addArg("-flto");
+
+    if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 15) {
+        if (artifact.want_lto) |want_lto| {
+            if (want_lto) {
+                emcc.addArg("-flto");
+            }
         }
     }
 
@@ -133,14 +139,18 @@ pub fn addEmccCommand(tools: *Tools, artifact: *Step.Compile) *Emcc {
     // https://emscripten.org/docs/tools_reference/settings_reference.html#stack-size
     emcc.addArg("-sSTACK_SIZE=16Mb");
 
-    // If target has no threading model set
     if (artifact.root_module.resolved_target) |target| {
+        // If target has no threading model set
         if (artifact.root_module.single_threaded == null) {
             // If single threaded isn't specifically configured but Emscripten has no atomics
             // then we do not support single threaded, so disable it.
             if (hasFeaturesRequiringThreading(target)) {
                 artifact.root_module.single_threaded = true;
             }
+        }
+        if (std.Target.wasm.featureSetHas(target.result.cpu.features, .bulk_memory_opt)) {
+            const fail_step = b.addFail("prefer 'zig build -Dtarget=wasm32-emscripten -Dcpu=mvp', invalid feature for Emscripten 'bulk_memory_opt' was used");
+            emcc.step.dependOn(&fail_step.step);
         }
     }
 
@@ -347,15 +357,22 @@ fn emSdkUpstreamPath(tools: *Tools, emsdk_lazy_path: LazyPath) LazyPath {
     const b = tools.b;
     const emsdk_path = emsdk_lazy_path.getPath(b);
     const has_existing_emscripten_setup = blk: {
-        std.fs.accessAbsolute(
-            b.pathJoin(&.{ emsdk_path, "upstream", ".emsdk_version" }),
-            .{},
-        ) catch |err| switch (err) {
-            error.FileNotFound => break :blk false,
-            else => {
-                @panic(b.fmt("unexpected error detecting .emscripten file: {s}", .{@errorName(err)}));
-            },
-        };
+        if (builtin.zig_version.major == 0 and builtin.zig_version.minor >= 16) {
+            std.Io.Dir.accessAbsolute(b.graph.io, b.pathJoin(&.{ emsdk_path, "upstream", ".emsdk_version" }), .{}) catch |err| switch (err) {
+                error.FileNotFound => break :blk false,
+                else => {
+                    @panic(b.fmt("unexpected error detecting .emscripten file: {s}", .{@errorName(err)}));
+                },
+            };
+        } else {
+            // Deprecated path: Zig 0.15.x support
+            std.fs.accessAbsolute(b.pathJoin(&.{ emsdk_path, "upstream", ".emsdk_version" }), .{}) catch |err| switch (err) {
+                error.FileNotFound => break :blk false,
+                else => {
+                    @panic(b.fmt("unexpected error detecting .emscripten file: {s}", .{@errorName(err)}));
+                },
+            };
+        }
         break :blk true;
     };
 
@@ -371,8 +388,13 @@ fn emSdkUpstreamPath(tools: *Tools, emsdk_lazy_path: LazyPath) LazyPath {
         // Bust the cache if this version changes outside of Zig
         emsdk_install.addFileInput(emsdk_lazy_path.path(b, "upstream/.emsdk_version"));
         emsdk_install.addFileInput(emsdk_lazy_path.path(b, "upstream/emscripten/emscripten-version.txt"));
-        // HACK: Force to cache run
-        _ = emsdk_install.captureStdOut();
+        if (builtin.zig_version.major == 0 and builtin.zig_version.minor >= 16) {
+            // HACK: Force to cache run
+            _ = emsdk_install.captureStdOut(.{});
+        } else {
+            // Deprecated path for Zig 0.15.x, HACK: Force to cache run
+            _ = emsdk_install.captureStdOut();
+        }
     }
     // HACK: Mix has_side_effects to cache
     // emsdk_install.has_side_effects = !has_existing_emscripten_setup;
@@ -385,8 +407,13 @@ fn emSdkUpstreamPath(tools: *Tools, emsdk_lazy_path: LazyPath) LazyPath {
         // Bust the cache if this version changes outside of Zig
         emsdk_activate.addFileInput(emsdk_lazy_path.path(b, "upstream/.emsdk_version"));
         emsdk_activate.addFileInput(emsdk_lazy_path.path(b, "upstream/emscripten/emscripten-version.txt"));
-        // HACK: Force to cache run
-        _ = emsdk_activate.captureStdOut();
+        if (builtin.zig_version.major == 0 and builtin.zig_version.minor >= 16) {
+            // HACK: Force to cache run
+            _ = emsdk_activate.captureStdOut(.{});
+        } else {
+            // Deprecated path for Zig 0.15.x, HACK: Force to cache run
+            _ = emsdk_activate.captureStdOut();
+        }
     }
     // HACK: Mix has_side_effects to cache
     // emsdk_activate.has_side_effects = !has_existing_emscripten_setup;

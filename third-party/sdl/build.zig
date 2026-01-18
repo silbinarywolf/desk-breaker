@@ -3,7 +3,7 @@ const builtin = @import("builtin");
 
 const Dependency = std.Build.Dependency;
 const LazyPath = std.Build.LazyPath;
-const SDLBuildGenerator = @import("tools/gen_sdlbuild.zig").SDLBuildGenerator;
+const SdlBuildGenerator = @import("tools/SdlBuildGenerator.zig");
 const SDLConfig = @import("src/build/sdlbuild.zig").SDLConfig;
 const sdlsrc = @import("src/build/sdlbuild.zig");
 
@@ -17,13 +17,11 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
 
     const sdl_path: LazyPath = blk: {
-        const dep: *Dependency = b.lazyDependency("sdl3", .{}) orelse {
-            break :blk b.path("");
-        };
-        std.fs.accessAbsolute(dep.path("src/SDL.c").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => return error.InvalidDependency,
-            else => return err,
-        };
+        const dep: *Dependency = b.lazyDependency("sdl3", .{}) orelse break :blk b.path("");
+        // std.fs.accessAbsolute(dep.path("src/SDL.c").getPath(b), .{}) catch |err| switch (err) {
+        //     error.FileNotFound => return error.InvalidDependency,
+        //     else => return err,
+        // };
         break :blk dep.path("");
     };
 
@@ -33,11 +31,12 @@ pub fn build(b: *std.Build) !void {
     // Generate source file stuff
     const do_sdl_codegen = b.option(bool, "generate", "run code generation") orelse false;
     if (do_sdl_codegen) {
-        var gen = try SDLBuildGenerator.init(b.allocator, sdl_path.getPath(b));
+        var gen = try SdlBuildGenerator.init(b, sdl_path.getPath(b));
         defer gen.deinit();
-        try gen.generateSDLConfig();
-        try gen.generateSDLBuild();
+        try gen.generateSdlConfig();
+        try gen.generateSdlBuild();
         try gen.formatAndWriteFile(b.pathJoin(&.{ b.path("").getPath(b), "src", "build", "sdlbuild.zig" }));
+        return;
     }
 
     // Set endianness explicitly for arches like the PSP
@@ -50,59 +49,60 @@ pub fn build(b: *std.Build) !void {
 
     const use_cmake = target.result.os.tag == .linux and !target.result.abi.isAndroid() and platform == .none;
     if (!use_cmake) {
+        const mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
         const lib = b.addLibrary(.{
             .name = "SDL3",
-            .root_module = b.createModule(.{
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-            }),
+            .root_module = mod,
             .linkage = if (!target.result.abi.isAndroid())
                 .static
             else
                 .dynamic,
         });
-        lib.addCSourceFiles(.{
+        mod.addCSourceFiles(.{
             .root = sdl_path,
             .files = &generic_src_files,
             .flags = &.{ "-D_REENTRANT", "-pthread" },
         });
-        lib.addIncludePath(sdl_path.path(b, "src")); // SDL_internal.h, etc
-        lib.addIncludePath(sdl_api_include_path); // SDL3/*.h, etc
+        mod.addIncludePath(sdl_path.path(b, "src")); // SDL_internal.h, etc
+        mod.addIncludePath(sdl_api_include_path); // SDL3/*.h, etc
 
         // Set for SDL_revision.h
         // - If building with cmake, SDL_revision.h generally sets 'SDL_REVISION' to 'SDL-3.1.3-no-vcs'
         // - If building SDL3 via Github Actions, it sets this to: "Github Workflow"
-        lib.root_module.addCMacro("SDL_VENDOR_INFO", "\"zig-sdl3\"");
+        mod.addCMacro("SDL_VENDOR_INFO", "\"zig-sdl3\"");
 
         // Used for SDL_egl.h and SDL_opengles2.h
-        lib.root_module.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
+        mod.addCMacro("SDL_USE_BUILTIN_OPENGL_DEFINITIONS", "1");
 
         // Set endianness explicitly for arches like the PSP
-        lib.root_module.addCMacro("SDL_BYTEORDER", sdl_byteorder);
+        mod.addCMacro("SDL_BYTEORDER", sdl_byteorder);
 
         if (target.result.abi.isAndroid()) {
-            lib.root_module.addCSourceFiles(.{
+            mod.addCSourceFiles(.{
                 .root = sdl_path,
                 .files = &android_src_files,
             });
-            lib.root_module.addCSourceFiles(.{
+            mod.addCSourceFiles(.{
                 .root = sdl_path,
                 .files = &android_src_cpp_files,
                 .flags = &.{"-std=c++11"},
             });
-            lib.linkLibCpp();
+            mod.link_libcpp = true;
 
             // This is needed for "src/render/opengles/SDL_render_gles.c" to compile
-            lib.root_module.addCMacro("GL_GLEXT_PROTOTYPES", "1");
+            mod.addCMacro("GL_GLEXT_PROTOTYPES", "1");
 
             // https://github.com/libsdl-org/SDL/blob/release-2.30.6/Android.mk#L82C62-L82C69
-            lib.linkSystemLibrary("dl");
-            lib.linkSystemLibrary("GLESv1_CM");
-            lib.linkSystemLibrary("GLESv2");
-            lib.linkSystemLibrary("OpenSLES");
-            lib.linkSystemLibrary("log");
-            lib.linkSystemLibrary("android");
+            mod.linkSystemLibrary("dl", .{});
+            mod.linkSystemLibrary("GLESv1_CM", .{});
+            mod.linkSystemLibrary("GLESv2", .{});
+            mod.linkSystemLibrary("OpenSLES", .{});
+            mod.linkSystemLibrary("log", .{});
+            mod.linkSystemLibrary("android", .{});
 
             // SDLActivity.java's getMainFunction defines the entrypoint as "SDL_main"
             // So your main / root file will need something like this for Android
@@ -137,21 +137,21 @@ pub fn build(b: *std.Build) !void {
             const use_sdl3_directly = false;
 
             if (use_sdl3_directly) {
-                lib.root_module.root_source_file = b.path("src/stub.zig");
+                mod.root_source_file = b.path("src/stub.zig");
             } else {
-                lib.root_module.addCSourceFiles(.{
+                mod.addCSourceFiles(.{
                     .root = sdl_path,
                     .files = &psp_src_files,
                 });
             }
 
             // This enables the SDL_PLATFORM_PSP macro within SDL
-            lib.root_module.addCMacro("__PSP__", "1");
-            lib.root_module.addCMacro("SDL_PLATFORM_PSP", "1");
+            mod.addCMacro("__PSP__", "1");
+            mod.addCMacro("SDL_PLATFORM_PSP", "1");
 
             const sdl_config = pspBuildConfig;
 
-            lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+            mod.addCMacro("USING_GENERATED_CONFIG_H", "");
             const config_header = b.addConfigHeader(.{
                 .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{
                     "build_config",
@@ -159,107 +159,121 @@ pub fn build(b: *std.Build) !void {
                 })) },
                 .include_path = "SDL_build_config.h",
             }, sdl_config);
-            lib.root_module.addConfigHeader(config_header);
+            mod.addConfigHeader(config_header);
             lib.installConfigHeader(config_header);
 
             // Taken from: https://github.com/libsdl-org/SDL/blob/release-3.2.16/CMakeLists.txt#L2790
-            if (use_sdl3_directly) {
-                lib.root_module.linkSystemLibrary("SDL3", .{});
-            } else {
-                // lib.root_module.linkSystemLibrary("GL", .{ .weak = true });
-                // lib.linkSystemLibrary("pspvram");
-                // lib.linkSystemLibrary("pspaudio");
-                // lib.linkSystemLibrary("pspvfpu");
-                // lib.linkSystemLibrary("pspdisplay");
-                // lib.linkSystemLibrary("pspgu");
-                // lib.linkSystemLibrary("pspge");
-                // lib.linkSystemLibrary("psphprm");
-                // lib.linkSystemLibrary("pspctrl");
-                // lib.linkSystemLibrary("psppower");
-            }
+            // if (use_sdl3_directly) {
+            //     mod.linkSystemLibrary("SDL3", .{});
+            // } else {
+            //     mod.linkSystemLibrary("GL", .{ .weak = true });
+            //     mod.linkSystemLibrary("pspvram");
+            //     mod.linkSystemLibrary("pspaudio");
+            //     mod.linkSystemLibrary("pspvfpu");
+            //     mod.linkSystemLibrary("pspdisplay");
+            //     mod.linkSystemLibrary("pspgu");
+            //     mod.linkSystemLibrary("pspge");
+            //     mod.linkSystemLibrary("psphprm");
+            //     mod.linkSystemLibrary("pspctrl");
+            //     mod.linkSystemLibrary("psppower");
+            // }
+            mod.linkSystemLibrary("GL", .{});
+            mod.linkSystemLibrary("pspvram", .{});
+            mod.linkSystemLibrary("pspaudio", .{});
+            mod.linkSystemLibrary("pspvfpu", .{});
+            mod.linkSystemLibrary("pspdisplay", .{});
+            mod.linkSystemLibrary("pspgu", .{});
+            mod.linkSystemLibrary("pspge", .{});
+            mod.linkSystemLibrary("psphprm", .{});
+            mod.linkSystemLibrary("pspctrl", .{});
+            mod.linkSystemLibrary("psppower", .{});
         } else {
             switch (target.result.os.tag) {
                 .windows => {
-                    lib.root_module.addCMacro("HAVE_MODF", "1");
+                    mod.addCMacro("HAVE_MODF", "1");
 
                     // Between Zig 0.13.0 and Zig 0.14.0, "windows.gaming.input.h" was removed from "lib/libc/include/any-windows-any"
                     // This folder brings all headers needed by that one file so that SDL3 can be compiled for Windows.
-                    lib.addIncludePath(b.path("upstream/any-windows-any"));
+                    mod.addIncludePath(b.path("upstream/any-windows-any"));
 
-                    lib.addCSourceFiles(.{
+                    mod.addCSourceFiles(.{
                         .root = sdl_path,
                         .files = &windows_src_files,
                     });
-                    lib.addWin32ResourceFile(.{
+                    mod.addCSourceFiles(.{
+                        .root = sdl_path,
+                        .files = &sdlsrc.video.windows.cpp_files,
+                    });
+                    mod.addWin32ResourceFile(.{
                         // SDL version
                         .file = sdl_path.path(b, sdlsrc.core.windows.win32_resource_files[0]),
                     });
-                    lib.addWin32ResourceFile(.{
+                    mod.addWin32ResourceFile(.{
                         // HIDAPI version
                         .file = sdl_path.path(b, sdlsrc.hidapi.windows.win32_resource_files[0]),
                         .include_paths = &.{
                             sdl_path.path(b, "src/hidapi/hidapi"),
                         },
                     });
-                    lib.linkSystemLibrary("setupapi");
-                    lib.linkSystemLibrary("winmm");
-                    lib.linkSystemLibrary("gdi32");
-                    lib.linkSystemLibrary("imm32");
-                    lib.linkSystemLibrary("version");
-                    lib.linkSystemLibrary("oleaut32"); // SDL_windowssensor.c, symbol "SysFreeString"
-                    lib.linkSystemLibrary("ole32");
+                    mod.linkSystemLibrary("setupapi", .{});
+                    mod.linkSystemLibrary("winmm", .{});
+                    mod.linkSystemLibrary("gdi32", .{});
+                    mod.linkSystemLibrary("imm32", .{});
+                    mod.linkSystemLibrary("version", .{});
+                    mod.linkSystemLibrary("oleaut32", .{}); // SDL_windowssensor.c, symbol "SysFreeString"
+                    mod.linkSystemLibrary("ole32", .{});
                 },
                 .macos => {
                     // NOTE(jae): 2024-07-07
                     // Cross-compilation from Linux to Mac requires more effort currently (Zig 0.13.0)
                     // See: https://github.com/ziglang/zig/issues/1349
 
-                    lib.addCSourceFiles(.{
+                    mod.addCSourceFiles(.{
                         .root = sdl_path,
                         .files = &darwin_src_files,
                     });
-                    lib.addCSourceFiles(.{
+                    mod.addCSourceFiles(.{
                         .root = sdl_path,
                         .files = &objective_c_src_files,
                         .flags = &.{"-fobjc-arc"},
                     });
 
-                    lib.linkFramework("AVFoundation"); // Camera
-                    lib.linkFramework("AudioToolbox");
-                    lib.linkFramework("Carbon");
-                    lib.linkFramework("Cocoa");
-                    lib.linkFramework("CoreAudio");
-                    lib.linkFramework("CoreMedia");
-                    lib.linkFramework("CoreHaptics");
-                    lib.linkFramework("CoreVideo");
-                    lib.linkFramework("ForceFeedback");
-                    lib.linkFramework("GameController");
-                    lib.linkFramework("IOKit");
-                    lib.linkFramework("Metal");
+                    mod.linkFramework("AVFoundation", .{}); // Camera
+                    mod.linkFramework("AudioToolbox", .{});
+                    mod.linkFramework("Carbon", .{});
+                    mod.linkFramework("Cocoa", .{});
+                    mod.linkFramework("CoreAudio", .{});
+                    mod.linkFramework("CoreMedia", .{});
+                    mod.linkFramework("CoreHaptics", .{});
+                    mod.linkFramework("CoreVideo", .{});
+                    mod.linkFramework("ForceFeedback", .{});
+                    mod.linkFramework("GameController", .{});
+                    mod.linkFramework("IOKit", .{});
+                    mod.linkFramework("Metal", .{});
 
-                    lib.linkFramework("AppKit");
-                    lib.linkFramework("CoreFoundation");
-                    lib.linkFramework("Foundation");
-                    lib.linkFramework("CoreGraphics");
-                    lib.linkFramework("CoreServices"); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
-                    lib.linkFramework("QuartzCore"); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
-                    lib.linkFramework("UniformTypeIdentifiers"); // undefined symbol: _OBJC_CLASS_$_UTType
-                    lib.linkSystemLibrary("objc"); // undefined symbol: _objc_release, _objc_begin_catch
+                    mod.linkFramework("AppKit", .{});
+                    mod.linkFramework("CoreFoundation", .{});
+                    mod.linkFramework("Foundation", .{});
+                    mod.linkFramework("CoreGraphics", .{});
+                    mod.linkFramework("CoreServices", .{}); // undefined symbol: _UCKeyTranslate, _Cocoa_AcceptDragAndDrop
+                    mod.linkFramework("QuartzCore", .{}); // undefined symbol: OBJC_CLASS_$_CAMetalLayer
+                    mod.linkFramework("UniformTypeIdentifiers", .{}); // undefined symbol: _OBJC_CLASS_$_UTType
+                    mod.linkSystemLibrary("objc", .{}); // undefined symbol: _objc_release, _objc_begin_catch
                 },
                 .emscripten => {
                     var sdl_config = emscriptenConfig;
 
                     // If single threaded isn't explictly set, infer from the Wasm feature set
-                    if (lib.root_module.single_threaded == null) {
+                    if (mod.single_threaded == null) {
                         if (target.result.os.tag == .emscripten and
                             !std.Target.wasm.featureSetHas(target.result.cpu.features, .atomics))
                         {
-                            lib.root_module.single_threaded = true;
+                            mod.single_threaded = true;
                         }
                     }
 
-                    if (lib.root_module.single_threaded == true) {
-                        lib.root_module.addCSourceFiles(.{
+                    if (mod.single_threaded == true) {
+                        mod.addCSourceFiles(.{
                             .root = sdl_path,
                             .files = &sdlsrc.thread.generic.c_files,
                         });
@@ -272,24 +286,24 @@ pub fn build(b: *std.Build) !void {
                         if (!std.Target.wasm.featureSetHas(target.result.cpu.features, .bulk_memory)) {
                             @panic("Must enable bulk_memory for SDL3 emscripten threading");
                         }
-                        lib.root_module.addCMacro("__EMSCRIPTEN_PTHREADS__", "1");
+                        mod.addCMacro("__EMSCRIPTEN_PTHREADS__", "1");
                         sdl_config.HAVE_GCC_ATOMICS = true;
                         sdl_config.SDL_THREAD_PTHREAD = true;
                         sdl_config.SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = true;
-                        lib.root_module.addCSourceFiles(.{
+                        mod.addCSourceFiles(.{
                             .root = sdl_path,
                             .files = &sdlsrc.thread.pthread.c_files,
                             .flags = &.{ "-D_REENTRANT", "-pthread" },
                         });
                     }
 
-                    lib.root_module.addCMacro("SDL_PLATFORM_EMSCRIPTEN", "1");
-                    lib.root_module.addCSourceFiles(.{
+                    mod.addCMacro("SDL_PLATFORM_EMSCRIPTEN", "1");
+                    mod.addCSourceFiles(.{
                         .root = sdl_path,
                         .files = &emscripten_src_files,
                         .flags = &.{ "-D_REENTRANT", "-pthread" },
                     });
-                    lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                    mod.addCMacro("USING_GENERATED_CONFIG_H", "");
                     const config_header = b.addConfigHeader(.{
                         .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{
                             "build_config",
@@ -297,7 +311,7 @@ pub fn build(b: *std.Build) !void {
                         })) },
                         .include_path = "SDL_build_config.h",
                     }, sdl_config);
-                    lib.root_module.addConfigHeader(config_header);
+                    mod.addConfigHeader(config_header);
                     lib.installConfigHeader(config_header);
                 },
                 .linux => {
@@ -306,26 +320,26 @@ pub fn build(b: *std.Build) !void {
                     // WARNING: Tried to get this working by pulling down dependencies, etc
                     // but ended up being too much of a timesink to keep bothering.
                     //
-                    // lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                    // mod.addCMacro("USING_GENERATED_CONFIG_H", "");
                     // const config_header = b.addConfigHeader(.{
                     //     .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
                     //     .include_path = "SDL_build_config.h",
                     // }, linuxConfig);
                     // sdl_config_header = config_header;
-                    // lib.addConfigHeader(config_header);
-                    // lib.installConfigHeader(config_header);
+                    // mod.addConfigHeader(config_header);
+                    // mod.installConfigHeader(config_header);
                     //
                     // if (b.lazyDependency("xorgproto", .{})) |xorgproto_dep| {
                     //     // Add X11/X.h
                     //     const xorgproto_include = xorgproto_dep.path("include");
-                    //     lib.addIncludePath(xorgproto_include);
+                    //     mod.addIncludePath(xorgproto_include);
                     // }
                     // if (b.lazyDependency("x11", .{})) |x11_dep| {
-                    //     // X11/Xlib.h
+                    //     // X11/Xmod.h
                     //     const x11_include = x11_dep.path("include");
-                    //     lib.addIncludePath(x11_include);
+                    //     mod.addIncludePath(x11_include);
                     //
-                    //     lib.addConfigHeader(b.addConfigHeader(.{
+                    //     mod.addConfigHeader(b.addConfigHeader(.{
                     //         .style = .{ .cmake = x11_include.path(b, "X11/XlibConf.h.in") },
                     //         .include_path = "X11/XlibConf.h",
                     //     }, .{
@@ -339,13 +353,13 @@ pub fn build(b: *std.Build) !void {
                     // if (b.lazyDependency("xext", .{})) |xext_dep| {
                     //     // X11/extensions/Xext.h
                     //     const xext_include = xext_dep.path("include");
-                    //     lib.addIncludePath(xext_include);
+                    //     mod.addIncludePath(xext_include);
                     // }
                     //
                     // if (b.lazyDependency("dbus", .{})) |dbus_dep| {
                     //     const dbus_include = dbus_dep.path("");
-                    //     lib.addIncludePath(dbus_include);
-                    //     lib.addConfigHeader(b.addConfigHeader(.{
+                    //     mod.addIncludePath(dbus_include);
+                    //     mod.addConfigHeader(b.addConfigHeader(.{
                     //         .style = .{ .cmake = dbus_include.path(b, "dbus/dbus-arch-deps.h.in") },
                     //         .include_path = "dbus/dbus-arch-deps.h",
                     //     }, .{
@@ -374,7 +388,7 @@ pub fn build(b: *std.Build) !void {
                     //     _ = xcb_header_writefiles.addCopyDirectory(b.path("third-party/xcbproto/src"), "xcb", .{
                     //         .include_extensions = &.{".h"},
                     //     });
-                    //     lib.addIncludePath(xcb_header_writefiles.getDirectory());
+                    //     mod.addIncludePath(xcb_header_writefiles.getDirectory());
                     // }
                     //
                     // if (b.lazyDependency("ibus", .{})) |ibus_dep| {
@@ -382,18 +396,18 @@ pub fn build(b: *std.Build) !void {
                     //     const glib_include = b.path(b.pathJoin(&.{ "third-party", "glib-types" })); // glib_dep.path("");
                     //     const ibus_include = ibus_dep.path("src");
                     //
-                    //     // lib.addIncludePath(.{
+                    //     // mod.addIncludePath(.{
                     //     //     .cwd_relative = "/usr/lib/x86_64-linux-gnu/glib-2.0/include",
                     //     // });
-                    //     // lib.addIncludePath(.{
+                    //     // mod.addIncludePath(.{
                     //     //     .cwd_relative = "/usr/include/glib-2.0",
                     //     // });
-                    //     // lib.addIncludePath(glib_include); // glib/galloca.h
-                    //     // lib.addIncludePath(glib_include.path(b, "glib")); // "glib.h"
-                    //     lib.addIncludePath(glib_include);
-                    //     lib.addIncludePath(ibus_include);
+                    //     // mod.addIncludePath(glib_include); // glib/galloca.h
+                    //     // mod.addIncludePath(glib_include.path(b, "glib")); // "gmod.h"
+                    //     mod.addIncludePath(glib_include);
+                    //     mod.addIncludePath(ibus_include);
                     //
-                    //     lib.addConfigHeader(b.addConfigHeader(.{
+                    //     mod.addConfigHeader(b.addConfigHeader(.{
                     //         .style = .{ .cmake = ibus_include.path(b, "ibusversion.h.in") },
                     //         .include_path = "ibusversion.h",
                     //     }, .{
@@ -403,8 +417,8 @@ pub fn build(b: *std.Build) !void {
                     //     }));
                     //     // }
                     // }
-                    // lib.addIncludePath(b.path("third-party/libudev"));
-                    // lib.addCSourceFiles(.{
+                    // mod.addIncludePath(b.path("third-party/libudev"));
+                    // mod.addCSourceFiles(.{
                     //     .root = sdl_path,
                     //     .files = &linux_src_files,
                     //     .flags = &.{
@@ -412,7 +426,7 @@ pub fn build(b: *std.Build) !void {
                     //         // "-Wno-nonportable-include-path",
                     //     },
                     // });
-                    // lib.addCSourceFiles(.{
+                    // mod.addCSourceFiles(.{
                     //     .root = sdl_path,
                     //     .files = &sdlsrc.hidapi.linux.c_files,
                     //     .flags = &.{
@@ -421,24 +435,31 @@ pub fn build(b: *std.Build) !void {
                     // });
                 },
                 else => {
-                    lib.root_module.addCMacro("USING_GENERATED_CONFIG_H", "");
+                    mod.addCMacro("USING_GENERATED_CONFIG_H", "");
                     const config_header = b.addConfigHeader(.{
                         .style = .{ .cmake = sdl_api_include_path.path(b, b.pathJoin(&.{ "build_config", "SDL_build_config.h.cmake" })) },
                         .include_path = "SDL_build_config.h",
                     }, SDLConfig{});
-                    lib.addConfigHeader(config_header);
+                    mod.addConfigHeader(config_header);
                     lib.installConfigHeader(config_header);
                 },
             }
         }
         // NOTE(jae): 2024-07-07
         // This must come *after* addConfigHeader logic above for per-OS so that the include for SDL_build_config.h takes precedence
-        lib.addIncludePath(sdl_build_config_include_path);
+        mod.addIncludePath(sdl_build_config_include_path);
 
         // NOTE(jae): 2024-04-07
         // Not installing header as we include/export it from the module
-        // lib.installHeadersDirectory("include", "SDL");
-        b.installArtifact(lib);
+        // mod.installHeadersDirectory("include", "SDL");
+        b.installArtifact(b.addLibrary(.{
+            .name = "SDL3",
+            .root_module = mod,
+            .linkage = if (!target.result.abi.isAndroid())
+                .static
+            else
+                .dynamic,
+        }));
     } else {
         // NOTE(jae): 2024-07-02
         // Compiling on Linux is an involved process with various system include directories
@@ -454,17 +475,13 @@ pub fn build(b: *std.Build) !void {
         //   libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
         //   libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev fcitx-libs-dev \
         //   libpipewire-0.3-dev libwayland-dev libdecor-0-dev
-        const lib = b.addLibrary(.{
-            .name = "SDL3",
-            .linkage = .static,
-            .root_module = b.createModule(.{
-                // NOTE(jae): 2024-07-02
-                // Need empty file so that Zig build won't complain
-                .root_source_file = b.path("src/stub.zig"),
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-            }),
+        const mod = b.createModule(.{
+            // NOTE(jae): 2024-07-02
+            // Need empty file so that Zig build won't complain
+            .root_source_file = b.path("src/stub.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
         });
 
         // Add -Dtarget and -Dcpu arguments to the SDL build
@@ -519,9 +536,11 @@ pub fn build(b: *std.Build) !void {
         cmake_setup.addArg("-DSDL_DISABLE_INSTALL_DOCS=ON");
         cmake_setup.addArg("-DSDL_TESTS=OFF");
         // Building Wayland is a pain in the ass across different Linux OSes, not doing.
-        // cmake_setup.addArg("-DSDL_WAYLAND=OFF");
+        cmake_setup.addArg("-DSDL_WAYLAND=ON");
         // Gets removed by Steam install and so I uncomment this for local Linux dev
         // cmake_setup.addArg("-DSDL_JACK=OFF");
+        // Disable X11 tests ('Couldn't find dependency package for XTEST')
+        cmake_setup.addArg("-DSDL_X11_XTEST=OFF");
         cmake_setup.addArg("-DSDL_VENDOR_INFO=Zig");
         cmake_setup.addArg("-DCMAKE_INSTALL_BINDIR=bin");
         cmake_setup.addArg("-DCMAKE_INSTALL_DATAROOTDIR=share");
@@ -564,8 +583,14 @@ pub fn build(b: *std.Build) !void {
         }
 
         // add sdl3 as system lib to "stub" library
-        lib.addLibraryPath(sdl3_install_dir.path(b, "lib"));
-        lib.linkSystemLibrary("SDL3");
+        mod.addLibraryPath(sdl3_install_dir.path(b, "lib"));
+        mod.linkSystemLibrary("SDL3", .{});
+
+        const lib = b.addLibrary(.{
+            .name = "SDL3",
+            .linkage = .static,
+            .root_module = mod,
+        });
         lib.step.dependOn(&cmake_build.step);
         lib.step.dependOn(&cmake_install.step);
 
@@ -608,8 +633,6 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .root_source_file = c_translate.getOutput(),
     });
-    // Set endianness explicitly for arches like the PSP
-    module.addCMacro("SDL_BYTEORDER", sdl_byteorder);
     module.addIncludePath(sdl_api_include_path);
 }
 
@@ -628,6 +651,7 @@ const generic_src_files = sdlsrc.c_files ++
     sdlsrc.filesystem.c_files ++
     sdlsrc.gpu.c_files ++
     sdlsrc.haptic.c_files ++
+    sdlsrc.haptic.hidapi.c_files ++
     sdlsrc.hidapi.c_files ++
     sdlsrc.io.c_files ++
     sdlsrc.io.generic.c_files ++
@@ -796,31 +820,6 @@ const emscripten_src_files = sdlsrc.audio.emscripten.c_files ++
     sdlsrc.sensor.dummy.c_files ++
     sdlsrc.timer.unix.c_files ++
     sdlsrc.tray.dummy.c_files;
-// const emscripten_src_files = [_][]const u8{
-//     "src/audio/emscripten/SDL_emscriptenaudio.c",
-//     "src/filesystem/emscripten/SDL_sysfilesystem.c",
-//     "src/joystick/emscripten/SDL_sysjoystick.c",
-//     "src/locale/emscripten/SDL_syslocale.c",
-//     "src/misc/emscripten/SDL_sysurl.c",
-//     "src/power/emscripten/SDL_syspower.c",
-//     "src/video/emscripten/SDL_emscriptenevents.c",
-//     "src/video/emscripten/SDL_emscriptenframebuffer.c",
-//     "src/video/emscripten/SDL_emscriptenmouse.c",
-//     "src/video/emscripten/SDL_emscriptenopengles.c",
-//     "src/video/emscripten/SDL_emscriptenvideo.c",
-
-//     "src/timer/unix/SDL_systimer.c",
-//     "src/loadso/dlopen/SDL_sysloadso.c",
-//     "src/audio/disk/SDL_diskaudio.c",
-//     "src/render/opengles2/SDL_render_gles2.c",
-//     "src/render/opengles2/SDL_shaders_gles2.c",
-//     "src/sensor/dummy/SDL_dummysensor.c",
-//     "src/thread/pthread/SDL_syscond.c",
-//     "src/thread/pthread/SDL_sysmutex.c",
-//     "src/thread/pthread/SDL_syssem.c",
-//     "src/thread/pthread/SDL_systhread.c",
-//     "src/thread/pthread/SDL_systls.c",
-// };
 
 const linux_src_files = sdlsrc.audio.aaudio.c_files ++
     sdlsrc.audio.alsa.c_files ++
@@ -1019,7 +1018,7 @@ const emscriptenConfig: SDLConfig = .{
     .HAVE_CLOCK_GETTIME = true,
     .HAVE_GETPAGESIZE = true,
     .HAVE_ICONV = true,
-    .HAVE_POLL = true,
+    .HAVE_PPOLL = true, // Renamed from HAVE_POLL to HAVE_PPOLL in SDL 3.4.6-prerelease
     .HAVE__EXIT = true,
     // End of C library functions
 
@@ -1052,6 +1051,7 @@ const emscriptenConfig: SDLConfig = .{
     .SDL_FSOPS_POSIX = true,
     .SDL_CAMERA_DRIVER_DUMMY = true,
     .SDL_CAMERA_DRIVER_EMSCRIPTEN = true,
+    .SDL_TRAY_DUMMY = true,
     .DYNAPI_NEEDS_DLOPEN = true,
 };
 

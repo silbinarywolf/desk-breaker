@@ -152,7 +152,7 @@ const WindowsProcessList = struct {
                         }
                     }
                     const name_u16 = name_buffer[0..name_buffer_len :0];
-                    const len = try std.unicode.utf16LeToUtf8(&self.exe_filepath_buffer, name_u16[0..]);
+                    const len = std.unicode.wtf16LeToWtf8(&self.exe_filepath_buffer, name_u16[0..]);
                     const name = self.exe_filepath_buffer[0..len];
                     break :nameblk name;
                 };
@@ -194,7 +194,7 @@ const WindowsProcessList = struct {
     const Wmi = struct {
         services: ?*wbemuuid.IWbemServices,
         /// Is UTF-16 string of "WQL" in BSTR format.
-        /// ie. SysAllocString(utf8ToUtf16LeStringLiteral("WQL"))
+        /// ie. SysAllocString(wtf8ToWtf16LeStringLiteral("WQL"))
         language: windows.BSTR,
         /// Is UTF-16 string of the process list query, ie. "SELECT CommandLine FROM Win32_Process where ProcessId = 4294967295"
         query: *[QueryProcessMaxBuffer.len:0]windows.WCHAR,
@@ -209,7 +209,7 @@ const WindowsProcessList = struct {
 
         /// Appending '4294967295' allows fitting the largest uint32 in string format (4294967295) and then some in our query when we modify
         /// it and then pad it out with spaces.
-        const QueryProcessMaxBuffer = std.unicode.utf8ToUtf16LeStringLiteral(QueryProcess ++ "4294967295");
+        const QueryProcessMaxBuffer = std.unicode.wtf8ToWtf16LeStringLiteral(QueryProcess ++ "4294967295");
 
         fn init(self: *@This()) !void {
             // Initialize COM
@@ -244,7 +244,7 @@ const WindowsProcessList = struct {
             errdefer _ = locator.lpVtbl.*.Release.?(locator);
 
             // BSTR strings we'll use (http://msdn.microsoft.com/en-us/library/ms221069.aspx)
-            const language: windows.BSTR = try ole32.SysAllocString(std.unicode.utf8ToUtf16LeStringLiteral("WQL"));
+            const language: windows.BSTR = try ole32.SysAllocString(std.unicode.wtf8ToWtf16LeStringLiteral("WQL"));
             errdefer ole32.SysFreeString(language);
 
             // NOTE(jae): 2025-12-22
@@ -255,7 +255,7 @@ const WindowsProcessList = struct {
             const query: *[QueryProcessMaxBuffer.len:0]windows.WCHAR = query_raw[0..QueryProcessMaxBuffer.len :0];
 
             const services: *wbemuuid.IWbemServices = hrblk: {
-                const resource: windows.BSTR = try ole32.SysAllocString(std.unicode.utf8ToUtf16LeStringLiteral("ROOT\\CIMV2"));
+                const resource: windows.BSTR = try ole32.SysAllocString(std.unicode.wtf8ToWtf16LeStringLiteral("ROOT\\CIMV2"));
                 defer ole32.SysFreeString(resource);
 
                 var r: *wbemuuid.IWbemServices = undefined;
@@ -294,7 +294,7 @@ const WindowsProcessList = struct {
             {
                 var buf_data: [QueryProcessMaxBuffer.len]u8 = undefined;
                 const buf = try std.fmt.bufPrint(buf_data[0..], QueryProcess, .{process_id});
-                const next_char = try std.unicode.utf8ToUtf16Le(self.query[0..], buf);
+                const next_char = try std.unicode.wtf8ToWtf16Le(self.query[0..], buf);
                 for (self.query[next_char..]) |*c| {
                     c.* = ' ';
                 }
@@ -334,7 +334,7 @@ const WindowsProcessList = struct {
                 // - exe: "C:\Microsoft VS Code\Code.exe" --type=utility --utility-sub-type=node.mojom.NodeService
                 var column: wbemuuid.VARIANT = undefined;
                 {
-                    const hr = result.lpVtbl.*.Get.?(result, std.unicode.utf8ToUtf16LeStringLiteral("CommandLine"), 0, &column, 0, 0);
+                    const hr = result.lpVtbl.*.Get.?(result, std.unicode.wtf8ToWtf16LeStringLiteral("CommandLine"), 0, &column, 0, 0);
                     if (hr != windows.S_OK) return windows.unexpectedError(windows.HRESULT_CODE(hr));
                 }
                 const column_ptr = column.unnamed_0.unnamed_0.unnamed_0.bstrVal;
@@ -344,16 +344,16 @@ const WindowsProcessList = struct {
 
                 // Skip the program application path, do this before allocating a new UTF-8 string to lower the size of the memory being allocated.
                 const command_line_args_start_index: usize = findexeblk: {
-                    var it = std.unicode.Utf16LeIterator.init(exe_and_command_line);
+                    var it = std.unicode.Wtf16LeIterator.init(exe_and_command_line);
                     // Iterate until we find '.exe' so we can *only* get the characters after the filepath
-                    lexblk: while (try it.nextCodepoint()) |char| {
+                    lexblk: while (it.nextCodepoint()) |char| {
                         // If not .exe, then continue searching
                         if (char != '.') continue;
-                        if (try it.nextCodepoint() != 'e') continue;
-                        if (try it.nextCodepoint() != 'x') continue;
-                        if (try it.nextCodepoint() != 'e') continue;
+                        if (it.nextCodepoint() != 'e') continue;
+                        if (it.nextCodepoint() != 'x') continue;
+                        if (it.nextCodepoint() != 'e') continue;
 
-                        while (try it.nextCodepoint()) |next_char| {
+                        while (it.nextCodepoint()) |next_char| {
                             if (next_char != ' ') continue;
                             break :lexblk;
                         }
@@ -362,10 +362,10 @@ const WindowsProcessList = struct {
                     if (it.i == 0) break :findexeblk it.i; // Avoid div by 0
                     break :findexeblk it.i / 2; // Convert u8 index into u16 index
                 };
-                const command_line_args_utf16 = exe_and_command_line[command_line_args_start_index..];
-                if (command_line_args_utf16.len == 0) continue;
+                const command_line_args_wtf16 = exe_and_command_line[command_line_args_start_index..];
+                if (command_line_args_wtf16.len == 0) continue;
 
-                const command_line_args = try std.unicode.utf16LeToUtf8Alloc(allocator, command_line_args_utf16);
+                const command_line_args = try std.unicode.wtf16LeToWtf8Alloc(allocator, command_line_args_wtf16);
                 errdefer allocator.free(command_line_args);
 
                 return command_line_args;
@@ -481,6 +481,7 @@ const LinuxProcessList = struct {
         self.freeExeAndArgsIfSet();
         if (self.proc) |*proc| {
             proc.close();
+            self.proc = null;
         }
     }
 
@@ -612,33 +613,7 @@ const ole32 = struct {
         pub extern "oleaut32" fn SysAllocString([*c]const OLECHAR) [*c]windows.WCHAR;
     };
 
-    pub const CP_UTF8: c_long = 65001;
-
-    // https://stackoverflow.com/a/52000515/5013410
-    // pub fn bstrToUtf8(allocator: std.mem.Allocator, bstr: [*c]windows.WCHAR) error{ OutOfMemory, InvalidParameter, Unexpected }![:0]const u8 {
-    //     if (bstr == null) return &[0:0]u8{};
-    //     const len = SysStringLen(bstr);
-    //     // special case because a NULL BSTR is a valid zero-length BSTR,
-    //     // but regular string functions would balk on it
-    //     if (len == 0) return &[0:0]u8{};
-    //     const size_needed = kernel32.WideCharToMultiByte(CP_UTF8, 0, bstr, @intCast(len), null, 0, null, null);
-    //     if (size_needed == 0) {
-    //         const win32err = windows.GetLastError();
-    //         switch (win32err) {
-    //             .INVALID_PARAMETER => return error.InvalidParameter,
-    //             else => return windows.unexpectedError(win32err),
-    //         }
-    //     }
-    //     const ret = try allocator.allocSentinel(u8, @intCast(size_needed), 0);
-    //     if (kernel32.WideCharToMultiByte(CP_UTF8, 0, bstr, @intCast(len), ret.ptr, @intCast(ret.len), null, null) == 0) {
-    //         const win32err = windows.GetLastError();
-    //         switch (win32err) {
-    //             .INVALID_PARAMETER => return error.InvalidParameter,
-    //             else => return windows.unexpectedError(win32err),
-    //         }
-    //     }
-    //     return ret;
-    // }
+    // const CP_UTF8: c_long = 65001;
 };
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/

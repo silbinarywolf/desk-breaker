@@ -135,9 +135,9 @@ pub const config: SDLConfig = .{
     .HAVE_NL_LANGINFO = true,
     // .HAVE_SYSCONF = true,
     .HAVE_CLOCK_GETTIME = true,
-    .HAVE_GETPAGESIZE = true,
+    .HAVE_GETPAGESIZE = false, //  undefined reference to `getpagesize'
     .HAVE_ICONV = true,
-    .HAVE_POLL = true,
+    .HAVE_PPOLL = true, // Changed to HAVE_PPOLL in SDL 3.4.6-prerelease
     .HAVE__EXIT = true,
     // End of C library functions
 
@@ -170,4 +170,5 @@ pub const config: SDLConfig = .{
     .SDL_FSOPS_POSIX = true,
     .SDL_CAMERA_DRIVER_DUMMY = true,
     // .SDL_CAMERA_DRIVER_PSP = true,
+    .SDL_TRAY_DUMMY = true,
 };

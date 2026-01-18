@@ -77,24 +77,16 @@ pub fn writeString(self: *const Duration, writer: *std.io.AnyWriter) std.io.Writ
     }
 }
 
-const UsesOldFormatter = (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14);
-
 /// formatLong will format duration as "1 day 3 hours 58 minutes 1 second"
-pub fn formatLong(self: Duration) if (UsesOldFormatter) OldFormatter(FormatLongDuration) else FormatLongDuration {
+pub fn formatLong(self: Duration) FormatLongDuration {
     const formatter: FormatLongDuration = .{ .nanoseconds = self.nanoseconds };
-    return if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
-        .{ .formatter = formatter }
-    else
-        formatter;
+    return formatter;
 }
 
 /// formatShort will format duration as "1d 3h 58m 1s"
-pub fn formatShort(self: Duration) if (UsesOldFormatter) OldFormatter(FormatShortDuration) else FormatShortDuration {
+pub fn formatShort(self: Duration) FormatShortDuration {
     const formatter: FormatShortDuration = .{ .nanoseconds = self.nanoseconds };
-    return if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
-        .{ .formatter = formatter }
-    else
-        formatter;
+    return formatter;
 }
 
 /// Deprecated: Temporary until Zig 0.15+ is out

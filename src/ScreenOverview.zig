@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const imgui = @import("imgui");
 
+const Timer = @import("Timer.zig");
 const App = @import("App.zig");
 const Duration = @import("Duration.zig");
 
@@ -32,7 +33,7 @@ pub fn render(app: *App) !void {
                         if (!is_enabled) {
                             t.timer_started = null;
                         } else {
-                            t.timer_started = try std.time.Timer.start();
+                            t.timer_started = try Timer.start();
                         }
                     }
                 },
