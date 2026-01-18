@@ -197,10 +197,7 @@ pub const PngDecoder = struct {
         // - 64-bit windows - PNG decoder sizeof: 44632, align: 8
         const decoder_size_of = wuffs.sizeof__wuffs_png__decoder();
         const png_decoder_alignment = std.mem.Alignment.@"16";
-        const png_decoder_bytes = try allocator.alignedAlloc(u8, if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
-            png_decoder_alignment.toByteUnits()
-        else
-            png_decoder_alignment, decoder_size_of);
+        const png_decoder_bytes = try allocator.alignedAlloc(u8, png_decoder_alignment, decoder_size_of);
         errdefer allocator.free(png_decoder_bytes);
         const decoder: *wuffs.wuffs_png__decoder = @ptrCast(png_decoder_bytes);
 
@@ -355,10 +352,7 @@ pub const PngDecoder = struct {
         };
 
         const work_buffer_alignment = std.mem.Alignment.@"16";
-        const work_buffer = try self.allocator.alignedAlloc(u8, if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14)
-            work_buffer_alignment.toByteUnits()
-        else
-            work_buffer_alignment, work_buffer_length);
+        const work_buffer = try self.allocator.alignedAlloc(u8, work_buffer_alignment, work_buffer_length);
         defer self.allocator.free(work_buffer);
 
         // As per documentation, keep decoding frames until "end of data" is reached.
@@ -372,12 +366,35 @@ pub const PngDecoder = struct {
         for (0..2) |i| {
             var frame_config: wuffs.wuffs_base__frame_config = undefined;
             if (hasStatus(wuffs.wuffs_png__decoder__decode_frame_config(self.decoder, &frame_config, &self.stream))) |status| {
-                if (status.repr == wuffs.wuffs_base__note__end_of_data) {
-                    // As per documentation, "end of data" means no more frames to decode.
-                    // "9. DFC (decode_frame_config) #N returning an "@end of data" status value.
-                    // The final DFC call returns "@end of data" even if the animation loops."
-                    // Source: https://github.com/google/wuffs/blob/43a6814dfe2764ee86637d7685cac006c72a23f9/doc/std/image-decoders-call-sequence.md
-                    break;
+                if (status.repr != null and status.repr[0] == '@') {
+                    // if (status.repr == wuffs.wuffs_base__note__end_of_data) {
+                    //     // As per documentation, "end of data" means no more frames to decode.
+                    //     // "9. DFC (decode_frame_config) #N returning an "@end of data" status value.
+                    //     // The final DFC call returns "@end of data" even if the animation loops."
+                    //     // Source: https://github.com/google/wuffs/blob/43a6814dfe2764ee86637d7685cac006c72a23f9/doc/std/image-decoders-call-sequence.md
+                    //     break;
+                    // }
+
+                    if (comptime builtin.object_format == .c) {
+                        // NOTE(jae): 2026-01-16
+                        // Hack for C output to avoid an error where Zig 0.15.2 can't access externed variables properly
+                        // for the Playstation Portable SDK.
+                        //
+                        // Rely on the fact that "@base: end of data" is the only string that that starts with '@'
+                        // and ends in " data"
+                        //
+                        // const base_note = "@base: end of data";
+                        const status_text = std.mem.span(status.repr);
+                        if (std.mem.endsWith(u8, status_text, " data")) {
+                            break;
+                        }
+                    } else if (status.repr == wuffs.wuffs_base__note__end_of_data) {
+                        // As per documentation, "end of data" means no more frames to decode.
+                        // "9. DFC (decode_frame_config) #N returning an "@end of data" status value.
+                        // The final DFC call returns "@end of data" even if the animation loops."
+                        // Source: https://github.com/google/wuffs/blob/43a6814dfe2764ee86637d7685cac006c72a23f9/doc/std/image-decoders-call-sequence.md
+                        break;
+                    }
                 }
                 log.debug("decode frame config failed: {s}", .{statusMessage(status)});
                 return error.DecodeFrameConfigFailed;

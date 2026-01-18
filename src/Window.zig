@@ -20,13 +20,17 @@ pub const Options = struct {
     /// Starts window with grabbed mouse focus
     mouse_grabbed: bool = false,
     icon: ?*sdl.SDL_Surface = null,
+    // NOTE(jae): 2025-12-27
+    // Attempt to have the *audacity* on my own computer to get a
+    // a window to pop up in the right-bottom corner of the screen with Linux/Wayland (and fail)
+    // (Tried to use Wayland Popup Windows to do this)
+    // parent: ?*Window = null,
 };
 
 window: *sdl.SDL_Window,
-window_properties: u32,
+window_properties: sdl.SDL_PropertiesID,
 renderer: *sdl.SDL_Renderer,
 imgui_context: *imgui.ImGuiContext,
-// imgui_font_atlas: *imgui.ImFontAtlas,
 imgui_new_frame: bool,
 
 pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
@@ -36,6 +40,8 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
         return error.SdlFailed;
     }
     errdefer sdl.SDL_DestroyProperties(props);
+
+    const main_scale = sdl.SDL_GetDisplayContentScale(sdl.SDL_GetPrimaryDisplay());
 
     if (options.title.len > 0) {
         if (!sdl.SDL_SetStringProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TITLE_STRING, options.title)) return error.SdlFailed;
@@ -64,18 +70,29 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
         if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_Y_NUMBER, y)) return error.SdlFailed;
     }
     if (options.width) |width| {
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width)) return error.SdlFailed;
+        const width_scaled: i64 = @intFromFloat(@as(f32, @floatFromInt(width)) * main_scale);
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_scaled)) return error.SdlFailed;
     }
     if (options.height) |height| {
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height)) return error.SdlFailed;
+        const height_scaled: i64 = @intFromFloat(@as(f32, @floatFromInt(height)) * main_scale);
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_scaled)) return error.SdlFailed;
     }
+    // NOTE(jae): 2025-12-27
+    // Attempt to have the *audacity* on my own computer to get a
+    // a window to pop up in the right-bottom corner of the screen with Linux/Wayland (and fail)
+    // (Tried to use Wayland Popup Windows to do this)
+    // if (options.parent) |parent| {
+    //     if (!sdl.SDL_SetPointerProperty(props, sdl.SDL_PROP_WINDOW_CREATE_PARENT_POINTER, parent.window)) return error.SdlFailed;
+    //     if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_CONSTRAIN_POPUP_BOOLEAN, false)) return error.SdlFailed;
+    //     if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TOOLTIP_BOOLEAN, true)) return error.SdlFailed;
+    // }
 
     const window = sdl.SDL_CreateWindowWithProperties(props) orelse {
         log.err("SDL_CreateWindowWithProperties failed: {s}", .{sdl.SDL_GetError()});
         return error.SdlFailed;
     };
 
-    if (comptime builtin.os.tag != .emscripten and !builtin.abi.isAndroid()) {
+    if (comptime builtin.os.tag != .emscripten and !builtin.abi.isAndroid() and builtin.os.tag != .freestanding) {
         if (options.icon) |icon| {
             if (!sdl.SDL_SetWindowIcon(window, icon)) {
                 log.err("unable to set window icon: {s}", .{sdl.SDL_GetError()});
@@ -92,6 +109,9 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
         // SDL 3.2.0: Force hardware rendering. MacOs software rendering has an issue where
         // it seems to just... not clear the window. Cannot repro on Windows or Linux.
         .macos => null,
+        // NOTE(jae): 2026-17-01
+        // On other OSes, just use hardware rendering
+        .freestanding => null,
         else => sdl.SDL_SOFTWARE_RENDERER,
     };
     const renderer: *sdl.SDL_Renderer = sdl.SDL_CreateRenderer(window, default_renderer) orelse {
@@ -102,25 +122,9 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
 
     // Reset to previous context after setup
     const previous_imgui_context = imgui.igGetCurrentContext();
-    defer {
-        if (previous_imgui_context) |prev_imgui_context| {
-            imgui.igSetCurrentContext(prev_imgui_context);
-        }
-    }
-
-    // NOTE(jae): 2024-06-11
-    // Each context needs its own font atlas or issues occur with rendering
-    // const font_data = @embedFile("resources/fonts/Lato-Regular.ttf");
-    // const imgui_font_atlas: *imgui.ImFontAtlas = imgui.ImFontAtlas_ImFontAtlas();
-    // errdefer imgui.ImFontAtlas_destroy(imgui_font_atlas);
-    // _ = imgui.ImFontAtlas_AddFontFromMemoryTTF(
-    //     imgui_font_atlas,
-    //     @ptrCast(@constCast(font_data[0..].ptr)),
-    //     font_data.len,
-    //     28,
-    //     font_config,
-    //     null,
-    // );
+    defer if (previous_imgui_context) |prev_imgui_context| {
+        imgui.igSetCurrentContext(prev_imgui_context);
+    };
 
     const imgui_context = imgui.igCreateContext(null) orelse {
         log.err("unable to create imgui context: {s}", .{sdl.SDL_GetError()});
@@ -131,7 +135,6 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
     // NOTE(jae): This call is needed for multiple windows, ie. creation of the second window
     imgui.igSetCurrentContext(imgui_context);
 
-    const main_scale = sdl.SDL_GetDisplayContentScale(sdl.SDL_GetPrimaryDisplay());
     const style = &imgui.igGetStyle()[0];
     imgui.ImGuiStyle_ScaleAllSizes(style, main_scale); // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
     style.FontScaleDpi = main_scale; // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
@@ -140,8 +143,9 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
     imgui_io.IniFilename = null; // disable imgui.ini
     imgui_io.IniSavingRate = -1; // disable imgui.ini
     imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
+    imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_NavEnableGamepad; // Enable Gamepad Controls
     // imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_DockingEnable; // Enable Docking
-    imgui_io.Fonts[0].FontLoader = imgui.ImGuiFreeType_GetFontLoader();
+    imgui_io.Fonts.*.FontLoader = imgui.ImGuiFreeType_GetFontLoader();
 
     // NOTE(jae): 2024-11-07
     // Using embedded font data that isn't owned by the atlas
@@ -228,12 +232,11 @@ pub fn deinit(self: *Window) void {
 }
 
 pub fn imguiNewFrame(window: *Window) void {
+    imgui.igSetCurrentContext(window.imgui_context);
     if (window.imgui_new_frame) {
         // if we didn't call end frame last frame, do it now
         imgui.igEndFrame();
     }
-
-    imgui.igSetCurrentContext(window.imgui_context);
     imgui.ImGui_ImplSDLRenderer3_NewFrame();
     imgui.ImGui_ImplSDL3_NewFrame();
     imgui.igNewFrame();

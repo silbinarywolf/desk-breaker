@@ -11,23 +11,17 @@ pub fn build(b: *std.Build) !void {
         const dep: *Dependency = b.lazyDependency("imgui", .{}) orelse {
             break :blk b.path("");
         };
-        std.fs.accessAbsolute(dep.path("imgui.cpp").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => return error.InvalidDependency,
-            else => return err,
-        };
+        // std.fs.accessAbsolute(dep.path("imgui.cpp").getPath(b), .{}) catch |err| switch (err) {
+        //     error.FileNotFound => return error.InvalidDependency,
+        //     else => return err,
+        // };
         break :blk dep.path("");
     };
     const imgui_include_path = imgui;
     const zig_imgui_backend_include_path = b.path("imgui_backend_headers");
 
     const cimgui: LazyPath = blk: {
-        const dep: *Dependency = b.lazyDependency("cimgui", .{}) orelse {
-            break :blk b.path("");
-        };
-        std.fs.accessAbsolute(dep.path("cimgui.cpp").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => return error.InvalidDependency,
-            else => return err,
-        };
+        const dep: *Dependency = b.lazyDependency("cimgui", .{}) orelse break :blk b.path("");
         break :blk dep.path("");
     };
     const cimgui_include_path = cimgui;
@@ -39,25 +33,21 @@ pub fn build(b: *std.Build) !void {
     // So we can just pull down cimgui as an external dependency, fake that structure here
     const zig_cimgui_headers_path = b.path("cimgui_headers");
 
-    const lib = b.addLibrary(.{
-        .name = "imgui",
-        .linkage = .static,
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+        .link_libcpp = true,
     });
-    lib.linkLibCpp();
 
     // Settings
-    lib.root_module.addCMacro("IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS", "1");
-    lib.root_module.addCMacro("IMGUI_DISABLE_FILE_FUNCTIONS", "1");
-    // lib.root_module.addCMacro("IMGUI_DISABLE_DEMO_WINDOWS", "1");
-    // lib.root_module.addCMacro("IMGUI_DISABLE_DEBUG_TOOLS", "1");
+    mod.addCMacro("IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS", "1");
+    mod.addCMacro("IMGUI_DISABLE_FILE_FUNCTIONS", "1");
+    // mod.addCMacro("IMGUI_DISABLE_DEMO_WINDOWS", "1");
+    // mod.addCMacro("IMGUI_DISABLE_DEBUG_TOOLS", "1");
 
     const default_cpp_flags = [_][]const u8{ "-std=c++11", "-nostdinc++" };
-    const psp_cpp_flags = default_cpp_flags ++ [_][]const u8{ "-fno-exceptions", "-fno-rtti", "-fno-use-cxa-atexit" };
+    const psp_cpp_flags = default_cpp_flags ++ [_][]const u8{ "-fno-exceptions", "-fno-rtti" };
 
     const cpp_flags: []const []const u8 = switch (target.result.os.tag) {
         .freestanding => &psp_cpp_flags,
@@ -65,7 +55,7 @@ pub fn build(b: *std.Build) !void {
     };
 
     // ImGui files
-    lib.addCSourceFiles(.{
+    mod.addCSourceFiles(.{
         .root = imgui,
         .files = &.{
             "imgui.cpp",
@@ -76,25 +66,25 @@ pub fn build(b: *std.Build) !void {
         },
         .flags = cpp_flags,
     });
-    lib.addIncludePath(imgui_include_path);
+    mod.addIncludePath(imgui_include_path);
 
     // ImGui enable freetype
     const has_freetype = b.option(bool, "enable_freetype", "Build ImGui with freetype instead of stb_truetype") orelse false;
     if (has_freetype) {
-        lib.root_module.addCMacro("IMGUI_ENABLE_FREETYPE", "1");
-        lib.root_module.addCMacro("CIMGUI_FREETYPE", "1");
+        mod.addCMacro("IMGUI_ENABLE_FREETYPE", "1");
+        mod.addCMacro("CIMGUI_FREETYPE", "1");
 
         // HACK: Stop error "use of undeclared identifier 'ImFontAtlasGetBuilderForStbTruetype'" when compiling with Freetype
-        lib.root_module.addCMacro("ImFontAtlasGetBuilderForStbTruetype()", "NULL");
+        mod.addCMacro("ImFontAtlasGetBuilderForStbTruetype()", "NULL");
 
-        lib.addCSourceFiles(.{
+        mod.addCSourceFiles(.{
             .root = imgui,
             .files = &.{
                 "misc/freetype/imgui_freetype.cpp",
             },
             .flags = cpp_flags,
         });
-        lib.addIncludePath(imgui.path(b, "misc/freetype"));
+        mod.addIncludePath(imgui.path(b, "misc/freetype"));
 
         // NOTE(jae): 2024-07-01
         // We add the <ft2build.h> include dependency in the parent build.zig
@@ -113,8 +103,8 @@ pub fn build(b: *std.Build) !void {
             .little => "SDL_LIL_ENDIAN",
             .big => "SDL_BIG_ENDIAN",
         };
-        lib.root_module.addCMacro("SDL_BYTEORDER", sdl_byteorder);
-        lib.root_module.addCSourceFiles(.{
+        mod.addCMacro("SDL_BYTEORDER", sdl_byteorder);
+        mod.addCSourceFiles(.{
             .root = imgui,
             .files = &.{
                 "backends/imgui_impl_sdl3.cpp",
@@ -133,23 +123,27 @@ pub fn build(b: *std.Build) !void {
     }
 
     // cimgui files
-    lib.addCSourceFiles(.{
+    mod.addCSourceFiles(.{
         .root = cimgui,
         .files = &.{
             "cimgui.cpp",
         },
         .flags = cpp_flags,
     });
-    lib.addIncludePath(cimgui_include_path);
-    lib.addIncludePath(zig_cimgui_headers_path);
-    lib.root_module.addCMacro("IMGUI_IMPL_API", "extern \"C\""); // export "{imgui-folder}/backends/*.cpp"
+    mod.addIncludePath(cimgui_include_path);
+    mod.addIncludePath(zig_cimgui_headers_path);
+    mod.addCMacro("IMGUI_IMPL_API", "extern \"C\""); // export "{imgui-folder}/backends/*.cpp"
     switch (target.result.os.tag) {
         .windows => {
-            lib.linkSystemLibrary("imm32");
+            mod.linkSystemLibrary("imm32", .{});
         },
         else => {},
     }
-    b.installArtifact(lib);
+    b.installArtifact(b.addLibrary(.{
+        .name = "imgui",
+        .linkage = .static,
+        .root_module = mod,
+    }));
 
     // Imgui Translate C-code
     var c_translate = b.addTranslateC(.{

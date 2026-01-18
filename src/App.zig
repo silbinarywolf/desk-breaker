@@ -1,6 +1,8 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const time = std.time;
+const Timer = @import("Timer.zig");
+
 const mem = std.mem;
 
 const sdl = @import("sdl");
@@ -53,7 +55,7 @@ pub const TimerKind = enum(c_int) {
     pub const ImGuiItems: [:0]const u8 = @This().timer.label() ++ "\x00"; // ++ @This().alarm.label() ++ "\x00";
 };
 
-pub const Timer = struct {
+pub const StateTimer = struct {
     kind: TimerKind,
 
     // Common
@@ -69,13 +71,13 @@ pub const Timer = struct {
     // Timer
 
     /// if not null then a timer has been started
-    timer_started: ?std.time.Timer = null,
+    timer_started: ?Timer = null,
     timer_duration: ?Duration = null,
 
     // // Alarm
     // alarm_time: i64 = 0,
 
-    pub fn deinit(t: *Timer, allocator: std.mem.Allocator) void {
+    pub fn deinit(t: *StateTimer, allocator: std.mem.Allocator) void {
         if (t.name.len > 0) allocator.free(t.name);
     }
 };
@@ -88,7 +90,7 @@ pub const UserSettings = struct {
     default_incoming_break: Duration = Duration.init(20 * time.ns_per_s),
 
     settings: UserConfig.Settings,
-    timers: std.ArrayList(Timer),
+    timers: std.ArrayList(StateTimer),
 
     pub const default: UserSettings = .{
         .settings = .{},
@@ -233,14 +235,19 @@ allocator: std.mem.Allocator,
 temp_allocator: std.heap.ArenaAllocator,
 
 icon: Image,
+icon_red: Image,
+icon_flash_timer: ?Timer,
 
 // Windows
 
 /// main application window
 window: ?*Window,
-tray: ?*sdl.SDL_Tray,
 popup_windows: std.ArrayListUnmanaged(Window) = .{},
 taking_break_windows: std.ArrayListUnmanaged(Window) = .{},
+
+/// system tray
+tray: ?*sdl.SDL_Tray,
+tray_icon: TrayIconMode = .default,
 
 /// set to true to quit the application at the start of the next frame
 has_quit: bool = false,
@@ -248,8 +255,13 @@ has_quit: bool = false,
 /// set to true if the operating supports system tray
 has_tray_support: bool = false,
 
-/// If using something like Wayland with no global mouse
-has_global_mouse_support: bool = true,
+/// If using Windows or Mac, then assume we have global mouse position support, otherwise do not.
+has_global_mouse_support: bool = switch (builtin.os.tag) {
+    .windows => true,
+    .macos => true,
+    // ie. Linux+Wayland does not have mouse support, Android does not have mouse support
+    else => false,
+},
 
 /// if set to true, will minimize to system tray on the next frame
 minimize_to_tray: bool = false,
@@ -257,19 +269,19 @@ minimize_to_tray: bool = false,
 // user settings are not owned by this struct and must be freed by the creator.
 user_settings: *UserSettings,
 
-time_since_last_input: ?time.Timer = null,
+time_since_last_input: ?Timer = null,
 
 /// stores the current time, once the difference between this and current time > user_settings.break_time then a break is triggered
-activity_timer: time.Timer,
+activity_timer: Timer,
 
 // if you click snooze, a shorter timer will start
-snooze_activity_break_timer: ?time.Timer = null,
+snooze_activity_break_timer: ?Timer = null,
 
 is_user_active: bool = false,
 is_game_active: bool = false,
 
 process_list: ProcessList,
-process_check_timer: time.Timer,
+process_check_timer: Timer,
 
 /// amount of times snooze button was hit
 snooze_times: u32 = 0,
@@ -279,21 +291,26 @@ snooze_times_in_a_row: u32 = 0,
 break_mode: struct {
     /// if clicked the Exit button or ESC an amount of times, close break window
     esc_or_exit_presses: u32 = 0,
-    held_down_timer: ?std.time.Timer = null,
+    held_down_timer: ?Timer = null,
     /// timer that runs while waiting for a break
-    timer: std.time.Timer,
+    timer: Timer,
     duration: Duration,
 } = .{
-    .timer = std.mem.zeroes(std.time.Timer),
+    .timer = std.mem.zeroes(Timer),
     .duration = Duration.init(0),
 },
 
 // ui state (temporary state when editing)
 ui: UiState,
 
+debug_frame_count: u32 = 0,
+
 pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
     var icon = try Image.loadPng(allocator, @embedFile("resources/icon.png"));
     errdefer icon.deinit(allocator);
+
+    var icon_red = try Image.loadPng(allocator, @embedFile("resources/icon_red.png"));
+    errdefer icon_red.deinit(allocator);
 
     // detect tray support
     const has_tray_support: bool = blk: {
@@ -316,13 +333,15 @@ pub fn init(allocator: std.mem.Allocator, user_settings: *UserSettings) !App {
         .allocator = allocator,
         .temp_allocator = std.heap.ArenaAllocator.init(allocator),
         .icon = icon,
+        .icon_red = icon_red,
+        .icon_flash_timer = try Timer.start(),
         .window = null,
         .has_tray_support = has_tray_support,
         .tray = null,
         .user_settings = user_settings,
-        .activity_timer = try std.time.Timer.start(),
+        .activity_timer = try Timer.start(),
         .process_list = undefined, // Init after
-        .process_check_timer = try std.time.Timer.start(),
+        .process_check_timer = try Timer.start(),
         .ui = .{
             .ui_allocator = std.heap.ArenaAllocator.init(allocator),
             .timer = undefined,
@@ -352,6 +371,7 @@ pub fn deinit(app: *App) void {
         sdl.SDL_DestroyTray(tray);
     }
     app.process_list.deinit();
+    app.icon_red.deinit(allocator);
     app.icon.deinit(allocator);
     app.user_settings.deinit(allocator);
     allocator.destroy(app.user_settings);
@@ -361,11 +381,7 @@ pub fn deinit(app: *App) void {
 
 /// tprint will allocate temporary text into a buffer that will stop existing next render frame
 pub fn tprint(self: *App, comptime fmt: []const u8, args: anytype) error{OutOfMemory}![:0]u8 {
-    if (builtin.zig_version.major == 0 and builtin.zig_version.minor == 14) {
-        return std.fmt.allocPrintZ(self.temp_allocator.allocator(), fmt, args);
-    } else {
-        return std.fmt.allocPrintSentinel(self.temp_allocator.allocator(), fmt, args, 0);
-    }
+    return std.fmt.allocPrintSentinel(self.temp_allocator.allocator(), fmt, args, 0);
 }
 
 /// check if a timers criteria has been triggered
@@ -460,7 +476,7 @@ pub fn can_snooze(app: *App) bool {
     return true;
 }
 
-pub fn has_timer_or_alarm_triggered(app: *App) bool {
+fn has_timer_or_alarm_triggered(app: *App) bool {
     for (app.user_settings.timers.items) |*t| {
         switch (t.kind) {
             .timer => {
@@ -488,7 +504,7 @@ pub fn snooze(app: *App) void {
 
     // reset activity timer
     app.activity_timer.reset();
-    app.snooze_activity_break_timer = time.Timer.start() catch unreachable;
+    app.snooze_activity_break_timer = Timer.start() catch unreachable;
     app.snooze_times += 1;
     app.snooze_times_in_a_row += 1;
 }
@@ -548,6 +564,11 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
                     .y = display.y + display.h - height,
                     .width = width,
                     .height = height,
+                    // NOTE(jae): 2025-12-27
+                    // Attempt to have the *audacity* on my own computer to get a
+                    // a window to pop up in the right-bottom corner of the screen with Wayland (and fail)
+                    // (Tried to use Wayland Popup Windows to do this)
+                    // .parent = app.window,
                 }) catch |err| {
                     log.err("incoming_break: failed to init window after creation: {}", .{err});
                     return err;
@@ -618,7 +639,7 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
             app.activity_timer.reset();
             app.break_mode = .{
                 // setup these fields
-                .timer = time.Timer.start() catch unreachable,
+                .timer = Timer.start() catch unreachable,
                 .duration = break_time_duration,
                 // reset escape presses / etc
             };
@@ -627,23 +648,9 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
     app.mode = new_mode;
 }
 
+const TrayIconMode = enum {
+    default,
+    red,
+};
+
 const App = @This();
-
-// SDL_VERSION alterantive that works, Zig 0.13.0 can't translate the macro
-// pub fn SDL_VERSION(v: *sdl.SDL_version) void {
-//     v.major = sdl.SDL_MAJOR_VERSION;
-//     v.minor = sdl.SDL_MINOR_VERSION;
-//     v.patch = sdl.SDL_PATCHLEVEL;
-// }
-
-// const hwnd = GetWindowsHwnd(window) catch |err| @panic(@errorName(err));
-// _ = winuser.ShowWindow(hwnd, winuser.SW_SHOWNOACTIVATE);
-//
-// fn GetWindowsHwnd(window: *sdl.SDL_Window) error{SDLGetWindowWMInfo}!std.os.windows.HWND {
-//     var wmInfo: sdl.SDL_SysWMinfo = undefined;
-//     SDL_VERSION(&wmInfo.version);
-//     if (sdl.SDL_GetWindowWMInfo(window, &wmInfo) != 1) {
-//         return error.SDLGetWindowWMInfo;
-//     }
-//     return @ptrCast(wmInfo.info.win.window);
-// }

@@ -1,6 +1,8 @@
 //! user package is based off of the PSPSDK module "user"
 //! Source: https://github.com/pspdev/pspsdk/tree/c665eedbf2cce2ae62fe200551bcf98f8bdb425f/src/user
 
+const builtin = @import("builtin");
+
 /// Delay the current thread by a specified number of microseconds
 ///
 /// Example:
@@ -18,7 +20,14 @@ pub extern fn sceKernelExitGame() callconv(.c) void;
 /// SceUID thid = sceKernelCreateThread("my_thread", threadFunc, 0x18, 0x10000, 0, NULL);
 ///
 /// Return: UID of the created thread, or an error code.
-pub extern fn sceKernelCreateThread(name: [*c]const u8, entry: ?SceKernelThreadEntry, init_priority: c_int, stack_size: c_int, attr: c_uint, option: ?*SceKernelThreadOptParam) c_int;
+pub extern fn sceKernelCreateThread(
+    name: [*c]const u8,
+    entry: ?SceKernelThreadEntry,
+    init_priority: i32,
+    stack_size: i32,
+    attr: PspThreadAttributesMask,
+    option: ?*SceKernelThreadOptParam,
+) callconv(.c) i32;
 
 /// Start a created thread
 pub extern fn sceKernelStartThread(thread_id: c_int, args_len: c_uint, args: ?*anyopaque) callconv(.c) c_int;
@@ -31,10 +40,29 @@ pub const SceKernelThreadOptParam = extern struct {
     stack_mpid: c_int,
 };
 
-pub const SceKernelThreadEntry = *const fn (args_len: c_uint, args: ?*anyopaque) callconv(.c) c_int;
+pub const SceKernelThreadEntry = *const fn (args_len: c_uint, args: [*c]u8) callconv(.c) c_int;
 
-/// Attribuets for PSP thread
-pub const PspThreadAttributes = enum(c_uint) {
+/// PspThreadAttributesMask for setting up PSP thread
+pub const PspThreadAttributesMask = packed struct(u32) {
+    unused_b0_13: u14 = 0,
+
+    vfpu: bool = false, // bit 14 (0x00004000)
+    scratch_sram: bool = false, // bit 15 (0x00008000)
+
+    unused_b16_19: u4 = 0,
+
+    no_fillstack: bool = false, // bit 20 (0x00100000)
+    clear_stack: bool = false, // bit 21 (0x00200000)
+
+    unused_b22_28: u7 = 0,
+
+    usbwlan: bool = false, // NOTE: Set the user bit as well when using this
+    vsh: bool = false, // NOTE: Set the user bit as well when using this
+    user: bool = false, // bit 31 (0x80000000)
+};
+
+/// Attributes for PSP thread
+pub const PspThreadAttributes = enum(u32) {
     /// Enable VFPU access for the thread.
     vfpu = 0x00004000,
     /// Start the thread in user mode (done automatically if the thread creating it is in user mode).

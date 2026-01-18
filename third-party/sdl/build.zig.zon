@@ -1,13 +1,13 @@
 .{
     .name = .sdl,
-    .version = "3.2.22",
+    .version = "3.4.0",
     .dependencies = .{
         .sdl3 = .{
             .path = "upstream/sdl3",
             // NOTE(jae): 2024-06-30
             // Using ".zip" as "tar.gz" fails on Windows for Zig 0.13.0 due to symlink issue with something in the android folders
-            // .url = "https://github.com/libsdl-org/SDL/releases/download/release-3.2.22/SDL3-3.2.22.zip",
-            // .hash = "1220f6166331ea8d99db780b0de3c72cc053f0d26acfabc4270c88b03fe0ca597434",
+            // .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.0.zip",
+            // .hash = "N-V-__8AABtk8gIAP7ZQ4yacjIPcrx3btsH0bGNpJG4MPpm6",
             // .lazy = true,
         },
         // NOTE(jae): 2024-10-27

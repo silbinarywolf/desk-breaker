@@ -8,15 +8,14 @@ pub fn build(b: *std.Build) !void {
     const wuffs_src_file = wuffs_dep.path("release/c/wuffs-v0.3.c");
 
     // files
-    const lib = b.addLibrary(.{
-        .name = "wuffs",
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
     });
-    lib.root_module.addCMacro("WUFFS_IMPLEMENTATION", "");
+
+    // Define WUFFS_IMPLEMENTATION for main library
+    mod.addCMacro("WUFFS_IMPLEMENTATION", "");
 
     // Define WUFFS_CONFIG__STATIC_FUNCTIONS (combined with WUFFS_IMPLEMENTATION)
     // to make all of Wuffs' functions have static storage.
@@ -36,19 +35,26 @@ pub fn build(b: *std.Build) !void {
     // very well discard Wuffs code for unused codecs, but listing the Wuffs
     // modules we use makes that process explicit. Preprocessing means that such
     // code simply isn't compiled.
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULES", "");
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULE__ADLER32", "");
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULE__BASE", "");
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULE__CRC32", "");
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULE__DEFLATE", "");
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULE__PNG", "");
-    lib.root_module.addCMacro("WUFFS_CONFIG__MODULE__ZLIB", "");
-
-    lib.addCSourceFile(.{
+    const wuffs_macros = &[_][]const u8{
+        "WUFFS_CONFIG__MODULES",
+        "WUFFS_CONFIG__MODULE__ADLER32",
+        "WUFFS_CONFIG__MODULE__BASE",
+        "WUFFS_CONFIG__MODULE__CRC32",
+        "WUFFS_CONFIG__MODULE__DEFLATE",
+        "WUFFS_CONFIG__MODULE__PNG",
+        "WUFFS_CONFIG__MODULE__ZLIB",
+    };
+    for (wuffs_macros) |wuff_macro| {
+        mod.addCMacro(wuff_macro, "");
+    }
+    mod.addCSourceFile(.{
         .file = wuffs_src_file,
         .flags = &.{"-fno-sanitize=undefined"},
     });
-    b.installArtifact(lib);
+    b.installArtifact(b.addLibrary(.{
+        .name = "wuffs",
+        .root_module = mod,
+    }));
 
     // Module
 
@@ -57,18 +63,18 @@ pub fn build(b: *std.Build) !void {
     // Changed: sizeof__wuffs_png__decoder() -> sizeof__wuffs_png__decoder(void) to avoid Wasm issues
     var c_translate = b.addTranslateC(.{
         .target = target,
-        .optimize = optimize,
+        .optimize = .ReleaseFast,
         .root_source_file = wuffs_src_file,
     });
-    c_translate.defineCMacroRaw("WUFFS_CONFIG__STATIC_FUNCTIONS");
+
+    // WUFFS_CONFIG__MODULE__BASE__INTERFACES
+    // c_translate.defineCMacroRaw("WUFFS_CONFIG__STATIC_FUNCTIONS");
     // c_translate.defineCMacroRaw("WUFFS_IMPLEMENTATION");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULES");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__ADLER32");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__BASE");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__CRC32");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__DEFLATE");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__PNG");
-    // c_translate.defineCMacroRaw("WUFFS_CONFIG__MODULE__ZLIB");
+    c_translate.defineCMacro("WUFFS_CONFIG__MODULES", "1");
+    c_translate.defineCMacro("WUFFS_CONFIG__MODULE__PNG", "1");
+    // for (wuffs_macros) |c_macro| {
+    //     c_translate.defineCMacro(c_macro, "1");
+    // }
     _ = b.addModule("wuffs", .{
         .target = target,
         .optimize = optimize,

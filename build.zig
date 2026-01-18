@@ -19,7 +19,11 @@ pub fn build(b: *std.Build) !void {
             @compileError("The minimum version of Zig required to compile " ++ app_name ++ " is " ++ recommended_zig_version ++ ", found " ++ @import("builtin").zig_version_string ++ ".");
         },
         .gt => {
-            const colors = std.fs.File.stderr().supportsAnsiEscapeCodes();
+            const colors = if (builtin.zig_version.major == 0 and builtin.zig_version.major == 15)
+                std.fs.File.stderr().supportsAnsiEscapeCodes()
+            else
+                try std.Io.File.stderr().supportsAnsiEscapeCodes(b.graph.io);
+
             std.debug.print(
                 "{s}WARNING:\n" ++ app_name ++ " recommends Zig version '{s}', but found '{s}', build may fail...{s}\n\n\n",
                 .{
@@ -44,26 +48,32 @@ pub fn build(b: *std.Build) !void {
         switch (platform) {
             .none => {}, // do nothing
             .psp => {
-                // EXPERIMENTAL: Try to get it working with Zig
+                // EXPERIMENTAL: Get it working with Zig via ofmt=.c
+                // zig build -Doptimize=ReleaseFast -Dplatform=psp
+
                 var feature_set = std.Target.Cpu.Feature.Set.empty;
                 feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.single_float));
+                // feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
                 feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.noabicalls));
 
-                var remove_feature_set = std.Target.Cpu.Feature.Set.empty;
-                remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
-                remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fp64));
+                // var remove_feature_set = std.Target.Cpu.Feature.Set.empty;
+                // remove_feature_set.addFeature(std.Target.mips.Feature.);
+                // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
+                // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fp64));
                 // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fpxx));
 
                 const query: std.Target.Query = .{
                     .cpu_arch = .mipsel,
                     .os_tag = .freestanding,
-                    // .abi = .musleabi,
-                    .abi = .none, // NOTE(jae): using this only because Zig has a "mipsel" C library for it
+                    // .abi = .musleabi, // .eabi
+                    // .abi = .default(.mipsel, .freestanding), // NOTE(jae): using this only because Zig has a "mipsel" C library for it
+                    .abi = .eabi, // PSP SDK expects this abi
                     // Sony Allegrex is an extended Mips2 + VFPU
-                    //.cpu_model = .baseline,
                     .cpu_model = .{ .explicit = &std.Target.mips.cpu.mips2 },
                     .cpu_features_add = feature_set,
-                    .cpu_features_sub = remove_feature_set,
+                    // NOTE(jae): 2026-01-17
+                    // Using ofmt=.c as Zig doesn't build the .elf/.o files with -msingle-float and ABI doesn't match either
+                    .ofmt = .c,
                 };
                 const target = b.resolveTargetQuery(query);
                 break :target_blk target;
@@ -73,32 +83,34 @@ pub fn build(b: *std.Build) !void {
         // If no platform defined, use Zig default targetting: -Dtarget
         const root_target_query = b.standardTargetOptionsQueryOnly(.{});
 
-        // If targetting wasi
-        if (root_target_query.os_tag != null and root_target_query.os_tag.? == .wasi) {
-            // EXPERIMENT: See if I can target and build a WASM file of non-trivial application without Emscripten
-            var query = root_target_query;
-            query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
-                .atomics,
-                .bulk_memory,
-                .exception_handling, // Added to resolve freetype setjmp/longjmp compilation issues
-            }));
-            break :target_blk b.resolveTargetQuery(query);
-        }
-
-        // If targetting emscripten, add additional features
-        if (root_target_query.os_tag != null and root_target_query.os_tag.? == .emscripten) {
-            var query = root_target_query;
-            query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
-                // NOTE(jae): 2025-04-06
-                // Not enabling threading (atomics+bulk_memory) because testing on my phone on the same network via "emrun"
-                // sucks without something that can serve HTTPS
-                // .atomics,
-                // .bulk_memory,
-                .exception_handling,
-                // .reference_types,
-            }));
-            break :target_blk b.resolveTargetQuery(query);
-        }
+        // Change default os tag settings
+        if (root_target_query.os_tag) |os_tag| switch (os_tag) {
+            .wasi => {
+                // EXPERIMENT: See if I can target and build a WASM file of non-trivial application without Emscripten
+                var query = root_target_query;
+                query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
+                    .atomics,
+                    .bulk_memory,
+                    .exception_handling, // Added to resolve freetype setjmp/longjmp compilation issues
+                }));
+                break :target_blk b.resolveTargetQuery(query);
+            },
+            // zig build -Dtarget=wasm32-emscripten -Dcpu=mvp
+            .emscripten => {
+                var query = root_target_query;
+                query.cpu_features_add.addFeatureSet(std.Target.wasm.featureSet(&[_]std.Target.wasm.Feature{
+                    // NOTE(jae): 2025-04-06
+                    // Not enabling threading (atomics+bulk_memory) because testing on my phone on the same network via "emrun"
+                    // sucks without something that can serve HTTPS
+                    // .atomics,
+                    // .bulk_memory,
+                    // .exception_handling,
+                    // .reference_types,
+                }));
+                break :target_blk b.resolveTargetQuery(query);
+            },
+            else => {}, // fallthrough
+        };
         break :target_blk b.resolveTargetQuery(root_target_query);
     };
     const optimize = b.standardOptimizeOption(.{});
@@ -152,6 +164,8 @@ pub fn build(b: *std.Build) !void {
                 true
             else
                 null,
+            //.link_libc = false,
+            //.link_libcpp = false,
         });
 
         const library_optimize = if (!target.result.abi.isAndroid() and target.result.os.tag != .emscripten)
@@ -172,10 +186,7 @@ pub fn build(b: *std.Build) !void {
             });
             const sdl_lib = sdl_dep.artifact("SDL3");
 
-            if (platform == .psp) {
-                // TODO: Make PSPSDK tools just include this
-                app.linkSystemLibrary("SDL3", .{});
-            } else if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
                 // NOTE(jae): 2024-07-03
                 // Hack for Linux to use the SDL3 version compiled using native Linux tools
                 app.linkLibrary(sdl_lib);
@@ -225,10 +236,9 @@ pub fn build(b: *std.Build) !void {
                 .platform = platform,
             });
             const freetype_lib = freetype_dep.artifact("freetype");
-            if (target.result.os.tag != .emscripten and platform != .psp) {
+            if (target.result.os.tag != .emscripten) {
                 // NOTE(jae): 2025-02-02
                 // - Link with Emscripten toolchains version instead due to setjmp/etc symbols not being found.
-                // - Link with PSP toolchains version to avoid issues with compilation being different
                 app.linkLibrary(freetype_lib);
             }
             app.addImport("freetype", freetype_dep.module("freetype"));
@@ -254,7 +264,7 @@ pub fn build(b: *std.Build) !void {
             if (imgui_enable_freetype) {
                 for (freetype_lib.root_module.include_dirs.items) |freetype_include_dir| {
                     switch (freetype_include_dir) {
-                        .path => |p| imgui_lib.addIncludePath(p),
+                        .path => |p| imgui_lib.root_module.addIncludePath(p),
                         else => std.debug.panic("unhandled path from Freetype: {s}", .{@tagName(freetype_include_dir)}),
                     }
                 }
@@ -262,8 +272,8 @@ pub fn build(b: *std.Build) !void {
             // Add <SDL.h> to ImGui so it can compile with Freetype support
             for (sdl_module.include_dirs.items) |sdl_include_dir| {
                 switch (sdl_include_dir) {
-                    .path => |p| imgui_lib.addIncludePath(p),
-                    .config_header_step => |ch| imgui_lib.addConfigHeader(ch),
+                    .path => |p| imgui_lib.root_module.addIncludePath(p),
+                    .config_header_step => |ch| imgui_lib.root_module.addConfigHeader(ch),
                     // NOTE(jae): 2024-07-31: added to ignore Mac system includes used by SDL2 build
                     .path_system, .framework_path_system => continue,
                     else => std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
@@ -281,9 +291,34 @@ pub fn build(b: *std.Build) !void {
             app.addImport("wuffs", wuffs_dep.module("wuffs"));
         }
 
+        // add Wayland module if building on Linux
+        if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
+            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+                app.linkSystemLibrary("wayland-client", .{});
+
+                // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
+                const add_generated_wayland_module = false;
+                if (add_generated_wayland_module) {
+                    const wayland = @import("zig_wayland");
+                    var scanner = wayland.Scanner.create(b, .{});
+
+                    const wayland_protocols_dep = b.dependency("wayland_protocols", .{});
+                    scanner.addCustomProtocol(wayland_protocols_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
+                    scanner.generate("ext_idle_notifier_v1", 2);
+                    scanner.generate("wl_seat", 5);
+
+                    // NOTE(jae): 2026-01-03
+                    // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
+                    app.addImport("_wayland", b.createModule(.{
+                        .root_source_file = scanner.result,
+                    }));
+                }
+            }
+        }
+
         const maybe_linkage: ?std.builtin.LinkMode = if (target.result.abi.isAndroid())
             .dynamic
-        else if (target.result.os.tag == .emscripten or platform == .psp)
+        else if (target.result.os.tag == .emscripten or target.result.os.tag == .freestanding or platform == .psp)
             .static
         else
             null;
@@ -315,12 +350,15 @@ pub fn build(b: *std.Build) !void {
             .windows => exe.stack_size = 2048 * 1024,
             else => {}, // use default for untested OS
         }
+        // if (platform == .psp) {
+        //     exe.stack_size = 256 * 1024;
+        // }
 
         if (target.result.os.tag == .windows) {
             if (optimize != .Debug and exe.subsystem == null) {
                 exe.subsystem = .Windows;
             }
-            exe.addWin32ResourceFile(.{
+            app.addWin32ResourceFile(.{
                 // NOTE(jae): 2025-01-27
                 // RC file references "icon.ico" for the EXE icon
                 .file = b.path("src/resources/win.rc"),
@@ -356,30 +394,23 @@ pub fn build(b: *std.Build) !void {
 
             const installed_web_html = em.addInstallArtifact(exe);
             b.getInstallStep().dependOn(&installed_web_html.step);
+        } else if (platform == .psp) {
+            const psp_dep = b.lazyDependency("psp", .{
+                .target = target,
+                .optimize = optimize,
+            }) orelse return;
+
+            app.addImport("psp", psp_dep.module("psp"));
+
+            const psptool = psp.Tools.create(b, .{}) orelse return;
+            psptool.buildWithNativeSdk(exe);
         } else {
-            if (platform == .psp) {
-                const psp_dep = b.lazyDependency("psp", .{
-                    .target = target,
-                    .optimize = optimize,
-                }) orelse return;
+            const run_step = b.step("run", "Run the application");
+            const run_cmd = b.addRunArtifact(exe);
+            run_step.dependOn(&run_cmd.step);
 
-                app.addImport("psp", psp_dep.module("psp"));
-                // exe.linkLibrary(psp_dep.artifact("pspgu"));
-
-                const psptool = psp.Tools.create(b, .{}) orelse return;
-                // psptool.addStandardLibrary(exe);
-                psptool.buildWithDocker(exe);
-
-                const installed_exe = b.addInstallArtifact(exe, .{});
-                b.getInstallStep().dependOn(&installed_exe.step);
-            } else {
-                const run_step = b.step("run", "Run the application");
-                const run_cmd = b.addRunArtifact(exe);
-                run_step.dependOn(&run_cmd.step);
-
-                const installed_exe = b.addInstallArtifact(exe, .{});
-                b.getInstallStep().dependOn(&installed_exe.step);
-            }
+            const installed_exe = b.addInstallArtifact(exe, .{});
+            b.getInstallStep().dependOn(&installed_exe.step);
         }
     }
     if (enable_android_build) {

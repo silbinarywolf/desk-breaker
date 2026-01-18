@@ -3,6 +3,7 @@ const time = std.time;
 const builtin = @import("builtin");
 const imgui = @import("imgui");
 
+const Timer = @import("Timer.zig");
 const App = @import("App.zig");
 
 pub fn render(app: *App) !void {
@@ -47,7 +48,7 @@ pub fn render(app: *App) !void {
 
             if (imgui.igButton("Exit", .{})) {
                 if (app.break_mode.held_down_timer == null) {
-                    app.break_mode.held_down_timer = try time.Timer.start();
+                    app.break_mode.held_down_timer = try Timer.start();
                 }
 
                 // increment exit presses

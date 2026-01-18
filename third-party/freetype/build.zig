@@ -10,13 +10,7 @@ pub fn build(b: *std.Build) !void {
     const platform = b.option(Platform, "platform", "The platform to build for. (ie. PSP)") orelse .none;
 
     const freetype: LazyPath = blk: {
-        const dep: *Dependency = b.lazyDependency("freetype", .{}) orelse {
-            break :blk b.path("");
-        };
-        std.fs.accessAbsolute(dep.path("include/ft2build.h").getPath(b), .{}) catch |err| switch (err) {
-            error.FileNotFound => return error.InvalidDependency,
-            else => return err,
-        };
+        const dep: *Dependency = b.lazyDependency("freetype", .{}) orelse break :blk b.path("");
         break :blk dep.path("");
     };
     const freetype_include_path = freetype.path(b, "include");
@@ -24,17 +18,17 @@ pub fn build(b: *std.Build) !void {
     // const libpng_enabled = b.option(bool, "enable-libpng", "Build libpng") orelse false;
     const libpng_enabled = false;
 
-    const lib = b.addLibrary(.{
-        .name = "freetype",
-        .linkage = .static,
-        .root_module = b.createModule(.{
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        }),
+    var mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
     });
-    if (target.result.os.tag == .linux) {
-        lib.linkSystemLibrary("m");
+    if (platform == .psp) {
+        mod.linkSystemLibrary("m", .{});
+        // mod.linkSystemLibrary("z", .{});
+        // mod.linkSystemLibrary("png", .{});
+    } else if (target.result.os.tag == .linux) {
+        mod.linkSystemLibrary("m", .{});
     }
 
     // const zlib_dep = b.dependency("zlib", .{ .target = target, .optimize = optimize });
@@ -43,15 +37,15 @@ pub fn build(b: *std.Build) !void {
     //     const libpng_dep = b.dependency("libpng", .{ .target = target, .optimize = optimize });
     //     lib.linkLibrary(libpng_dep.artifact("png"));
     // }
-    lib.addIncludePath(freetype_include_path);
+    mod.addIncludePath(freetype_include_path);
 
     // Macros
-    lib.root_module.addCMacro("FT2_BUILD_LIBRARY", "1");
-    lib.root_module.addCMacro("HAVE_UNISTD_H", "1");
-    lib.root_module.addCMacro("HAVE_FCNTL_H", "1");
+    mod.addCMacro("FT2_BUILD_LIBRARY", "1");
+    mod.addCMacro("HAVE_UNISTD_H", "1");
+    mod.addCMacro("HAVE_FCNTL_H", "1");
     if (target.result.os.tag == .freestanding or target.result.abi == .none) {
         // Disable ftell, etc
-        lib.root_module.addCMacro("FT_CONFIG_OPTION_DISABLE_STREAM_SUPPORT", "1");
+        mod.addCMacro("FT_CONFIG_OPTION_DISABLE_STREAM_SUPPORT", "1");
     }
 
     // NOTE(jae): 2025-02-02
@@ -64,25 +58,25 @@ pub fn build(b: *std.Build) !void {
     const flags = &[_][]const u8{
         "-fno-sanitize=undefined",
     };
-    if (libpng_enabled) lib.root_module.addCMacro("FT_CONFIG_OPTION_USE_PNG", "1");
+    if (libpng_enabled) mod.addCMacro("FT_CONFIG_OPTION_USE_PNG", "1");
     // TODO(JAE): 2024-04-08
     // add zlib to build
     // "-DFT_CONFIG_OPTION_SYSTEM_ZLIB=1",
-    // if (libzlib_enabled) lib.root_module.addCMacro("FT_CONFIG_OPTION_SYSTEM_ZLIB", "1");
+    // if (libzlib_enabled) mod.addCMacro("FT_CONFIG_OPTION_SYSTEM_ZLIB", "1");
 
-    lib.addCSourceFiles(.{
+    mod.addCSourceFiles(.{
         .root = freetype,
         .files = srcs,
         .flags = flags,
     });
-    // lib.installHeader(b.path("include/freetype-zig.h"), "freetype-zig.h");
-    // lib.installHeader(freetype.path(b, "include/ft2build.h"), "ft2build.h");
-    // lib.installHeadersDirectory(freetype.path(b, "include/freetype"), "freetype");
+    // mod.installHeader(b.path("include/freetype-zig.h"), "freetype-zig.h");
+    // mod.installHeader(freetype.path(b, "include/ft2build.h"), "ft2build.h");
+    // mod.installHeadersDirectory(freetype.path(b, "include/freetype"), "freetype");
 
     const os_tag = target.result.os.tag;
     switch (os_tag) {
         .windows => {
-            lib.addCSourceFiles(.{
+            mod.addCSourceFiles(.{
                 .root = freetype,
                 .files = &.{
                     "builds/windows/ftsystem.c",
@@ -90,13 +84,13 @@ pub fn build(b: *std.Build) !void {
                 },
                 .flags = flags,
             });
-            lib.addWin32ResourceFile(.{
+            mod.addWin32ResourceFile(.{
                 .file = freetype.path(b, "src/base/ftver.rc"),
             });
         },
         else => {
             if (target.result.os.tag == .linux and platform == .none) {
-                lib.addCSourceFiles(.{
+                mod.addCSourceFiles(.{
                     .root = freetype,
                     .files = &.{
                         "builds/unix/ftsystem.c",
@@ -105,7 +99,7 @@ pub fn build(b: *std.Build) !void {
                     .flags = flags,
                 });
             } else {
-                lib.addCSourceFiles(.{
+                mod.addCSourceFiles(.{
                     .root = freetype,
                     .files = &.{
                         "src/base/ftsystem.c",
@@ -116,7 +110,12 @@ pub fn build(b: *std.Build) !void {
             }
         },
     }
-    b.installArtifact(lib);
+
+    b.installArtifact(b.addLibrary(.{
+        .name = "freetype",
+        .linkage = .static,
+        .root_module = mod,
+    }));
 
     var c_translate = b.addTranslateC(.{
         .target = target,

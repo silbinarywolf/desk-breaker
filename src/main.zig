@@ -3,20 +3,22 @@ const builtin = @import("builtin");
 const time = std.time;
 const sdl = @import("sdl");
 const imgui = @import("imgui");
-const android = @import("android");
-const psp = @import("psp");
-const windows = @import("windows.zig");
 const datetime = @import("datetime.zig");
 
-const ProcessList = @import("ProcessList.zig");
+const windows = @import("windows.zig");
 const winregistry = @import("winregistry.zig");
+const android = @import("android");
+const psp = @import("psp");
+const wayland = @import("wayland.zig");
+
+const ProcessList = @import("ProcessList.zig");
 const UserConfig = @import("UserConfig.zig");
 const GlobalCAllocator = @import("GlobalCAllocator.zig");
 const Duration = @import("Duration.zig");
 const Window = @import("Window.zig");
 const App = @import("App.zig");
 const UserSettings = App.UserSettings;
-const Timer = App.Timer;
+const Timer = @import("Timer.zig");
 
 const ScreenOverview = @import("ScreenOverview.zig");
 const ScreenAddEditTimer = @import("ScreenAddEditTimer.zig");
@@ -28,20 +30,16 @@ const log = std.log.default;
 const assert = std.debug.assert;
 
 comptime {
-    if (builtin.cpu.arch.isMIPS()) {
+    if (builtin.cpu.arch == .mipsel) {
         asm (psp.module_info("Zig PSP App", 0, 1, 0));
     }
 }
 
 /// custom standard options for Android
 pub const std_options: std.Options = if (builtin.abi.isAndroid())
-    .{
-        .logFn = android.logFn,
-    }
+    .{ .logFn = android.logFn }
 else if (builtin.os.tag == .freestanding)
-    .{
-        .logFn = SDL_logFn,
-    }
+    .{ .logFn = SDL_logFn }
 else
     .{};
 
@@ -53,7 +51,7 @@ fn SDL_logFn(
     args: anytype,
 ) void {
     const prefix = if (scope == .default) "" else @tagName(scope) ++ ": ";
-    var buf: [500]u8 = undefined;
+    var buf: [format.len + 512]u8 = undefined;
     const line = std.fmt.bufPrintZ(&buf, prefix ++ format, args) catch l: {
         buf[buf.len - 3 ..][0..3].* = "...".*;
         break :l &buf;
@@ -65,24 +63,15 @@ fn SDL_logFn(
 // custom panic handler for Android
 pub const panic = if (builtin.abi.isAndroid())
     android.panic
+else if (builtin.cpu.arch == .mipsel)
+    psp.panic
 else
     std.debug.FullPanic(std.debug.defaultPanic);
 
 comptime {
     if (builtin.abi.isAndroid()) {
         @export(&SDL_main, .{ .name = "SDL_main", .linkage = .strong });
-    } else if (builtin.os.tag == .freestanding) {
-        // @export(&psp_main, .{ .name = "main", .linkage = .strong });
-        // @export(&freestanding_start, .{ .name = "__start", .linkage = .strong });
     }
-}
-
-fn psp_main() callconv(.c) void {
-    _ = std.start.callMain();
-}
-
-fn freestanding_start() callconv(.c) void {
-    _ = std.start.callMain();
 }
 
 /// This needs to be exported for Android builds
@@ -93,15 +82,6 @@ fn SDL_main() callconv(.c) void {
         @compileError("SDL_main should not be called outside of Android builds");
     }
 }
-
-// NOTE(jae): 2025-04-13
-// After testing on Emscripten and Android, seemingly not needed anymore.
-// pub const os = if (builtin.os.tag == .emscripten and builtin.abi.isAndroid()) struct {
-//     pub const heap = struct {
-//         /// Force web browser to use c allocator with Emscripten
-//         pub const page_allocator = std.heap.c_allocator;
-//     };
-// } else std.os;
 
 const MousePos = struct {
     x: f32,
@@ -139,8 +119,6 @@ var global_c_allocator: *GlobalCAllocator = undefined;
 /// app_global is stored here mostly for Emscripten to access app via emscripten_set_main_loop
 var app_global: App = undefined;
 
-pub fn unload() !void {}
-
 pub fn main() !void {
     if (builtin.os.tag == .windows) {
         // Check if application is already running
@@ -165,16 +143,30 @@ pub fn main() !void {
 
     // init app
     const app = &app_global;
-    try start(app);
-
-    if (builtin.os.tag == .freestanding) {
-        @panic("TODO: Implement support for other platforms if using freestanding (like calling SDL functions only)");
-    }
+    start(app) catch |err| {
+        switch (err) {
+            error.SdlFailed => {
+                log.err("application start-up fatal SDL error: {s}", .{sdl.SDL_GetError()});
+                return error.SdlFailed;
+            },
+            else => log.err("application start-up fatal error: {s}", .{@errorName(err)}),
+        }
+        return err;
+    };
+    // if (comptime builtin.os.tag == .freestanding) {
+    //     @panic("TODO: Implement support for other platforms if using freestanding (like calling SDL functions only)");
+    // }
 
     // run update
     if (builtin.os.tag != .emscripten) {
         while (!app.has_quit) {
-            try update(app);
+            update(app) catch |err| {
+                switch (err) {
+                    error.SdlFailed => log.err("application loop fatal SDL error: {s}", .{sdl.SDL_GetError()}),
+                    else => log.err("application loop fatal error: {s}", .{@errorName(err)}),
+                }
+                return err;
+            };
         }
         try quit(app);
     } else {
@@ -190,7 +182,10 @@ pub fn main() !void {
                     return;
                 }
                 update(app) catch |err| {
-                    log.err("application has error: {}", .{err});
+                    switch (err) {
+                        error.SdlFailed => log.err("application fatal SDL error: {s}", .{sdl.SDL_GetError()}),
+                        else => log.err("application fatal error: {s}", .{@errorName(err)}),
+                    }
                     std.os.emscripten.emscripten_cancel_main_loop();
                 };
             }
@@ -235,15 +230,28 @@ pub fn start(app: *App) !void {
     };
     errdefer user_settings.deinit(allocator);
 
-    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+    // NOTE(jae): 2025-12-27
+    // If we're on Linux and have X11, prefer it over Wayland
+    // - I can control where the "Incoming Break" window gets created
+    // - I can detect activity with global mouse movement
+    if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
+        const video_driver_count: u32 = @intCast(sdl.SDL_GetNumVideoDrivers());
+        for (0..video_driver_count) |video_driver_index| {
+            const video_driver_name_cstr = sdl.SDL_GetVideoDriver(@intCast(video_driver_index));
+            if (video_driver_name_cstr == null) continue;
+            const video_driver_name = std.mem.span(video_driver_name_cstr);
+            if (std.mem.eql(u8, video_driver_name, "x11")) {
+                if (!sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_DRIVER, "x11")) return error.SdlFailed;
+                break;
+            }
+        }
+    }
+
+    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_GAMEPAD | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
         log.err("unable to initialize SDL: {s}", .{sdl.SDL_GetError()});
-        return error.SDLInitializationFailed;
+        return error.SdlFailed;
     }
     errdefer sdl.SDL_Quit();
-
-    if (builtin.os.tag == .freestanding) {
-        @panic("TODO: Implement support for other platforms if using freestanding (like calling SDL functions only)");
-    }
 
     app.* = try App.init(allocator, user_settings);
     errdefer app.deinit();
@@ -270,7 +278,7 @@ pub fn start(app: *App) !void {
             const err = sdl.SDL_GetError();
             if (err != null) {
                 log.err("unable to initialize SDL tray: {s}", .{err});
-                return error.SDLInitializationFailed;
+                return error.SdlFailed;
             }
             break :blk null;
         };
@@ -280,7 +288,7 @@ pub fn start(app: *App) !void {
     if (app.tray) |tray| {
         const tray_menu: *sdl.SDL_TrayMenu = sdl.SDL_CreateTrayMenu(tray) orelse {
             log.err("unable to initialize SDL tray menu: {s}", .{sdl.SDL_GetError()});
-            return error.SDLInitializationFailed;
+            return error.SdlFailed;
         };
         if (sdl.SDL_InsertTrayEntryAt(tray_menu, -1, "Open", sdl.SDL_TRAYENTRY_BUTTON)) |tray_entry| {
             sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
@@ -299,22 +307,35 @@ pub fn start(app: *App) !void {
         }
     }
 
-    // If using Wayland set that we have no global mouse support
-    if (builtin.os.tag == .linux) {
+    // If using Linux and X11, then setup that we have global mouse support
+    if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
         const video_driver_c = sdl.SDL_GetCurrentVideoDriver();
         if (video_driver_c != null) {
             const video_driver = std.mem.span(sdl.SDL_GetCurrentVideoDriver());
-            if (std.mem.eql(u8, video_driver, "wayland")) {
-                app.has_global_mouse_support = false;
+            if (std.mem.eql(u8, video_driver, "x11")) {
+                app.has_global_mouse_support = true;
             }
         }
     }
-    if (!app.has_global_mouse_support) {
-        app.is_user_active = true;
-    }
 
-    // Setup initial "previous mouse position"
-    _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
+    // Setup Wayland if available for checking input idle notifications
+    if (wayland.available) try wayland.init();
+    errdefer if (wayland.available) wayland.deinit();
+
+    if (!app.has_global_mouse_support) {
+        // NOTE(jae): 2025-12-28
+        // Hack, if the user has no global mouse support, then assume they are always active
+        // at their computer.
+        //
+        // For Wayland, it'd be ideal we could use the 'ext_idle_notifier' protocol instead
+        // See: https://wayland.app/protocols/ext-idle-notify-v1
+        //
+        // However, for now Bazzite supports x11, so we default to that.
+        app.is_user_active = true;
+    } else {
+        // Setup initial "previous mouse position"
+        _ = sdl.SDL_GetGlobalMouseState(&prev_mouse_pos.x, &prev_mouse_pos.y);
+    }
 
     // DEBUG: Test break screen
     // state.user_settings.default_time_till_break = Duration.init(30 * time.ns_per_s);
@@ -323,6 +344,9 @@ pub fn start(app: *App) !void {
 
 pub fn quit(app: *App) error{MemoryLeak}!void {
     app.deinit();
+    if (wayland.available) {
+        wayland.deinit();
+    }
     sdl.SDL_Quit();
     global_c_allocator.deinit();
     if (has_debug_allocator) {
@@ -340,6 +364,14 @@ pub fn update(app: *App) !void {
         const allocator = app.allocator;
         _ = app.temp_allocator.reset(.retain_capacity);
 
+        // NOTE(jae): 2026-01-18
+        // Used to test other platforms
+        //
+        // defer app.debug_frame_count += 1;
+        // if (app.debug_frame_count > 10) {
+        //     @panic("hey");
+        // }
+
         const current_frame_time = sdl.SDL_GetPerformanceCounter();
 
         // Handle tray logic
@@ -347,7 +379,7 @@ pub fn update(app: *App) !void {
             has_opened_from_tray = false;
 
             if (app.window) |app_window| {
-                _ = sdl.SDL_RestoreWindow(app_window.window);
+                if (!sdl.SDL_RestoreWindow(app_window.window)) return error.SdlFailed;
             } else {
                 // If no app window exists, create it
                 app.window = blk: {
@@ -508,7 +540,7 @@ pub fn update(app: *App) !void {
                                 if (!event.down) {
                                     // If released reset the held down timer
                                     if (app.break_mode.held_down_timer == null) {
-                                        app.break_mode.held_down_timer = try time.Timer.start();
+                                        app.break_mode.held_down_timer = try Timer.start();
                                     }
                                 }
                                 app.break_mode.esc_or_exit_presses += 1;
@@ -522,6 +554,9 @@ pub fn update(app: *App) !void {
                     else => {},
                 }
             }
+
+            // process Wayland events
+            if (wayland.available) try wayland.processEvents();
         }
 
         // Set new ImGui Frame *after* event polling, otherwise you get rare instances of sticky buttons / interactivity
@@ -535,6 +570,51 @@ pub fn update(app: *App) !void {
             }
             if (app.window) |app_window| {
                 app_window.imguiNewFrame();
+            }
+        }
+
+        // If we have a system tray and the user snoozed, then icon is set to be flashing at an interval
+        if (app.tray) |tray| {
+            const debug_blink_always_on = false;
+            if (debug_blink_always_on and app.icon_flash_timer == null) {
+                app.icon_flash_timer = try Timer.start();
+            }
+
+            // Disable timer if started but we should halt it
+            if (!debug_blink_always_on and
+                app.icon_flash_timer != null and
+                (app.snooze_times_in_a_row == 0 or app.mode == .taking_break))
+            {
+                if (app.tray_icon != .default) {
+                    sdl.SDL_SetTrayIcon(tray, app.icon.surface);
+                    app.tray_icon = .default;
+                }
+                app.icon_flash_timer = null;
+            }
+
+            // Handle timer
+            if (app.icon_flash_timer) |*icon_flash_timer| {
+                if (icon_flash_timer.read() >= 2 * time.ns_per_s) {
+                    switch (app.tray_icon) {
+                        .default => {
+                            sdl.SDL_SetTrayIcon(tray, app.icon_red.surface);
+                            app.tray_icon = .red;
+                        },
+                        .red => {
+                            sdl.SDL_SetTrayIcon(tray, app.icon.surface);
+                            app.tray_icon = .default;
+                        },
+                    }
+                    app.icon_flash_timer = try Timer.start();
+                }
+            }
+
+            // If we should toggle/flash icon
+            if (app.icon_flash_timer == null and
+                app.snooze_times_in_a_row == 0 and app.mode != .taking_break)
+            {
+                // If snoozed, then start flashing timer
+                app.icon_flash_timer = try Timer.start();
             }
         }
 
@@ -692,11 +772,11 @@ pub fn update(app: *App) !void {
                             "/xemu",
                             "/xenia",
                             // Games
+                            "/HytaleClient",
                             "/soh", // Ship of Harkinian
                             "/BarkleyV120",
                             "/AgosClient",
                             "/Bubsy3d",
-                            "/starsector", // Untested, may not work due to running under Java. Can be installed anywhere, "starsector.exe"
                         } ++ disallow_contains_list_os;
 
                         var has_match = false;
@@ -731,33 +811,43 @@ pub fn update(app: *App) !void {
 
         // Detect activity and handle timers to pop-up break window
         {
-            // Detect global mouse movement
-            var curr_mouse_pos: MousePos = undefined;
-            _ = sdl.SDL_GetGlobalMouseState(&curr_mouse_pos.x, &curr_mouse_pos.y);
-            defer prev_mouse_pos = curr_mouse_pos;
-            const diff = curr_mouse_pos.diff(prev_mouse_pos);
-            if (diff.x >= 5 and
-                diff.y >= 5)
-            {
-                app.time_since_last_input = try std.time.Timer.start();
-                app.is_user_active = true;
-            }
-
-            // Only make inactive if we have global mouse support
-            if (app.has_global_mouse_support) {
-                if (app.mode == .regular) {
-                    // Track time using computer
-                    if (app.time_since_last_input) |*time_since_last_input| {
-                        // TODO: Make inactivity time a variable
-                        const inactivity_duration = 5 * std.time.ns_per_min;
-                        if (time_since_last_input.read() > inactivity_duration) {
-                            app.is_user_active = false;
-                            app.activity_timer.reset();
+            const idle_state = wayland.idleState();
+            switch (idle_state) {
+                .unknown => {
+                    if (app.has_global_mouse_support) {
+                        // Detect global mouse movement
+                        var curr_mouse_pos: MousePos = undefined;
+                        _ = sdl.SDL_GetGlobalMouseState(&curr_mouse_pos.x, &curr_mouse_pos.y);
+                        const diff = curr_mouse_pos.diff(prev_mouse_pos);
+                        prev_mouse_pos = curr_mouse_pos;
+                        if (diff.x >= 5 and
+                            diff.y >= 5)
+                        {
+                            app.time_since_last_input = try Timer.start();
+                            app.is_user_active = true;
+                            // log.info("mouse moved: {}, {}", .{ curr_mouse_pos.x, curr_mouse_pos.y });
                         }
-                    } else {
-                        app.activity_timer.reset();
-                        app.is_user_active = false;
                     }
+                },
+                .idle => {
+                    // do nothing if idling
+                },
+                .resumed => {
+                    app.time_since_last_input = try Timer.start();
+                    app.is_user_active = true;
+                },
+            }
+            if (app.mode == .regular) {
+                if (app.time_since_last_input) |*time_since_last_input| {
+                    // TODO: Make inactivity time a variable
+                    const inactivity_duration = 4 * std.time.ns_per_min;
+                    if (time_since_last_input.read() > inactivity_duration) {
+                        app.is_user_active = false;
+                        app.activity_timer.reset();
+                    }
+                } else {
+                    app.activity_timer.reset();
+                    app.is_user_active = false;
                 }
             }
 

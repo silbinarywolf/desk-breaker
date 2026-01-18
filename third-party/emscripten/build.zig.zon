@@ -4,8 +4,8 @@
     .version = "0.0.0",
     .dependencies = .{
         .emsdk = .{
-            .url = "https://github.com/emscripten-core/emsdk/archive/refs/tags/4.0.2.zip",
-            .hash = "1220ec7dac6561f269088fe8f529662ccd6daf07256ca1d303b7e4a613d026605328",
+            .url = "https://github.com/emscripten-core/emsdk/archive/refs/tags/4.0.22.zip",
+            .hash = "N-V-__8AAAEDEAA6e344FsyiX8za28_NyCSIESUMl2M_zg_D",
             .lazy = true,
         },
     },
