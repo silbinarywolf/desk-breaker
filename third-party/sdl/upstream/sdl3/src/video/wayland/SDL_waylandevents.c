@@ -2215,6 +2215,9 @@ static void keyboard_handle_key(void *data, struct wl_keyboard *keyboard,
 
     Wayland_UpdateImplicitGrabSerial(seat, serial);
 
+#ifndef WL_KEYBOARD_KEY_STATE_REPEATED
+    #define WL_KEYBOARD_KEY_STATE_REPEATED 2
+#endif
     if (state == WL_KEYBOARD_KEY_STATE_REPEATED) {
         // If this key shouldn't be repeated, just return.
         if (seat->keyboard.xkb.keymap && !WAYLAND_xkb_keymap_key_repeats(seat->keyboard.xkb.keymap, key + 8)) {

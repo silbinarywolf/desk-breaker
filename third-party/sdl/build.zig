@@ -496,7 +496,7 @@ pub fn build(b: *std.Build) !void {
         }
 
         // Set CC environment variable to use the Zig compiler
-        var c_compiler_path = b.fmt("{s} cc -std=c89", .{b.graph.zig_exe});
+        var c_compiler_path = b.fmt("{s} cc", .{b.graph.zig_exe});
         if (sdl_host_arg.len > 0) {
             c_compiler_path = b.fmt("{s} --target={s}", .{ c_compiler_path, sdl_host_arg });
         }
@@ -533,40 +533,53 @@ pub fn build(b: *std.Build) !void {
         cmake_setup.addArg("-DHAVE_PTHREADS=1");
         cmake_setup.addArg("-DSDL_SHARED=OFF");
         cmake_setup.addArg("-DSDL_STATIC=ON");
-        cmake_setup.addArg("-DSDL_DISABLE_INSTALL_DOCS=ON");
         cmake_setup.addArg("-DSDL_TESTS=OFF");
         // Building Wayland is a pain in the ass across different Linux OSes, not doing.
-        cmake_setup.addArg("-DSDL_WAYLAND=ON");
+        //cmake_setup.addArg("-DSDL_WAYLAND=OFF");
         // Gets removed by Steam install and so I uncomment this for local Linux dev
         // cmake_setup.addArg("-DSDL_JACK=OFF");
         // Disable X11 tests ('Couldn't find dependency package for XTEST')
         cmake_setup.addArg("-DSDL_X11_XTEST=OFF");
         cmake_setup.addArg("-DSDL_VENDOR_INFO=Zig");
-        cmake_setup.addArg("-DCMAKE_INSTALL_BINDIR=bin");
-        cmake_setup.addArg("-DCMAKE_INSTALL_DATAROOTDIR=share");
-        cmake_setup.addArg("-DCMAKE_INSTALL_INCLUDEDIR=include");
         cmake_setup.addArg("-DCMAKE_INSTALL_LIBDIR=lib");
+
+        // NOTE(jae): 2026-01-18
+        // These aren't used anymore (or never were?) by SDL and I think its causing Wayland include file issues
+        // https://github.com/libsdl-org/SDL/blob/97c1df66a8e945317a4accb24261b868672f7757/.github/workflows/generic.yml#L347
+        // cmake_setup.addArg("-DCMAKE_INSTALL_BINDIR=bin");
+        // cmake_setup.addArg("-DCMAKE_INSTALL_DATAROOTDIR=share");
+        // cmake_setup.addArg("-DCMAKE_INSTALL_INCLUDEDIR=include");
         if (b.verbose) {
             cmake_setup.addArg("-Wdev");
         }
 
-        const cmake_build = b.addSystemCommand(&(.{
-            "cmake", "--build",
-        }));
-        cmake_build.step.dependOn(&cmake_setup.step);
-        // If editing SDL3 *.c files, this will use cached copies and only rebuild the *.c files
-        // that changed
-        for (linux_src_files) |linux_src_file| {
-            cmake_build.addFileInput(sdl_path.path(b, linux_src_file));
-        }
-        cmake_build.addDirectoryArg(build_dir);
-        // Setup config: https://github.com/libsdl-org/SDL/blob/45dfdfbb7b1ac7d13915997c4faa8132187b74e1/.github/workflows/generic.yml#L302C54-L302C70
-        cmake_build.addArg("--config");
-        cmake_build.addArg(cmake_build_type);
-        if (b.verbose) {
-            cmake_build.addArg("--verbose");
-        }
-        cmake_build.addArg("--parallel");
+        const cmake_build = buildblk: {
+            const cmake_build = b.addSystemCommand(&(.{
+                "cmake", "--build",
+            }));
+            cmake_build.step.dependOn(&cmake_setup.step);
+            cmake_build.addDirectoryArg(build_dir);
+
+            // Setup config: https://github.com/libsdl-org/SDL/blob/45dfdfbb7b1ac7d13915997c4faa8132187b74e1/.github/workflows/generic.yml#L302C54-L302C70
+            cmake_build.addArg("--config");
+            cmake_build.addArg(cmake_build_type);
+
+            // cmake_build.addArgs(&.{ "--target", "package" });
+
+            // If editing SDL3 *.c files, this will use cached copies and only rebuild the *.c files
+            // that changed
+            for (linux_src_files) |linux_src_file| {
+                cmake_build.addFileInput(sdl_path.path(b, linux_src_file));
+            }
+            // NOTE(jae): 2026-01-18
+            // wayland-generated-protocols should output as they have newer features like WL_KEYBOARD_KEY_STATE_REPEATED
+            cmake_build.addFileInput(build_dir.path(b, "wayland-generated-protocols/wayland-client-protocol.h"));
+            if (b.verbose) {
+                cmake_build.addArg("--verbose");
+            }
+            cmake_build.addArg("--parallel");
+            break :buildblk cmake_build;
+        };
 
         const cmake_install = b.addSystemCommand(&(.{
             "cmake", "--install",

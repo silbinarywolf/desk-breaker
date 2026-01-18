@@ -526,11 +526,12 @@ static bool Wayland_IsPreferred(struct wl_display *display)
     wl_registry_add_listener(registry, &preferred_registry_listener, &preferred_data);
 
     WAYLAND_wl_display_roundtrip(display);
-
+#ifdef SDL_WL_FIXES_VERSION
     if (preferred_data.wl_fixes) {
         wl_fixes_destroy_registry(preferred_data.wl_fixes, registry);
         wl_fixes_destroy(preferred_data.wl_fixes);
     }
+#endif
     wl_registry_destroy(registry);
 
     if (!preferred_data.has_fifo_v1) {
@@ -1603,11 +1604,15 @@ static void Wayland_VideoCleanup(SDL_VideoDevice *_this)
     }
 
     if (data->shm) {
+#ifdef WL_SHM_RELEASE_SINCE_VERSION
         if (wl_shm_get_version(data->shm) >= WL_SHM_RELEASE_SINCE_VERSION) {
             wl_shm_release(data->shm);
         } else {
             wl_shm_destroy(data->shm);
         }
+#else
+        wl_shm_destroy(data->shm);
+#endif
         data->shm = NULL;
     }
 
@@ -1701,11 +1706,13 @@ static void Wayland_VideoCleanup(SDL_VideoDevice *_this)
     }
 
     if (data->registry) {
+#ifdef SDL_WL_FIXES_VERSION
         if (data->wl_fixes) {
             wl_fixes_destroy_registry(data->wl_fixes, data->registry);
             wl_fixes_destroy(data->wl_fixes);
             data->wl_fixes = NULL;
         }
+#endif
         wl_registry_destroy(data->registry);
         data->registry = NULL;
     }

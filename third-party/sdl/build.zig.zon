@@ -3,12 +3,12 @@
     .version = "3.4.0",
     .dependencies = .{
         .sdl3 = .{
-            // .path = "upstream/sdl3",
+            .path = "upstream/sdl3",
             // NOTE(jae): 2024-06-30
             // Using ".zip" as "tar.gz" fails on Windows for Zig 0.13.0 due to symlink issue with something in the android folders
-            .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.0.zip",
-            .hash = "N-V-__8AABtk8gIAP7ZQ4yacjIPcrx3btsH0bGNpJG4MPpm6",
-            .lazy = true,
+            // .url = "https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.4.0.zip",
+            // .hash = "N-V-__8AABtk8gIAP7ZQ4yacjIPcrx3btsH0bGNpJG4MPpm6",
+            // .lazy = true,
         },
         // NOTE(jae): 2024-10-27
         // I attempted to collect the various Linux dependencies and make everything built through Zig but gave up.
