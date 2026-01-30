@@ -31,7 +31,7 @@ const assert = std.debug.assert;
 
 comptime {
     if (builtin.cpu.arch == .mipsel) {
-        asm (psp.module_info("Zig PSP App", 0, 1, 0));
+        asm (psp.module_info("Desk Breaker", 0, 1, 0));
     }
 }
 
@@ -247,7 +247,7 @@ pub fn start(app: *App) !void {
         }
     }
 
-    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_GAMEPAD | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+    if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_GAMEPAD)) {
         log.err("unable to initialize SDL: {s}", .{sdl.SDL_GetError()});
         return error.SdlFailed;
     }

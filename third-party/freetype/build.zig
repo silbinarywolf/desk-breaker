@@ -126,6 +126,10 @@ pub fn build(b: *std.Build) !void {
     c_translate.addIncludePath(freetype_include_path);
 
     _ = c_translate.addModule("freetype");
+
+    // Export the <ft2build.h> directory so that other dependencies like ImGui can use the FreeType includes
+    // in their build.
+    b.addNamedLazyPath("include_path", freetype_include_path);
 }
 
 const Platform = enum {

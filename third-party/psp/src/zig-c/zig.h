@@ -6,6 +6,11 @@
 #undef zig_noreturn
 #define zig_noreturn _Noreturn
 
+// note(jae): 2026-01-30
+// Silence error like warning: '__builtin_strlen' argument 1 declared attribute 'nonstring' [-Wstringop-overread]
+// #undef zig_nonstring
+// #define zig_nonstring
+
 // NOTE(jae): 2026-18-01
 // Initially I used this but later I just imported the "lib/compiler_rt.zig" into the Zig artifact.
 //

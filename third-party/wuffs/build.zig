@@ -51,10 +51,12 @@ pub fn build(b: *std.Build) !void {
         .file = wuffs_src_file,
         .flags = &.{"-fno-sanitize=undefined"},
     });
-    b.installArtifact(b.addLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "wuffs",
+        .linkage = .static,
         .root_module = mod,
-    }));
+    });
+    b.installArtifact(lib);
 
     // Module
 

@@ -1,10 +1,12 @@
-//! PSP config for SDL_build_config.h.cmake
+//! Emscripten config for SDL_build_config.h.cmake
 
 const SDLConfig = @import("sdlbuild.zig").SDLConfig;
 
-/// NOTE(jae): 2025-07-04
-/// This was just based on on Emscripten with tweaks and not the actual PSP build instructions
+/// NOTE(jae): 2025-04-05
+/// Last version of SDL_build_config_emscripten: https://github.com/libsdl-org/SDL/blob/c48fbbb067bb21e91f0aa300d115b4819947ecc3/include/build_config/SDL_build_config_emscripten.h
+/// Reference to older config: https://github.com/libsdl-org/SDL/issues/11236#issuecomment-2436438570
 pub const config: SDLConfig = .{
+    // .HAVE_GCC_ATOMICS = true, // Enabled conditionally depending on Wasm build settings
     // LibC headers
     .HAVE_LIBC = true,
     .HAVE_ALLOCA_H = true,
@@ -15,7 +17,7 @@ pub const config: SDLConfig = .{
     .HAVE_MALLOC_H = true,
     .HAVE_MATH_H = true,
     .HAVE_MEMORY_H = true,
-    // .HAVE_SIGNAL_H = true,
+    .HAVE_SIGNAL_H = true,
     .HAVE_STDARG_H = true,
     // .HAVE_STDBOOL_H = true,
     .HAVE_STDDEF_H = true,
@@ -28,17 +30,17 @@ pub const config: SDLConfig = .{
     .HAVE_WCHAR_H = true,
 
     // C library functions
-    // .HAVE_DLOPEN = true,
+    .HAVE_DLOPEN = true,
     .HAVE_MALLOC = true,
     // .HAVE_CALLOC = true,
     // .HAVE_REALLOC = true,
-    // .HAVE_FDATASYNC = true,
+    .HAVE_FDATASYNC = true,
     // .HAVE_FREE = true,
-    // .HAVE_GETENV = true,
-    // .HAVE_GETHOSTNAME = true,
-    // .HAVE_SETENV = true,
-    // .HAVE_PUTENV = true,
-    // .HAVE_UNSETENV = true,
+    .HAVE_GETENV = true,
+    .HAVE_GETHOSTNAME = true,
+    .HAVE_SETENV = true,
+    .HAVE_PUTENV = true,
+    .HAVE_UNSETENV = true,
     .HAVE_ABS = true,
     .HAVE_BCOPY = true,
     .HAVE_MEMSET = true,
@@ -54,8 +56,8 @@ pub const config: SDLConfig = .{
     .HAVE_WCSTOL = true,
     .HAVE_STRLEN = true,
     .HAVE_STRNLEN = true,
-    // .HAVE_STRLCPY = true, // Not found for PSP build in testing against mipsel-linux-gnueabi
-    // .HAVE_STRLCAT = true // Not found for PSP build in testing against mipsel-linux-gnueabi
+    .HAVE_STRLCPY = true,
+    .HAVE_STRLCAT = true,
     .HAVE_STRPBRK = true,
     .HAVE_INDEX = true,
     .HAVE_RINDEX = true,
@@ -126,51 +128,55 @@ pub const config: SDLConfig = .{
     .HAVE_TANF = true,
     .HAVE_TRUNC = true,
     .HAVE_TRUNCF = true,
+    .HAVE_FOPEN64 = true,
     .HAVE_FSEEKO = true,
+    .HAVE_FSEEKO64 = true,
     .HAVE_POSIX_FALLOCATE = true,
-    // .HAVE_SIGACTION = true,
+    .HAVE_SIGACTION = true,
+    .HAVE_SA_SIGACTION = true,
     .HAVE_ST_MTIM = true,
     .HAVE_SETJMP = true,
     .HAVE_NANOSLEEP = true,
     .HAVE_GMTIME_R = true,
     .HAVE_LOCALTIME_R = true,
     .HAVE_NL_LANGINFO = true,
-    // .HAVE_SYSCONF = true,
+    .HAVE_SYSCONF = true,
     .HAVE_CLOCK_GETTIME = true,
-    .HAVE_GETPAGESIZE = false, // Disable to fix undefined reference to `getpagesize'
+    .HAVE_GETPAGESIZE = true,
     .HAVE_ICONV = true,
-    .HAVE_PPOLL = true, // Changed to HAVE_PPOLL in SDL 3.4.6-prerelease
+    .HAVE_PPOLL = true, // Renamed from HAVE_POLL to HAVE_PPOLL in SDL 3.4.6-prerelease
     .HAVE__EXIT = true,
     // End of C library functions
 
     .HAVE_O_CLOEXEC = true,
 
-    .SDL_THREAD_PSP = true,
     // .SDL_THREADS_DISABLED = true, // Enabled conditionally depending on Wasm build settings
     // .SDL_THREAD_PTHREAD = true, // Enabled conditionally depending on Wasm build settings
     // .SDL_THREAD_PTHREAD_RECURSIVE_MUTEX = true, // Enabled conditionally depending on Wasm build settings
-
+    .SDL_AUDIO_DRIVER_DISK = true,
     .SDL_AUDIO_DRIVER_DUMMY = true,
-    .SDL_AUDIO_DRIVER_PSP = true,
-    .SDL_CAMERA_DISABLED = true,
-    .SDL_JOYSTICK_PSP = true,
+    .SDL_AUDIO_DRIVER_EMSCRIPTEN = true,
+    .SDL_JOYSTICK_EMSCRIPTEN = true,
     .SDL_JOYSTICK_VIRTUAL = true,
-    .SDL_HAPTIC_DISABLED = true,
+    .SDL_HAPTIC_DUMMY = true,
     .SDL_PROCESS_DUMMY = true,
-    .SDL_SENSOR_DISABLED = true,
+    .SDL_SENSOR_DUMMY = true,
     .SDL_LOADSO_DLOPEN = true,
-    .SDL_TIME_PSP = true,
-    .SDL_TIMER_PSP = true,
-    // .SDL_VIDEO_DRIVER_DUMMY = true,
-    .SDL_VIDEO_DRIVER_PSP = true,
+    .SDL_TIME_UNIX = true,
+    .SDL_TIMER_UNIX = true,
+    .SDL_VIDEO_DRIVER_DUMMY = true,
+    .SDL_VIDEO_DRIVER_EMSCRIPTEN = true,
     .SDL_VIDEO_DRIVER_OFFSCREEN = true,
     .SDL_VIDEO_RENDER_GPU = true,
-    .SDL_VIDEO_RENDER_PSP = true,
-    .SDL_POWER_PSP = true,
-    .SDL_FILESYSTEM_PSP = true,
+    .SDL_VIDEO_RENDER_OGL_ES2 = true,
+    .SDL_VIDEO_OPENGL_ES2 = true,
+    .SDL_VIDEO_OPENGL_EGL = true,
+    .SDL_POWER_EMSCRIPTEN = true,
+    .SDL_FILESYSTEM_EMSCRIPTEN = true,
     // .SDL_STORAGE_GENERIC = true,
     .SDL_FSOPS_POSIX = true,
     .SDL_CAMERA_DRIVER_DUMMY = true,
-    // .SDL_CAMERA_DRIVER_PSP = true,
+    .SDL_CAMERA_DRIVER_EMSCRIPTEN = true,
     .SDL_TRAY_DUMMY = true,
+    .DYNAPI_NEEDS_DLOPEN = true,
 };

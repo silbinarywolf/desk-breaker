@@ -6,6 +6,16 @@ const LazyPath = std.Build.LazyPath;
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const optional_freetype_include_path = b.option(
+        LazyPath,
+        "freetype_include_path",
+        "Used to compile with FreeType support and include <ft2build.h>",
+    );
+    const optional_sdl_include_path = b.option(
+        LazyPath,
+        "sdl_include_path",
+        "Used to compile SDL platform/rendering backends",
+    );
 
     const imgui: LazyPath = blk: {
         const dep: *Dependency = b.lazyDependency("imgui", .{}) orelse {
@@ -69,8 +79,7 @@ pub fn build(b: *std.Build) !void {
     mod.addIncludePath(imgui_include_path);
 
     // ImGui enable freetype
-    const has_freetype = b.option(bool, "enable_freetype", "Build ImGui with freetype instead of stb_truetype") orelse false;
-    if (has_freetype) {
+    if (optional_freetype_include_path) |freetype_include_path| {
         mod.addCMacro("IMGUI_ENABLE_FREETYPE", "1");
         mod.addCMacro("CIMGUI_FREETYPE", "1");
 
@@ -84,6 +93,7 @@ pub fn build(b: *std.Build) !void {
             },
             .flags = cpp_flags,
         });
+        mod.addIncludePath(freetype_include_path);
         mod.addIncludePath(imgui.path(b, "misc/freetype"));
 
         // NOTE(jae): 2024-07-01
@@ -97,13 +107,11 @@ pub fn build(b: *std.Build) !void {
     }
 
     // ImGui SDL3 backend files
-    {
-        // Set endianness explicitly for arches like the PSP
-        const sdl_byteorder = switch (target.result.cpu.arch.endian()) {
+    if (optional_sdl_include_path) |sdl_include_path| {
+        mod.addCMacro("SDL_BYTEORDER", switch (target.result.cpu.arch.endian()) {
             .little => "SDL_LIL_ENDIAN",
             .big => "SDL_BIG_ENDIAN",
-        };
-        mod.addCMacro("SDL_BYTEORDER", sdl_byteorder);
+        });
         mod.addCSourceFiles(.{
             .root = imgui,
             .files = &.{
@@ -112,14 +120,7 @@ pub fn build(b: *std.Build) !void {
             },
             .flags = cpp_flags,
         });
-        // NOTE(jae): 2024-07-01
-        // We add the <SDL.h> include dependency in the parent build.zig
-        // for (sdl_lib.root_module.include_dirs.items) |sdl_include_dir| {
-        //     switch (sdl_include_dir) {
-        //         .path => |p| imgui_lib.addIncludePath(p),
-        //         else => {}, // std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
-        //     }
-        // }
+        mod.addIncludePath(sdl_include_path);
     }
 
     // cimgui files
@@ -151,7 +152,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .root_source_file = b.path("src/imgui.h"),
     });
-    if (has_freetype) {
+    if (optional_freetype_include_path) |_| {
         c_translate.defineCMacro("IMGUI_ENABLE_FREETYPE", "1");
     }
     c_translate.addIncludePath(cimgui_include_path);
@@ -163,4 +164,7 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .root_source_file = c_translate.getOutput(),
     });
+
+    // Export paths
+    b.addNamedLazyPath("imgui_include_path", imgui_include_path);
 }
