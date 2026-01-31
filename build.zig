@@ -269,7 +269,6 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = library_optimize,
             });
-            app.linkLibrary(wuffs_dep.artifact("wuffs"));
             app.addImport("wuffs", wuffs_dep.module("wuffs"));
         }
 
