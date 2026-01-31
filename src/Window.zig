@@ -9,10 +9,10 @@ const assert = std.debug.assert;
 
 pub const Options = struct {
     title: [:0]const u8 = &[0:0]u8{},
-    x: ?i64 = null,
-    y: ?i64 = null,
-    width: ?i64 = null,
-    height: ?i64 = null,
+    x: ?i32 = null,
+    y: ?i32 = null,
+    width: ?u31 = null,
+    height: ?u31 = null,
     resizeable: bool = false,
     focusable: bool = true,
     borderless: bool = false,
@@ -41,7 +41,23 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
     }
     errdefer sdl.SDL_DestroyProperties(props);
 
-    const main_scale = sdl.SDL_GetDisplayContentScale(sdl.SDL_GetPrimaryDisplay());
+    const display_id = sdl.SDL_GetPrimaryDisplay();
+    const main_scale = sdl.SDL_GetDisplayContentScale(display_id);
+    const should_scale_window: bool = scaleblk: {
+        if (main_scale == 1.0) break :scaleblk false;
+        const width = options.width orelse break :scaleblk false;
+        const height = options.height orelse break :scaleblk false;
+
+        var display_bounds: sdl.SDL_Rect = undefined;
+        if (!sdl.SDL_GetDisplayUsableBounds(display_id, &display_bounds)) break :scaleblk false;
+        // Disabling scaling if intent is to match display width and height (accounting for taskbars, etc)
+        if (display_bounds.w == width and display_bounds.h == height) break :scaleblk false;
+        if (!sdl.SDL_GetDisplayBounds(display_id, &display_bounds)) break :scaleblk false;
+        // Disabling scaling if intent is to match display width and height (fullscreen borderless)
+        if (display_bounds.w == width and display_bounds.h == height) break :scaleblk false;
+
+        break :scaleblk true;
+    };
 
     if (options.title.len > 0) {
         if (!sdl.SDL_SetStringProperty(props, sdl.SDL_PROP_WINDOW_CREATE_TITLE_STRING, options.title)) return error.SdlFailed;
@@ -70,13 +86,20 @@ pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
         if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_Y_NUMBER, y)) return error.SdlFailed;
     }
     if (options.width) |width| {
-        const width_scaled: i64 = @intFromFloat(@as(f32, @floatFromInt(width)) * main_scale);
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_scaled)) return error.SdlFailed;
+        const width_computed: i32 = if (should_scale_window)
+            @intFromFloat(@as(f32, @floatFromInt(width)) * main_scale)
+        else
+            width;
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_computed)) return error.SdlFailed;
     }
     if (options.height) |height| {
-        const height_scaled: i64 = @intFromFloat(@as(f32, @floatFromInt(height)) * main_scale);
-        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_scaled)) return error.SdlFailed;
+        const height_computed: i32 = if (should_scale_window)
+            @intFromFloat(@as(f32, @floatFromInt(height)) * main_scale)
+        else
+            height;
+        if (!sdl.SDL_SetNumberProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_computed)) return error.SdlFailed;
     }
+    if (!sdl.SDL_SetBooleanProperty(props, sdl.SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, true)) return error.SdlFailed;
     // NOTE(jae): 2025-12-27
     // Attempt to have the *audacity* on my own computer to get a
     // a window to pop up in the right-bottom corner of the screen with Linux/Wayland (and fail)
@@ -243,12 +266,19 @@ pub fn imguiNewFrame(window: *Window) void {
     window.imgui_new_frame = true;
 }
 
-pub fn getDisplayUsableBoundsFromIndex(display_index: u32) ?sdl.SDL_Rect {
+pub const Rect = struct {
+    x: i32,
+    y: i32,
+    w: u31,
+    h: u31,
+};
+
+pub fn getDisplayUsableBoundsFromIndex(display_index: u32) ?Rect {
     var display: sdl.SDL_Rect = undefined;
     if (!sdl.SDL_GetDisplayUsableBounds(getDisplayIdFromIndex(display_index), &display)) {
         return null;
     }
-    return display;
+    return .{ .x = @intCast(display.x), .y = @intCast(display.y), .w = @intCast(display.w), .h = @intCast(display.h) };
 }
 
 fn getDisplayIdFromIndex(display_index: u32) sdl.SDL_DisplayID {

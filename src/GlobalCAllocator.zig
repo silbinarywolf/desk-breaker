@@ -1,5 +1,9 @@
 //! Setup allocation functions for third-party C libraries like SDL, ImGui, etc
 
+// comptime {
+//     _ = @import("GlobalCppAllocator.zig");
+// }
+
 const std = @import("std");
 const builtin = @import("builtin");
 const sdl = @import("sdl");
@@ -8,35 +12,58 @@ const assert = std.debug.assert;
 
 const log = std.log.scoped(.GlobalCAllocator);
 
-const use_sdl_mutex = builtin.os.tag == .freestanding;
+const use_sdl_mutex = builtin.os.tag == .freestanding or builtin.object_format == .c;
 
-var global_c_allocator: ?GlobalCAllocator = null;
+var _instance_data: GlobalCAllocator = .{
+    .mu = .{},
+    .allocator = undefined,
+    .allocations = .empty,
+};
+var instance: ?*GlobalCAllocator = null;
 
-/// Should be used anywhere global_c_allocator is modified
-var global_c_allocator_mutex: if (use_sdl_mutex) SdlMutex else std.Thread.Mutex = .{};
-
-const debug_log_allocs = true;
+const debug_log_allocs = false;
 
 /// malloc uses the largest alignment of the hardware platform, which on at most 64-bit platforms is 16 bytes
-const default_alignment = std.mem.Alignment.@"16";
+pub const default_alignment = std.mem.Alignment.@"16";
 
+mu: if (use_sdl_mutex) SdlMutex else std.Thread.Mutex = .{},
 allocator: std.mem.Allocator,
 allocations: std.AutoHashMap(*anyopaque, usize).Unmanaged,
+contexts: AllocatorContextList = .{},
 
-pub fn init(allocator: std.mem.Allocator) error{SdlFailed}!*@This() {
-    assert(global_c_allocator == null);
+const AllocatorContextList = struct {
+    sdl: AllocatorContext = .empty,
+    imgui: AllocatorContext = .empty,
+    cpp: AllocatorContext = .empty,
+};
 
-    if (use_sdl_mutex) {
-        try global_c_allocator_mutex.init();
-    }
+const AllocatorContext = struct {
+    current_memory_usage: usize,
+    // largest_memory_usage: usize,
+
+    const empty: AllocatorContext = .{
+        .current_memory_usage = 0,
+        // .largest_memory_usage = 0,
+    };
+};
+
+pub fn init(allocator: std.mem.Allocator) error{SdlFailed}!*GlobalCAllocator {
+    assert(instance == null);
 
     // Init
-    // const self = allocator.create(GlobalCAllocator) catch @panic("OOM");
-    global_c_allocator = .{
+    _instance_data = .{
+        .mu = .{},
         .allocator = allocator,
         .allocations = .empty,
+        .contexts = .{},
     };
-    const self = &global_c_allocator.?;
+    if (use_sdl_mutex) {
+        try _instance_data.mu.init();
+    }
+    instance = &_instance_data;
+
+    // Use self logic
+    const self = instance.?;
 
     // Setup SDL memory allocator
     // - Do not use custom allocator on platforms that use SDL_CreateMutex as it uses the SDL allocator
@@ -50,28 +77,46 @@ pub fn init(allocator: std.mem.Allocator) error{SdlFailed}!*@This() {
     return self;
 }
 
-pub fn deinit(self: *@This()) void {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    assert(global_c_allocator != null);
-
-    const sdl_allocationms = sdl.SDL_GetNumAllocations();
-    const remaining_alloc_count = self.allocations.count();
-    if (remaining_alloc_count > 0) {
-        log.debug("c_allocations count: {}, SDL allocations: {}", .{ remaining_alloc_count, sdl_allocationms });
-    }
-    self.allocations.deinit(self.allocator);
-
-    self.allocator = undefined;
-    self.allocations = undefined;
-
-    global_c_allocator = null;
+pub inline fn getInstance() *GlobalCAllocator {
+    return instance.?;
 }
 
-pub inline fn malloc(self: *@This(), size: usize) ?*anyopaque {
+pub fn deinit(self: *GlobalCAllocator) void {
+    self.mu.lock();
+    defer self.mu.unlock();
+
+    const sdl_allocations = sdl.SDL_GetNumAllocations();
+    const remaining_alloc_count = self.allocations.count();
+    if (remaining_alloc_count > 0) {
+        log.debug("c_allocations count: {}, SDL allocations: {}", .{ remaining_alloc_count, sdl_allocations });
+    }
+
+    self.allocations.deinit(self.allocator);
+    self.allocator = undefined;
+    self.allocations = undefined;
+    instance = null;
+}
+
+/// WARNING: Must have unlocked mutex before calling this
+inline fn putEntry(self: *GlobalCAllocator, context: *AllocatorContext, mem: [*]align(default_alignment.toByteUnits()) u8, size: usize) void {
+    self.allocations.put(self.allocator, @ptrCast(mem), size) catch
+        @panic("c_allocator: out of memory");
+    context.current_memory_usage += size;
+}
+
+/// WARNING: Must have unlocked mutex before calling this
+inline fn handleStatsForRemovedEntry(self: *GlobalCAllocator, context: *AllocatorContext, ptr: *anyopaque, old_size: usize) void {
+    _ = self;
+    _ = ptr;
+    context.current_memory_usage -= old_size;
+}
+
+pub fn malloc(self: *GlobalCAllocator, context: *AllocatorContext, size: usize) ?*anyopaque {
     if (debug_log_allocs) log.debug("malloc: start", .{});
     defer if (debug_log_allocs) log.debug("malloc: end", .{});
+
+    self.mu.lock();
+    defer self.mu.unlock();
 
     const mem = self.allocator.alignedAlloc(
         u8,
@@ -79,14 +124,17 @@ pub inline fn malloc(self: *@This(), size: usize) ?*anyopaque {
         size,
     ) catch @panic("c_allocator: out of memory");
 
-    self.allocations.put(self.allocator, @ptrCast(mem.ptr), size) catch @panic("c_allocator: out of memory");
+    self.putEntry(context, mem.ptr, size);
 
     return mem.ptr;
 }
 
-pub inline fn calloc(self: *@This(), elements: usize, size_of_each: usize) ?*anyopaque {
+fn calloc(self: *GlobalCAllocator, context: *AllocatorContext, elements: usize, size_of_each: usize) ?*anyopaque {
     if (debug_log_allocs) log.debug("calloc: start (elements: {}, size of each: {})", .{ elements, size_of_each });
     defer if (debug_log_allocs) log.debug("calloc: end", .{});
+
+    self.mu.lock();
+    defer self.mu.unlock();
 
     // calloc takes elements + size
     const size = elements * size_of_each;
@@ -98,121 +146,88 @@ pub inline fn calloc(self: *@This(), elements: usize, size_of_each: usize) ?*any
     ) catch @panic("c_allocator: out of memory");
 
     // calloc zeroes out after allocation
-    @memset(mem[0..size], 0);
+    @memset(mem[0..], 0);
 
-    self.allocations.put(self.allocator, @ptrCast(mem.ptr), size) catch @panic("c_allocator: out of memory");
+    self.putEntry(context, mem.ptr, size);
 
     return mem.ptr;
 }
 
-pub inline fn realloc(self: *@This(), optional_ptr: ?*anyopaque, size: usize) ?*anyopaque {
+fn realloc(self: *GlobalCAllocator, context: *AllocatorContext, optional_ptr: ?*anyopaque, size: usize) ?*anyopaque {
     if (debug_log_allocs) log.debug("realloc: start", .{});
     defer if (debug_log_allocs) log.debug("realloc: end", .{});
 
     const ptr: *anyopaque = optional_ptr orelse {
+        // If null pointer given, do a regular allocation
+        self.mu.lock();
+        defer self.mu.unlock();
+
         const mem = self.allocator.alignedAlloc(u8, default_alignment, size) catch @panic("c_allocator: out of memory");
-        self.allocations.put(self.allocator, @ptrCast(mem.ptr), size) catch @panic("c_allocator: out of memory");
+        self.putEntry(context, mem.ptr, size);
         return mem.ptr;
     };
 
+    self.mu.lock();
+    defer self.mu.unlock();
     const old_size: usize = self.allocations.get(ptr) orelse unreachable;
     const old_mem = @as([*]align(default_alignment.toByteUnits()) u8, @ptrCast(@alignCast(ptr)))[0..old_size];
     const new_mem = self.allocator.realloc(old_mem, size) catch @panic("c_allocator: out of memory");
 
+    // remove entry
     const removed = self.allocations.remove(ptr);
     assert(removed);
+    self.handleStatsForRemovedEntry(context, ptr, old_size);
 
-    self.allocations.put(self.allocator, @ptrCast(new_mem.ptr), size) catch @panic("c_allocator: out of memory");
+    // Add new entry
+    self.putEntry(context, new_mem.ptr, size);
     return new_mem.ptr;
 }
 
-pub inline fn free(self: *@This(), maybe_ptr: ?*anyopaque) void {
+pub fn free(self: *GlobalCAllocator, context: *AllocatorContext, maybe_ptr: ?*anyopaque) void {
     const ptr = maybe_ptr orelse return;
 
     if (debug_log_allocs) log.debug("free: start {?}", .{maybe_ptr});
     defer if (debug_log_allocs) log.debug("free: end {?}", .{maybe_ptr});
 
+    self.mu.lock();
+    defer self.mu.unlock();
+
     const size = self.allocations.fetchRemove(@ptrCast(ptr)).?.value;
     const mem = @as([*]align(default_alignment.toByteUnits()) u8, @ptrCast(@alignCast(ptr)))[0..size];
 
     self.allocator.free(mem);
+    self.handleStatsForRemovedEntry(context, ptr, size);
 }
 
 fn sdlMalloc(size: usize) callconv(.c) ?*anyopaque {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    const self = &global_c_allocator.?;
-    return self.malloc(size);
+    const self = instance.?;
+    return self.malloc(&self.contexts.sdl, size);
 }
 
 fn sdlCalloc(elements: usize, size_of_each: usize) callconv(.c) ?*anyopaque {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    const self = &global_c_allocator.?;
-    return self.calloc(elements, size_of_each);
+    const self = instance.?;
+    return self.calloc(&self.contexts.sdl, elements, size_of_each);
 }
 
 fn sdlRealloc(ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    const self = &global_c_allocator.?;
-    return self.realloc(ptr, size);
+    const self = instance.?;
+    return self.realloc(&self.contexts.sdl, ptr, size);
 }
 
 fn sdlFree(ptr: ?*anyopaque) callconv(.c) void {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    const self = &global_c_allocator.?;
-    return self.free(ptr);
+    const self = instance.?;
+    return self.free(&self.contexts.sdl, ptr);
 }
 
 fn imguiMalloc(size: usize, user_context: ?*anyopaque) callconv(.c) ?*anyopaque {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context));
-    return self.malloc(size);
+    const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context.?));
+    return self.malloc(&self.contexts.imgui, size);
 }
 
 fn imguiFree(ptr: ?*anyopaque, user_context: ?*anyopaque) callconv(.c) void {
-    global_c_allocator_mutex.lock();
-    defer global_c_allocator_mutex.unlock();
-
-    const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context));
-    return self.free(ptr);
+    const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context.?));
+    return self.free(&self.contexts.imgui, ptr);
 }
-
-const GlobalCAllocator = @This();
-
-// fn stbiRealloc(ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque {
-//     return cRealloc(ptr, size);
-// }
-
-// extern var stbiFreePtr: ?*const fn (maybe_ptr: ?*anyopaque) callconv(.c) void;
-
-// extern var stbttFreePtr: ?*const fn (maybe_ptr: ?*anyopaque) callconv(.c) void;
-
-// fn stbiFree(maybe_ptr: ?*anyopaque) callconv(.c) void {
-//     cFree(maybe_ptr);
-// }
-
-// fn stbttFree(maybe_ptr: ?*anyopaque) callconv(.c) void {
-//     cFree(maybe_ptr);
-// }
-
-// fn stbttMalloc(size: usize) callconv(.c) ?*anyopaque {
-//     return cMalloc(size);
-// }
-
-// fn stbiMalloc(size: usize) callconv(.c) ?*anyopaque {
-//     return cMalloc(size);
-// }
-
-// extern var stbiReallocPtr: ?*const fn (ptr: ?*anyopaque, size: usize) callconv(.c) ?*anyopaque;
 
 const SdlMutex = struct {
     impl: *sdl.SDL_Mutex = undefined,
@@ -230,3 +245,5 @@ const SdlMutex = struct {
         sdl.SDL_UnlockMutex(mu.impl);
     }
 };
+
+const GlobalCAllocator = @This();

@@ -8,14 +8,14 @@ pub fn build(b: *std.Build) !void {
     const wuffs_src_file = wuffs_dep.path("release/c/wuffs-v0.3.c");
 
     // files
-    const mod = b.createModule(.{
+    const lib_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
         .link_libc = true,
     });
 
     // Define WUFFS_IMPLEMENTATION for main library
-    mod.addCMacro("WUFFS_IMPLEMENTATION", "");
+    lib_mod.addCMacro("WUFFS_IMPLEMENTATION", "");
 
     // Define WUFFS_CONFIG__STATIC_FUNCTIONS (combined with WUFFS_IMPLEMENTATION)
     // to make all of Wuffs' functions have static storage.
@@ -45,16 +45,18 @@ pub fn build(b: *std.Build) !void {
         "WUFFS_CONFIG__MODULE__ZLIB",
     };
     for (wuffs_macros) |wuff_macro| {
-        mod.addCMacro(wuff_macro, "");
+        lib_mod.addCMacro(wuff_macro, "");
     }
-    mod.addCSourceFile(.{
+    lib_mod.addCSourceFile(.{
         .file = wuffs_src_file,
         .flags = &.{"-fno-sanitize=undefined"},
     });
-    b.installArtifact(b.addLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "wuffs",
-        .root_module = mod,
-    }));
+        .linkage = .static,
+        .root_module = lib_mod,
+    });
+    b.installArtifact(lib);
 
     // Module
 
@@ -63,7 +65,7 @@ pub fn build(b: *std.Build) !void {
     // Changed: sizeof__wuffs_png__decoder() -> sizeof__wuffs_png__decoder(void) to avoid Wasm issues
     var c_translate = b.addTranslateC(.{
         .target = target,
-        .optimize = .ReleaseFast,
+        .optimize = optimize,
         .root_source_file = wuffs_src_file,
     });
 
@@ -75,9 +77,6 @@ pub fn build(b: *std.Build) !void {
     // for (wuffs_macros) |c_macro| {
     //     c_translate.defineCMacro(c_macro, "1");
     // }
-    _ = b.addModule("wuffs", .{
-        .target = target,
-        .optimize = optimize,
-        .root_source_file = c_translate.getOutput(),
-    });
+    const mod = c_translate.addModule("wuffs");
+    mod.linkLibrary(lib);
 }

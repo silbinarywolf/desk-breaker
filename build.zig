@@ -178,7 +178,7 @@ pub fn build(b: *std.Build) !void {
             if (optimize == .Debug) .ReleaseSafe else optimize;
 
         // add sdl
-        const sdl_module = blk: {
+        const sdl_include_path = blk: {
             const sdl_dep = b.dependency("sdl", .{
                 .optimize = library_optimize,
                 .target = target,
@@ -225,11 +225,11 @@ pub fn build(b: *std.Build) !void {
                 }
             }
 
-            break :blk sdl_module;
+            break :blk sdl_dep.namedLazyPath("include_path");
         };
 
         // add freetype
-        const freetype_lib = blk: {
+        const freetype_include_path = blk: {
             var freetype_dep = b.dependency("freetype", .{
                 .target = target,
                 .optimize = library_optimize,
@@ -242,43 +242,25 @@ pub fn build(b: *std.Build) !void {
                 app.linkLibrary(freetype_lib);
             }
             app.addImport("freetype", freetype_dep.module("freetype"));
-            break :blk freetype_lib;
+            break :blk freetype_dep.namedLazyPath("include_path");
         };
 
         // add imgui
         {
-            const imgui_enable_freetype = true;
             var imgui_dep = b.dependency("imgui", .{
                 .target = target,
                 // NOTE(jae): 2025-01-27
                 // We want assertions in ImGui to tell is if we messed up so we
                 // don't just want ReleaseFast here.
                 .optimize = library_optimize,
-                .enable_freetype = imgui_enable_freetype,
+                // Add directory containing "ft2build.h" so we can compile with Freetype support
+                .freetype_include_path = freetype_include_path,
+                // Add directory containing "SDL3/SDL.h" so we can compile the platform/rendering backends
+                .sdl_include_path = sdl_include_path,
             });
             const imgui_lib = imgui_dep.artifact("imgui");
             app.linkLibrary(imgui_lib);
             app.addImport("imgui", imgui_dep.module("imgui"));
-
-            // Add <ft2build.h> to ImGui so it can compile with Freetype support
-            if (imgui_enable_freetype) {
-                for (freetype_lib.root_module.include_dirs.items) |freetype_include_dir| {
-                    switch (freetype_include_dir) {
-                        .path => |p| imgui_lib.root_module.addIncludePath(p),
-                        else => std.debug.panic("unhandled path from Freetype: {s}", .{@tagName(freetype_include_dir)}),
-                    }
-                }
-            }
-            // Add <SDL.h> to ImGui so it can compile with Freetype support
-            for (sdl_module.include_dirs.items) |sdl_include_dir| {
-                switch (sdl_include_dir) {
-                    .path => |p| imgui_lib.root_module.addIncludePath(p),
-                    .config_header_step => |ch| imgui_lib.root_module.addConfigHeader(ch),
-                    // NOTE(jae): 2024-07-31: added to ignore Mac system includes used by SDL2 build
-                    .path_system, .framework_path_system => continue,
-                    else => std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
-                }
-            }
         }
 
         // add wuffs
@@ -287,7 +269,6 @@ pub fn build(b: *std.Build) !void {
                 .target = target,
                 .optimize = library_optimize,
             });
-            app.linkLibrary(wuffs_dep.artifact("wuffs"));
             app.addImport("wuffs", wuffs_dep.module("wuffs"));
         }
 
@@ -403,7 +384,7 @@ pub fn build(b: *std.Build) !void {
             app.addImport("psp", psp_dep.module("psp"));
 
             const psptool = psp.Tools.create(b, .{}) orelse return;
-            psptool.buildWithNativeSdk(exe);
+            psptool.buildPBP(exe);
         } else {
             const run_step = b.step("run", "Run the application");
             const run_cmd = b.addRunArtifact(exe);

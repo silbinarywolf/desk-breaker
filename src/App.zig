@@ -551,8 +551,8 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
                     return error.SdlFailed;
                 };
 
-                const width: c_int = 200;
-                const height: c_int = 200;
+                const width: u16 = 200;
+                const height: u16 = 200;
 
                 const popup_window = Window.init(.{
                     .title = "Incoming Break",
@@ -589,7 +589,7 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
             const display_index = app.user_settings.settings.display_index;
 
             // Don't work if we can't get display dimensions
-            const display: sdl.SDL_Rect = Window.getDisplayUsableBoundsFromIndex(display_index) orelse .{
+            const display: Window.Rect = Window.getDisplayUsableBoundsFromIndex(display_index) orelse .{
                 // Fallback if cannot query display
                 .x = 0,
                 .y = 0,
