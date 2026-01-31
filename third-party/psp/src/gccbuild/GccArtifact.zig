@@ -107,6 +107,10 @@ fn addGccCommand(g: *Gcc, build_with_cpp: bool, context: []const u8) *MountRun {
 }
 
 fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
+    if (artifact.root_module.resolved_target.?.result.ofmt != .c) {
+        std.debug.panic("must compile '{s}' with target ofmt=.c", .{artifact.name});
+    }
+
     const b = g.b;
     const mod = artifact.root_module;
 
@@ -142,7 +146,6 @@ fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
         cmd.addArg(if (x) "-Wl,--gc-sections" else "-Wl,--no-gc-sections");
     }
     if (mod.strip == true) {
-        // TODO: Test this setting
         cmd.addArg("-Wl,--strip-debug");
     }
 
@@ -261,8 +264,8 @@ fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
         .kind = .exe,
         .run = cmd,
         .artifact = artifact,
-        .link_name = &[0]u8{},
         .emitted_bin = emitted_bin,
+        .link_name = &[0]u8{}, // unused for executables
     };
     return output_artifact;
 }
@@ -327,13 +330,6 @@ fn compileCFile(g: *Gcc, root_artifact: *Compile, artifact: *Compile, options: C
         }
     };
 
-    // if (is_cpp) {
-    //     // NOTE(jae): 2026-01-16
-    //     // Workaround to avoid undefined reference to `__dso_handle'
-    //     cmd.addArg("-fno-use-cxa-atexit");
-    //     cmd.addArg("-fno-threadsafe-statics"); // force disable __cxa_guard_acquire
-    // }
-
     if (root_artifact.link_data_sections) cmd.addArg("-fdata-sections");
     if (root_artifact.link_function_sections) cmd.addArg("-ffunction-sections");
     // psp-gcc: error: unrecognized command-line option '--gc-sections'
@@ -377,8 +373,10 @@ fn compileCFile(g: *Gcc, root_artifact: *Compile, artifact: *Compile, options: C
 
     // Setup optimization level
     const optimize_setting = if (mod.optimize) |lib_optimize|
+        // Use library specific optimization level
         lib_optimize
     else if (root_artifact.root_module.optimize) |root_optimize|
+        // Fallback to global optimization level
         root_optimize
     else
         null;
@@ -510,45 +508,11 @@ fn compileStaticLibrary(g: *Gcc, root_artifact: *Compile, artifact: *Compile) *G
         }
     }
 
-    // Remove link objects referencing Zig built libraries to avoid compilation on
-    // the root artifact that has .ofmt=.c
-    {
-        var i: usize = 0;
-        var link_objects = &mod.link_objects;
-        while (i < link_objects.items.len) {
-            switch (link_objects.items[i]) {
-                .other_step => |other_compile| switch (other_compile.kind) {
-                    .exe, .lib, .obj => {
-                        _ = link_objects.orderedRemove(i);
-                        continue; // don't increment "i"
-                    },
-                    else => {}, // fallthrough
-                },
-                else => {}, // fallthrough
-            }
-            i += 1;
-        }
-    }
+    // Update TranslateC modules so that they can compile on alternate platforms
+    updateTranslateC(g, artifact);
 
-    // Remove include directories referencing Zig built libraries to avoid compilation on
-    // the root artifact that has .ofmt=.c
-    {
-        var i: usize = 0;
-        var include_dirs = &mod.include_dirs;
-        while (i < include_dirs.items.len) {
-            switch (include_dirs.items[i]) {
-                .other_step => |other_compile| switch (other_compile.kind) {
-                    .exe, .lib, .obj => {
-                        _ = include_dirs.orderedRemove(i);
-                        continue; // don't increment "i"
-                    },
-                    else => {}, // fallthrough
-                },
-                else => {}, // fallthrough
-            }
-            i += 1;
-        }
-    }
+    // Remove any linked libraries from module recursively
+    removeLinkedLibraryRecursively(mod);
 
     const gcc_lib = b.allocator.create(GccArtifact) catch @panic("OOM");
     gcc_lib.* = .{
@@ -597,7 +561,7 @@ fn collectSystemLibrariesRecursive(g: *Gcc, system_libraries: *std.StringArrayHa
     //   for (compile.getCompileDependencies(false)) |dep_compile| {
     //     for (dep_compile.root_module.getGraph().modules) |mod| {
 
-    // 1. Walk modules dependencies backwards
+    // 1. Walk modules dependencies
     for (mod.import_table.entries.items(.value)) |sub_mod| {
         for (sub_mod.link_objects.items) |link_object| {
             switch (link_object) {
@@ -614,7 +578,7 @@ fn collectSystemLibrariesRecursive(g: *Gcc, system_libraries: *std.StringArrayHa
         }
     }
 
-    // 2. Walk linked library dependencies backwards
+    // 2. Walk linked library dependencies
     for (mod.link_objects.items) |link_object| {
         switch (link_object) {
             .other_step => |other_compile| {
@@ -707,6 +671,99 @@ fn collectLibrariesAndSelfRecursive(g: *Gcc, artifact: *Compile, libraries: *std
 
     // 3. Finally, add self
     libraries.put(b.allocator, artifact, {}) catch @panic("OOM");
+}
+
+/// Update TranslateC dependencies that are using "freestanding" to resolve to a specific OS with the same bit width as
+/// the CPU arch.
+///
+/// NOTE(jae): 2026-01-31
+/// With the PSP-SDK, I initially just tried adding its GCC headers in but they had missing #defines that caused
+/// SDL3 to fall over, so just rewrite the os_tag and cpu_arch to something Zig has the necessary headers for.
+fn updateTranslateC(g: *Gcc, artifact: *Compile) void {
+    const b = g.b;
+    const imported_modules: []*Module = artifact.root_module.import_table.entries.items(.value);
+    for (imported_modules) |module| {
+        // Find a module that was created from TranslateC
+        const root_source_file = module.root_source_file orelse continue;
+        switch (root_source_file) {
+            .generated => |gen| {
+                const step = gen.file.step;
+                if (step.id != .translate_c) continue;
+
+                const translate_c: *std.Build.Step.TranslateC = @fieldParentPtr("step", step);
+                const target = translate_c.target;
+                if (target.result.os.tag == .freestanding) {
+                    // NOTE(jae): 2026-01-16
+                    // Playstation Portable stdint.h is incorrect here and buggy when used with Zig 0.15.2,
+                    // so just fallback to Linux as the target but use the correct bit width and
+                    // hope the ABI is similar enough to not crash things.
+                    translate_c.target = b.resolveTargetQuery(.{
+                        .os_tag = .linux, // .windows
+                        .cpu_arch = target.result.cpu.arch, // if (target.result.ptrBitWidth() == 64) .x86_64 else .x86,
+                        .abi = null, // target.result.abi, // <- stdint.h not found if we pass ABI
+                    });
+                }
+            },
+            else => continue,
+        }
+    }
+}
+
+/// This iterates over a Zig modules:
+/// - Imported Modules
+/// - Linked Libraries / Objects
+/// - Include Headers
+///
+/// And removes them from the artifact. If we do not do this, then when compiling with ofmt=.c, it will
+/// attempt to build that dependency with Zig rather than GCC.
+fn removeLinkedLibraryRecursively(mod: *Module) void {
+    // Remove direct link objects referencing Zig built libraries to avoid compilation on
+    // the root artifact that has .ofmt=.c
+    {
+        var i: usize = 0;
+        var link_objects = &mod.link_objects;
+        while (i < link_objects.items.len) {
+            switch (link_objects.items[i]) {
+                .other_step => |other_compile| switch (other_compile.kind) {
+                    .exe, .lib, .obj => {
+                        _ = link_objects.orderedRemove(i);
+                        continue; // don't increment "i"
+                    },
+                    else => {}, // fallthrough
+                },
+                else => {}, // fallthrough
+            }
+            i += 1;
+        }
+    }
+
+    // Remove include directories referencing Zig built libraries to avoid compilation on
+    // the root artifact that has .ofmt=.c
+    {
+        var i: usize = 0;
+        var include_dirs = &mod.include_dirs;
+        while (i < include_dirs.items.len) {
+            switch (include_dirs.items[i]) {
+                .other_step => |other_compile| switch (other_compile.kind) {
+                    .exe, .lib, .obj => {
+                        _ = include_dirs.orderedRemove(i);
+                        continue; // don't increment "i"
+                    },
+                    else => {}, // fallthrough
+                },
+                else => {}, // fallthrough
+            }
+            i += 1;
+        }
+    }
+
+    // Remove libraries from imported modules
+    {
+        const modules: []*Module = mod.import_table.entries.items(.value);
+        for (modules) |sub_mod| {
+            removeLinkedLibraryRecursively(sub_mod);
+        }
+    }
 }
 
 const GccArtifact = @This();

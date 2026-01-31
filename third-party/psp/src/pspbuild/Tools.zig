@@ -41,11 +41,6 @@ pub fn buildPBP(tools: *Tools, artifact: *Step.Compile) void {
     const b = tools.b;
     const pspdev_path = tools.pspdev_path;
     const psp_elf: std.Build.LazyPath = pspcompileblk: {
-        // NOTE(jae): 2026-01-17
-        // Update translate-c modules 'target' to use x86_64 windows to avoid
-        // compilation issues. (Use Zig provided headers instead of PSP SDK GCC headers)
-        fixTranslateC(b, artifact);
-
         // NOTE(jae): 2026-01-30
         // Force parts into different sections to resolve assembler warnings for PSP SDK
         artifact.link_function_sections = true;
@@ -163,45 +158,6 @@ pub fn buildPBP(tools: *Tools, artifact: *Step.Compile) void {
     }).step); // Install app.c file
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(eboot_file, install_dir, "EBOOT.pbp").step);
     b.getInstallStep().dependOn(&b.addInstallFileWithDir(prx_file, install_dir, "psp.prx").step);
-}
-
-fn fixTranslateC(b: *Build, artifact: *Build.Step.Compile) void {
-    // Find TranslateC dependencies and add system path
-    var iter = artifact.root_module.import_table.iterator();
-    while (iter.next()) |it| {
-        const module = it.value_ptr.*;
-        const root_source_file = module.root_source_file orelse continue;
-        switch (root_source_file) {
-            .generated => |gen| {
-                const step = gen.file.step;
-                if (step.id != .translate_c) {
-                    continue;
-                }
-                const translate_c: *std.Build.Step.TranslateC = @fieldParentPtr("step", step);
-                const target = translate_c.target;
-                if (target.result.os.tag == .freestanding) {
-                    // NOTE(jae): 2026-01-16
-                    // Playstation Portable stdint.h is incorrect here and buggy when used with Zig, so just fallback to Windows
-                    // as the target but use the correct bit width and hope the ABI is similar enough to not crash things.
-                    translate_c.target = b.resolveTargetQuery(.{
-                        .os_tag = .windows,
-                        .cpu_arch = if (target.result.ptrBitWidth() == 64) .x86_64 else .x86,
-                    });
-                }
-                // NOTE(jae): 2026-01-17
-                // Previous attempt was to just update include paths of translate-c to use PSP SDK files
-                //
-                // const pspdev_include_paths = [_]LazyPath{
-                //     pspdev_path.path(b, "include"), // alpm.h, alpm_list.h, gdb/jit-reader.h
-                //     pspdev_path.path(b, "psp/include"), // Standard C library and others libs: sys/time.h, GL/*.h, SDL3/*.h
-                // };
-                // for (pspdev_include_paths) |include_path| {
-                //     translate_c.addSystemIncludePath(include_path);
-                // }
-            },
-            else => continue,
-        }
-    }
 }
 
 // pub fn createLibCFile(b: *std.Build, pspdev_path: LazyPath) LazyPath {
