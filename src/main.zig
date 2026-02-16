@@ -771,6 +771,8 @@ pub fn update(app: *App) !void {
                             "/Ryujinx",
                             "/xemu",
                             "/xenia",
+                            // SteamVR on Linux
+                            "/vrserver",
                             // Games
                             "/HytaleClient",
                             "/soh", // Ship of Harkinian
