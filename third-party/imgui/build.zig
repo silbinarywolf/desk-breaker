@@ -1,4 +1,5 @@
 const std = @import("std");
+const ArrayList = std.ArrayList;
 
 const Dependency = std.Build.Dependency;
 const LazyPath = std.Build.LazyPath;
@@ -43,18 +44,29 @@ pub fn build(b: *std.Build) !void {
     // So we can just pull down cimgui as an external dependency, fake that structure here
     const zig_cimgui_headers_path = b.path("cimgui_headers");
 
-    const mod = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-        .link_libcpp = true,
-    });
-
-    // Settings
-    mod.addCMacro("IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS", "1");
-    mod.addCMacro("IMGUI_DISABLE_FILE_FUNCTIONS", "1");
-    // mod.addCMacro("IMGUI_DISABLE_DEMO_WINDOWS", "1");
-    // mod.addCMacro("IMGUI_DISABLE_DEBUG_TOOLS", "1");
+    const imgui_define_macros: []const []const u8 = blk: {
+        var list: ArrayList([]const u8) = .empty;
+        try list.appendSlice(b.allocator, &[_][]const u8{
+            // Add config options as listed here:
+            // https://github.com/ocornut/imgui/blob/master/imconfig.h
+            "IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS",
+            "IMGUI_DISABLE_FILE_FUNCTIONS",
+            "IMGUI_DISABLE_STB_SPRINTF_IMPLEMENTATION",
+        });
+        if (optimize != .Debug) {
+            try list.appendSlice(b.allocator, &[_][]const u8{
+                "IMGUI_DISABLE_DEMO_WINDOWS",
+                // "IMGUI_DISABLE_DEBUG_TOOLS",
+            });
+        }
+        if (optional_freetype_include_path) |_| {
+            try list.appendSlice(b.allocator, &.{
+                "IMGUI_ENABLE_FREETYPE",
+                "IMGUI_DISABLE_STB_TRUETYPE_IMPLEMENTATION",
+            });
+        }
+        break :blk try list.toOwnedSlice(b.allocator);
+    };
 
     const default_cpp_flags = [_][]const u8{ "-std=c++11", "-nostdinc++" };
     const psp_cpp_flags = default_cpp_flags ++ [_][]const u8{ "-fno-exceptions", "-fno-rtti" };
@@ -65,6 +77,11 @@ pub fn build(b: *std.Build) !void {
     };
 
     // ImGui files
+    const mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+        .link_libcpp = true,
+    });
     mod.addCSourceFiles(.{
         .root = imgui,
         .files = &.{
@@ -77,15 +94,19 @@ pub fn build(b: *std.Build) !void {
         .flags = cpp_flags,
     });
     mod.addIncludePath(imgui_include_path);
+    for (imgui_define_macros) |imgui_define_macro| {
+        mod.addCMacro(imgui_define_macro, "1");
+    }
+    mod.addCMacro("IMGUI_IMPL_API", "extern \"C\""); // export "{imgui-folder}/backends/*.cpp"
+    switch (target.result.os.tag) {
+        .windows => {
+            mod.linkSystemLibrary("imm32", .{});
+        },
+        else => {},
+    }
 
     // ImGui enable freetype
     if (optional_freetype_include_path) |freetype_include_path| {
-        mod.addCMacro("IMGUI_ENABLE_FREETYPE", "1");
-        mod.addCMacro("CIMGUI_FREETYPE", "1");
-
-        // HACK: Stop error "use of undeclared identifier 'ImFontAtlasGetBuilderForStbTruetype'" when compiling with Freetype
-        mod.addCMacro("ImFontAtlasGetBuilderForStbTruetype()", "NULL");
-
         mod.addCSourceFiles(.{
             .root = imgui,
             .files = &.{
@@ -95,15 +116,6 @@ pub fn build(b: *std.Build) !void {
         });
         mod.addIncludePath(freetype_include_path);
         mod.addIncludePath(imgui.path(b, "misc/freetype"));
-
-        // NOTE(jae): 2024-07-01
-        // We add the <ft2build.h> include dependency in the parent build.zig
-        // for (freetype_lib.root_module.include_dirs.items) |freetype_include_dir| {
-        //     switch (freetype_include_dir) {
-        //         .path => |p| imgui_lib.addIncludePath(p),
-        //         else => {}, // std.debug.panic("unhandled path from SDL: {s}", .{@tagName(sdl_include_dir)}),
-        //     }
-        // }
     }
 
     // ImGui SDL3 backend files
@@ -124,21 +136,35 @@ pub fn build(b: *std.Build) !void {
     }
 
     // cimgui files
-    mod.addCSourceFiles(.{
-        .root = cimgui,
-        .files = &.{
-            "cimgui.cpp",
-        },
-        .flags = cpp_flags,
-    });
-    mod.addIncludePath(cimgui_include_path);
-    mod.addIncludePath(zig_cimgui_headers_path);
-    mod.addCMacro("IMGUI_IMPL_API", "extern \"C\""); // export "{imgui-folder}/backends/*.cpp"
-    switch (target.result.os.tag) {
-        .windows => {
-            mod.linkSystemLibrary("imm32", .{});
-        },
-        else => {},
+    {
+        const cimgui_mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libcpp = true,
+        });
+        cimgui_mod.addCSourceFiles(.{
+            .root = cimgui,
+            .files = &.{
+                "cimgui.cpp",
+            },
+            .flags = cpp_flags,
+        });
+        for (imgui_define_macros) |imgui_define_macro| {
+            cimgui_mod.addCMacro(imgui_define_macro, "1");
+        }
+        cimgui_mod.addCMacro("IMGUI_IMPL_API", "extern \"C\"");
+        if (optional_freetype_include_path) |_| {
+            cimgui_mod.addCMacro("CIMGUI_FREETYPE", "1");
+        }
+        cimgui_mod.addIncludePath(imgui_include_path);
+        cimgui_mod.addIncludePath(cimgui_include_path);
+        cimgui_mod.addIncludePath(zig_cimgui_headers_path);
+        const cimgui_lib = b.addLibrary(.{
+            .name = "cimgui",
+            .root_module = cimgui_mod,
+            .linkage = .static,
+        });
+        mod.linkLibrary(cimgui_lib);
     }
     b.installArtifact(b.addLibrary(.{
         .name = "imgui",

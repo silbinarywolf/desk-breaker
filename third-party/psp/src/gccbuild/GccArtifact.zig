@@ -215,13 +215,22 @@ fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
         defer cmd.addArg("-Wl,--end-group");
 
         // Add libraries *and* this artifact (exe) to collected libraries
-        var libraries: std.AutoArrayHashMapUnmanaged(*Compile, void) = .empty;
-        defer libraries.deinit(b.allocator);
-        collectLibrariesAndSelfRecursive(g, artifact, &libraries);
+        //
+        // As of Zig 0.15.2 the order looks like
+        // - your_app_name
+        // - SDL3
+        // - freetype
+        // - imgui
+        // - compiler_rt
+        // - rmlui_core
+        const libraries = artifact.getCompileDependencies(false);
 
-        // Iterate over collected libraries
-        const sub_artifact_list: []*Compile = libraries.entries.items(.key);
-        for (sub_artifact_list) |sub_artifact| {
+        // Iterate over collected libraries backwards so that the final linked library
+        // is *your application*
+        var i: usize = libraries.len;
+        while (i > 0) {
+            i -= 1;
+            const sub_artifact = libraries[i];
             // log.info("library: {s}", .{sub_artifact.name});
 
             // Create gcc lib
@@ -605,72 +614,6 @@ fn collectSystemLibrariesRecursive(g: *Gcc, system_libraries: *std.StringArrayHa
             else => continue,
         }
     }
-}
-
-fn collectLibrariesAndSelfRecursive(g: *Gcc, artifact: *Compile, libraries: *std.AutoArrayHashMapUnmanaged(*Compile, void)) void {
-    const b = g.b;
-    const mod = artifact.root_module;
-
-    // NOTE(jae): 2026-01-30 - Zig 0.15.2
-    // This is imperfect and not as thorough as Zigs dependency graph traversal
-    // but it will do for now.
-    //
-    // We likely want something like the following loop logic to collect everything
-    // lib/std/Build/Step/Compile.zig
-    //
-    //   for (compile.getCompileDependencies(false)) |dep_compile| {
-    //     for (dep_compile.root_module.getGraph().modules) |mod| {
-
-    // 1. Add linked libraries of modules
-    for (mod.import_table.entries.items(.value)) |sub_mod| {
-        for (sub_mod.link_objects.items) |link_object| {
-            switch (link_object) {
-                // Collect library
-                .other_step => |sub_artifact| {
-                    switch (sub_artifact.kind) {
-                        .lib => {
-                            collectLibrariesAndSelfRecursive(g, sub_artifact, libraries);
-                        },
-                        .obj, .exe, .@"test", .test_obj => {
-                            std.debug.panic("{s} not implemented", .{@tagName(link_object)});
-                        },
-                    }
-                },
-                // collectSystemLibrariesRecursive
-                .system_lib => continue,
-                // compileStaticLibrary
-                .c_source_file, .c_source_files => continue,
-                .win32_resource_file => @panic("win32 resource file (.rc) not supported"),
-                else => std.debug.panic("{s} not supported", .{@tagName(link_object)}),
-            }
-        }
-    }
-
-    // 2. Add linked libraries
-    for (mod.link_objects.items) |link_object| {
-        switch (link_object) {
-            // collectSystemLibrariesRecursive
-            .system_lib => continue,
-            // compileStaticLibrary
-            .c_source_file, .c_source_files => continue,
-            // Collect library
-            .other_step => |sub_artifact| {
-                switch (sub_artifact.kind) {
-                    .lib => {
-                        collectLibrariesAndSelfRecursive(g, sub_artifact, libraries);
-                    },
-                    .obj, .exe, .@"test", .test_obj => {
-                        std.debug.panic("{s} not implemented", .{@tagName(link_object)});
-                    },
-                }
-            },
-            .win32_resource_file => @panic("win32 resource file (.rc) not supported"),
-            .static_path, .assembly_file => std.debug.panic("{s} not supported", .{@tagName(link_object)}),
-        }
-    }
-
-    // 3. Finally, add self
-    libraries.put(b.allocator, artifact, {}) catch @panic("OOM");
 }
 
 /// Update TranslateC dependencies that are using "freestanding" to resolve to a specific OS with the same bit width as
