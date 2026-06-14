@@ -24,59 +24,6 @@ pub fn milliseconds(self: *const Duration) i64 {
     return self.nanoseconds / time.ns_per_ms;
 }
 
-pub fn writeString(self: *const Duration, writer: *std.io.AnyWriter) std.io.Writer.Error!void {
-    if (self.nanoseconds < 1 * time.ns_per_s) {
-        try std.fmt.format(writer, "0 seconds", .{});
-        return;
-    }
-    var ns = self.nanoseconds;
-    if (ns >= time.ns_per_day) {
-        const days = @divFloor(ns, time.ns_per_day);
-        ns -= days * time.ns_per_day;
-        if (days == 1) {
-            try std.fmt.format(writer, "{} day", .{days});
-        } else {
-            try std.fmt.format(writer, "{} days", .{days});
-        }
-    }
-    if (ns >= time.ns_per_hour) {
-        if (ns != self.nanoseconds) {
-            try writer.writeByte(' ');
-        }
-        const hours = @divFloor(ns, time.ns_per_hour);
-        ns -= hours * time.ns_per_hour;
-        if (hours == 1) {
-            try std.fmt.format(writer, "{} hour", .{hours});
-        } else {
-            try std.fmt.format(writer, "{} hours", .{hours});
-        }
-    }
-    if (ns >= time.ns_per_min) {
-        if (ns != self.nanoseconds) {
-            try writer.writeByte(' ');
-        }
-        const minutes = @divFloor(ns, time.ns_per_min);
-        ns -= minutes * time.ns_per_min;
-        if (minutes == 1) {
-            try std.fmt.format(writer, "{} minute", .{minutes});
-        } else {
-            try std.fmt.format(writer, "{} minutes", .{minutes});
-        }
-    }
-    if (ns >= time.ns_per_s) {
-        if (ns != self.nanoseconds) {
-            try writer.writeByte(' ');
-        }
-        const seconds = @divFloor(ns, time.ns_per_s);
-        ns -= seconds * time.ns_per_s;
-        if (seconds == 1) {
-            try std.fmt.format(writer, "{} second", .{seconds});
-        } else {
-            try std.fmt.format(writer, "{} seconds", .{seconds});
-        }
-    }
-}
-
 /// formatLong will format duration as "1 day 3 hours 58 minutes 1 second"
 pub fn formatLong(self: Duration) FormatLongDuration {
     const formatter: FormatLongDuration = .{ .nanoseconds = self.nanoseconds };
@@ -87,25 +34,6 @@ pub fn formatLong(self: Duration) FormatLongDuration {
 pub fn formatShort(self: Duration) FormatShortDuration {
     const formatter: FormatShortDuration = .{ .nanoseconds = self.nanoseconds };
     return formatter;
-}
-
-/// Deprecated: Temporary until Zig 0.15+ is out
-pub fn OldFormatter(Formatter: type) type {
-    return struct {
-        formatter: Formatter,
-
-        pub fn format(
-            self: @This(),
-            comptime fmt: []const u8,
-            _: std.fmt.FormatOptions,
-            writer: anytype,
-        ) @TypeOf(writer).Error!void {
-            if (fmt.len == 0) std.fmt.invalidFmtError(fmt, self);
-            if (!comptime std.mem.eql(u8, fmt, "f")) std.fmt.invalidFmtError(fmt, self);
-            var any_writer = if (@hasDecl(@TypeOf(writer), "any")) writer.any() else writer;
-            try self.formatter.format(&any_writer);
-        }
-    };
 }
 
 /// Format duration as "1 day 3 hours 58 minutes 1 second"
@@ -317,7 +245,7 @@ test "parse and format duration" {
         // parse with spaces - "1h 30m 17s"
         {
             const d = try Duration.parseString(test_case.given);
-            const str = try std.fmt.allocPrint(allocator, "{s}", .{d});
+            const str = try std.fmt.allocPrint(allocator, "{f}", .{d.formatLong()});
             defer allocator.free(str);
             try testing.expectEqualSlices(u8, test_case.expected, str);
         }
@@ -327,7 +255,7 @@ test "parse and format duration" {
             const given_no_spaces = try std.mem.replaceOwned(u8, allocator, test_case.given, " ", "");
             defer allocator.free(given_no_spaces);
             const d = try Duration.parseString(given_no_spaces);
-            const str = try std.fmt.allocPrint(allocator, "{s}", .{d});
+            const str = try std.fmt.allocPrint(allocator, "{f}", .{d.formatLong()});
             defer allocator.free(str);
             try testing.expectEqualSlices(u8, test_case.expected, str);
         }

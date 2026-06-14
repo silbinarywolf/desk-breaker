@@ -7,6 +7,8 @@ const time = std.time;
 const mem = std.mem;
 const testing = std.testing;
 
+const File = std.Io.File;
+const Dir = std.Io.Dir;
 const App = @import("App.zig");
 const UserSettings = App.UserSettings;
 const StateTimer = App.StateTimer;
@@ -79,18 +81,19 @@ version: u32 = CurrentVersion,
 settings: Settings = .{},
 timers: []Timer,
 
-const LoadError = std.fs.File.OpenError ||
+const LoadError = File.OpenError ||
     DataDirPathError ||
-    std.fs.File.GetSeekPosError ||
-    std.posix.ReadError ||
+    File.SeekError ||
+    File.LengthError ||
+    Dir.ReadFileAllocError ||
     std.json.ParseError(std.json.Scanner) ||
     error{InvalidConfigVersion};
 
-pub fn load(allocator: std.mem.Allocator) LoadError!UserSettings {
+pub fn load(allocator: std.mem.Allocator, io: std.Io) LoadError!UserSettings {
     if (builtin.os.tag == .freestanding) {
         return error.FileNotFound;
     }
-    const path = get_data_dir_path(allocator) catch |err| switch (err) {
+    const path = get_data_dir_path(allocator, io) catch |err| switch (err) {
         error.AppDataDirUnavailable => {
             // If missing $HOME environment variable and not in portable mode
             // then assume we cannot find the config file.
@@ -100,15 +103,10 @@ pub fn load(allocator: std.mem.Allocator) LoadError!UserSettings {
     };
     defer allocator.free(path);
 
-    var dir = try std.fs.openDirAbsolute(path, .{});
-    defer dir.close();
+    var dir = try Dir.openDirAbsolute(io, path, .{});
+    defer dir.close(io);
 
-    var file = try dir.openFile("config.json", .{});
-    defer file.close();
-    const stat_size = std.math.cast(usize, try file.getEndPos()) orelse return error.FileTooBig;
-    var config_file_data = try allocator.alloc(u8, stat_size);
-    const read_all_size = try file.readAll(config_file_data);
-    config_file_data = config_file_data[0..read_all_size];
+    const config_file_data = try dir.readFileAlloc(io, "config.json", allocator, .unlimited);
     defer allocator.free(config_file_data);
 
     const file_version = verblk: {
@@ -172,12 +170,12 @@ pub fn load(allocator: std.mem.Allocator) LoadError!UserSettings {
     unreachable;
 }
 
-pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !void {
+pub fn save(allocator: std.mem.Allocator, io: std.Io, user_settings: *const UserSettings) !void {
     if (builtin.os.tag == .freestanding) {
         // Save not supported on freestanding
         return;
     }
-    const path = get_data_dir_path(allocator) catch |err| switch (err) {
+    const path = get_data_dir_path(allocator, io) catch |err| switch (err) {
         error.AppDataDirUnavailable => {
             // If unavailable on an operating system, like Android, do nothing
             return;
@@ -187,16 +185,16 @@ pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !v
     defer allocator.free(path);
 
     var dir = blk: {
-        const userdata_dir = std.fs.openDirAbsolute(path, .{}) catch |err| switch (err) {
+        const userdata_dir = Dir.openDirAbsolute(io, path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
-                try std.fs.makeDirAbsolute(path);
-                break :blk try std.fs.openDirAbsolute(path, .{});
+                try Dir.createDirAbsolute(io, path, .default_dir);
+                break :blk try Dir.openDirAbsolute(io, path, .{});
             },
             else => return err,
         };
         break :blk userdata_dir;
     };
-    defer dir.close();
+    defer dir.close(io);
 
     // Build user config
     var timers = try std.ArrayList(Timer).initCapacity(allocator, user_settings.timers.items.len);
@@ -224,40 +222,51 @@ pub fn save(allocator: std.mem.Allocator, user_settings: *const UserSettings) !v
         .emit_null_optional_fields = false,
     });
     defer allocator.free(json_data);
-    try dir.writeFile(.{
+    try dir.writeFile(io, .{
         .sub_path = "config.json",
         .data = json_data,
     });
 }
 
-const DataDirPathError = std.fs.GetAppDataDirError || std.fs.SelfExePathError || std.fs.File.OpenError || std.mem.Allocator.Error;
+const DataDirPathError = error{AppDataDirUnavailable} || std.process.ExecutablePathError || File.OpenError || std.mem.Allocator.Error;
 
 /// If "portable_mode_enabled" exists alongside binary then save in "%EXE_DIR%/userdata"
 /// returns slice that is owned by the caller and should be freed by them
-pub fn get_data_dir_path(allocator: mem.Allocator) DataDirPathError![]const u8 {
+pub fn get_data_dir_path(allocator: mem.Allocator, io: std.Io) DataDirPathError![]const u8 {
     if (!CanLoadConfig) {
         // If not supported by platform/OS like Emscripten or Android
         return error.AppDataDirUnavailable;
     }
-    const out_buf = try allocator.alloc(u8, std.fs.max_path_bytes);
-    defer allocator.free(out_buf);
-    const path = try std.fs.selfExeDirPath(out_buf);
 
-    var dir = try std.fs.openDirAbsolute(path, .{});
-    defer dir.close();
+    // Check if portable mode
+    {
+        const out_buf = try allocator.alloc(u8, std.fs.max_path_bytes);
+        defer allocator.free(out_buf);
+        const path_size = try std.process.executableDirPath(io, out_buf);
+        const path = out_buf[0..path_size];
 
-    // check if portable mode
-    var is_portable_mode = true;
-    _ = dir.statFile("portable_mode_enabled") catch {
-        is_portable_mode = false;
-    };
+        var dir = try Dir.openDirAbsolute(io, path, .{});
+        defer dir.close(io);
 
-    // If portable create: "userdata" in same folder as EXE
-    if (is_portable_mode) {
-        return std.fs.path.join(allocator, &[_][]const u8{ path, "userdata" });
+        // check if portable mode
+        var is_portable_mode = true;
+        dir.access(io, "portable_mode_enabled", .{
+            .read = true,
+            .write = true,
+        }) catch {
+            is_portable_mode = false;
+        };
+
+        // If portable create: "userdata" in same folder as EXE
+        if (is_portable_mode) {
+            return std.fs.path.join(allocator, &[_][]const u8{ path, "userdata" });
+        }
     }
 
-    const userdir_path = try std.fs.getAppDataDir(allocator, "DeskBreaker");
+    const userdir_path_from_sdl = sdl.SDL_GetPrefPath("silbinarywolf", "Desk Breaker");
+    if (userdir_path_from_sdl == null) return error.AppDataDirUnavailable;
+    const userdir_path = try allocator.dupe(u8, std.mem.span(userdir_path_from_sdl));
+    sdl.SDL_free(userdir_path_from_sdl);
     return userdir_path;
 }
 

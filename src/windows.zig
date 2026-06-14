@@ -6,8 +6,6 @@ const BOOL = windows.BOOL;
 const LPCSTR = windows.LPCSTR;
 const GetLastError = windows.GetLastError;
 const Win32Error = windows.Win32Error;
-const TRUE = windows.TRUE;
-const FALSE = windows.FALSE;
 
 const MutexHandle = enum(DWORD) {
     _,
@@ -16,7 +14,7 @@ const MutexHandle = enum(DWORD) {
 const MutexError = error{ AlreadyExists, InvalidHandle, Unexpected };
 
 pub fn createMutex(security_attributes: ?*const SECURITY_ATTRIBUTES, initial_owner: bool, name: [:0]const u8) MutexError!MutexHandle {
-    const handle = CreateMutexA(security_attributes, if (initial_owner) TRUE else FALSE, name);
+    const handle = CreateMutexA(security_attributes, if (initial_owner) .TRUE else .FALSE, name);
     const err = GetLastError();
     if (err != .SUCCESS) {
         return switch (GetLastError()) {

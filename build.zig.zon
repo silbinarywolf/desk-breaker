@@ -2,19 +2,10 @@
 .{
     .name = .desk_breaker,
     .version = "0.0.0",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .sdl = .{
-            .path = "third-party/sdl",
-        },
-        .freetype = .{
-            .path = "third-party/freetype",
-        },
-        .imgui = .{
-            .path = "third-party/imgui",
-        },
-        .zigimg = .{
-            .path = "third-party/zigimg",
+        .jaetools = .{
+            .path = "jaetools",
         },
         .wuffs = .{
             .path = "third-party/wuffs",
@@ -50,13 +41,6 @@
         // Used as an experiment to run Desk Breaker on a Playstation Portable
         .psp = .{
             .path = "third-party/psp",
-            .lazy = true,
-        },
-        // NOTE(jae): 2024-07-31
-        // Experiment with MacOS cross-compilation, works on Linux only due to symlinks
-        .macos_sdk = .{
-            .url = "https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz",
-            .hash = "N-V-__8AADKfNEc3CqNHRNdgk6Nr8ppn2pStXFiI7nnCu8ie",
             .lazy = true,
         },
     },
