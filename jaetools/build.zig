@@ -1,6 +1,7 @@
 const Build = @import("std").Build;
 const Module = Build.Module;
 const Dependency = Build.Dependency;
+const LazyPath = Build.LazyPath;
 
 pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
@@ -25,12 +26,35 @@ pub fn build(b: *Build) !void {
         Build.Module.addOptions(de_mod, "options", build_options);
     }
 
+    // NOTE(jae): 2024-07-31
+    // Linux can do Mac cross-compilation if we download the macos-sdk lazy dependency
+    //
+    // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
+    // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+    var system_framework_path: ?LazyPath = null;
+    var system_include_path: ?LazyPath = null;
+    var library_path: ?LazyPath = null;
+    if (!target.query.isNative()) {
+        if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
+            if (b.graph.host.result.os.tag == .windows) {
+                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
+            }
+            const macos_sdk_path = if (b.lazyDependency("macos_sdk", .{})) |ld| ld.path("") else b.path("");
+            system_framework_path = macos_sdk_path.path(b, "System/Library/Frameworks");
+            system_include_path = macos_sdk_path.path(b, "usr/include");
+            library_path = macos_sdk_path.path(b, "usr/lib");
+        }
+    }
+
     // add SDL
     const sdl_lib = blk: {
         const sdl_dep = b.dependency("sdl", .{
             .target = target,
             .optimize = optimize,
             // .lto = @import("std").zig.LtoMode.thin,
+            .system_framework_path = system_framework_path,
+            .system_include_path = system_include_path,
+            .library_path = library_path,
         });
         const sdl_lib = sdl_dep.artifact("SDL3");
 
@@ -68,6 +92,11 @@ pub fn build(b: *Build) !void {
             .optimize = optimize,
             .backend = .sdl3,
             .font_backend = .freetype,
+            // NOTE(jae): 2026-06-14
+            // Only need system_framework_path for ImGui+SDL support
+            .system_framework_path = system_framework_path,
+            // .system_include_path = system_include_path,
+            // .library_path = library_path,
         });
         const imgui_lib = imgui_dep.artifact("imgui");
 
@@ -79,6 +108,14 @@ pub fn build(b: *Build) !void {
         const imgui_mod = exportAndGetModule(b, imgui_dep, "imgui");
         imgui_mod.linkLibrary(imgui_lib);
         de_mod.addImport("imgui", imgui_mod);
+    }
+
+    // Export system framework path and library path
+    if (system_framework_path) |path| {
+        b.addNamedLazyPath("system_framework_path", path);
+    }
+    if (library_path) |path| {
+        b.addNamedLazyPath("library_path", path);
     }
 }
 

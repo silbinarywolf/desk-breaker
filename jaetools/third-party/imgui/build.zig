@@ -37,6 +37,11 @@ pub fn build(b: *std.Build) !void {
         "disable_default_font",
         "IMGUI_DISABLE_DEFAULT_FONT: Disable default embedded fonts (ProggyClean/ProggyForever), remove ~9 KB + ~14 KB from output binary. AddFontDefaultXXX() functions will assert.",
     ) orelse false;
+    const system_framework_path = b.option(
+        std.Build.LazyPath,
+        "system_framework_path",
+        "System framework search path for cross-compiling",
+    );
 
     // NOTE(jae): 2026-05-21
     // Do a unity build (one c++ file to rebuild all of imgui) as it can lead to more effecient code generation.
@@ -116,6 +121,11 @@ pub fn build(b: *std.Build) !void {
     switch (target.result.os.tag) {
         .windows => mod.linkSystemLibrary("imm32", .{}),
         else => {},
+    }
+    // NOTE(jae): 2026-06-14
+    // Needed when including support for Mac cross-compile + SDL3
+    if (system_framework_path) |path| {
+        mod.addSystemFrameworkPath(path);
     }
 
     if (is_unity_build) {
@@ -227,6 +237,11 @@ pub fn build(b: *std.Build) !void {
     for (imgui_define_macros) |define_macro| {
         c_translate.defineCMacro(define_macro, "1");
     }
+    // NOTE(jae): 2026-06-14
+    // Not needed for C-API
+    // if (system_framework_path) |path| {
+    //     c_translate.addSystemFrameworkPath(path);
+    // }
     c_translate.addIncludePath(cimgui_include_path);
     c_translate.addIncludePath(zig_cimgui_headers_path);
     c_translate.addIncludePath(zig_imgui_backend_include_path);

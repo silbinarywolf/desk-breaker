@@ -12,6 +12,13 @@
         .imgui = .{
             .path = "third-party/imgui",
         },
+        // NOTE(jae): 2024-07-31
+        // Experiment with MacOS cross-compilation, works on Linux only due to symlinks
+        .macos_sdk = .{
+            .url = "https://github.com/joseluisq/macosx-sdks/releases/download/13.3/MacOSX13.3.sdk.tar.xz",
+            .hash = "N-V-__8AADKfNEc3CqNHRNdgk6Nr8ppn2pStXFiI7nnCu8ie",
+            .lazy = true,
+        },
     },
     .paths = .{
         "LICENSE",

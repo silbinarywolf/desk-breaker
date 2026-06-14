@@ -181,45 +181,29 @@ pub fn build(b: *std.Build) !void {
             .target = target,
             .optimize = optimize,
         });
+        if (!target.query.isNative()) {
+            switch (target.result.os.tag) {
+                .macos, .ios => {
+                    const system_framework_path = jt_dep.namedLazyPath("system_framework_path");
+                    const library_path = jt_dep.namedLazyPath("library_path");
+                    app.addFrameworkPath(system_framework_path);
+                    app.addLibraryPath(library_path);
+                },
+                else => {},
+            }
+        }
         app.addImport("de", jt_dep.module("de"));
         app.addImport("sdl", jt_dep.module("sdl"));
         app.addImport("imgui", jt_dep.module("imgui"));
 
-        // NOTE(jae): 2024-07-31
-        // Linux can do Mac cross-compilation if we download the macos-sdk lazy dependency
-        //
-        // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
-        // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
-        if (target.result.os.tag == .macos and b.graph.host.result.os.tag != .macos) {
-            if (b.graph.host.result.os.tag == .windows) {
-                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
-            }
-            const maybe_macos_sdk = b.lazyDependency("macos_sdk", .{});
-            if (maybe_macos_sdk) |macos_sdk| {
-                const macos_sdk_path = macos_sdk.path("");
-
-                // add macos sdk to sdl
-                //
-                // TODO: Fix
-                // sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                // sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                // sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-
-                // add to exe
-                app.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                app.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                app.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-            }
-        }
-
         // add wuffs
-        {
-            const wuffs_dep = b.dependency("wuffs", .{
-                .target = target,
-                .optimize = library_optimize,
-            });
-            app.addImport("wuffs", wuffs_dep.module("wuffs"));
-        }
+        // {
+        //     const wuffs_dep = b.dependency("wuffs", .{
+        //         .target = target,
+        //         .optimize = library_optimize,
+        //     });
+        //     app.addImport("wuffs", wuffs_dep.module("wuffs"));
+        // }
 
         // add Wayland module if building on Linux
         if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
