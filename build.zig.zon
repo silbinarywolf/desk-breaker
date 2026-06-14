@@ -2,19 +2,10 @@
 .{
     .name = .desk_breaker,
     .version = "0.0.0",
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
-        .sdl = .{
-            .path = "third-party/sdl",
-        },
-        .freetype = .{
-            .path = "third-party/freetype",
-        },
-        .imgui = .{
-            .path = "third-party/imgui",
-        },
-        .zigimg = .{
-            .path = "third-party/zigimg",
+        .jaetools = .{
+            .path = "jaetools",
         },
         .wuffs = .{
             .path = "third-party/wuffs",

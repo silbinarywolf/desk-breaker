@@ -10,7 +10,7 @@ const psp = @import("psp");
 const enable_android_build = false;
 
 const app_name = "Desk Breaker";
-const recommended_zig_version = "0.15.2";
+const recommended_zig_version = "0.16.0";
 
 pub fn build(b: *std.Build) !void {
     switch (comptime builtin.zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {
@@ -148,7 +148,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .target = targets[0],
         });
-        const sdl_java_files = sdl_dep.namedWriteFiles("sdljava");
+        const sdl_java_files = sdl_dep.namedLazyPath("sdljava");
         for (sdl_java_files.files.items) |file| {
             apk.addJavaSourceFile(.{ .file = file.contents.copy });
         }
@@ -177,90 +177,39 @@ pub fn build(b: *std.Build) !void {
             // https://github.com/silbinarywolf/zig-android-sdk/issues/18
             if (optimize == .Debug) .ReleaseSafe else optimize;
 
-        // add sdl
-        const sdl_include_path = blk: {
-            const sdl_dep = b.dependency("sdl", .{
-                .optimize = library_optimize,
-                .target = target,
-                .platform = platform,
-            });
-            const sdl_lib = sdl_dep.artifact("SDL3");
+        const jt_dep = b.dependency("jaetools", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        app.addImport("de", jt_dep.module("de"));
+        app.addImport("sdl", jt_dep.module("sdl"));
+        app.addImport("imgui", jt_dep.module("imgui"));
 
-            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
-                // NOTE(jae): 2024-07-03
-                // Hack for Linux to use the SDL3 version compiled using native Linux tools
-                app.linkLibrary(sdl_lib);
-                for (sdl_lib.root_module.lib_paths.items) |lib_path| {
-                    app.addLibraryPath(lib_path);
-                }
-            } else {
-                app.linkLibrary(sdl_lib);
+        // NOTE(jae): 2024-07-31
+        // Linux can do Mac cross-compilation if we download the macos-sdk lazy dependency
+        //
+        // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
+        // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
+        if (target.result.os.tag == .macos and b.graph.host.result.os.tag != .macos) {
+            if (b.graph.host.result.os.tag == .windows) {
+                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
             }
+            const maybe_macos_sdk = b.lazyDependency("macos_sdk", .{});
+            if (maybe_macos_sdk) |macos_sdk| {
+                const macos_sdk_path = macos_sdk.path("");
 
-            const sdl_module = sdl_dep.module("sdl");
-            app.addImport("sdl", sdl_module);
+                // add macos sdk to sdl
+                //
+                // TODO: Fix
+                // sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                // sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                // sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
 
-            // NOTE(jae): 2024-07-31
-            // Linux can do Mac cross-compilation if we download the macos-sdk lazy dependency
-            //
-            // - zig build -Doptimize=ReleaseSafe -Dtarget=aarch64-macos
-            // - zig build -Doptimize=ReleaseSafe -Dtarget=x86_64-macos
-            if (target.result.os.tag == .macos and b.graph.host.result.os.tag != .macos) {
-                if (b.graph.host.result.os.tag == .windows) {
-                    @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
-                }
-                const maybe_macos_sdk = b.lazyDependency("macos_sdk", .{});
-                if (maybe_macos_sdk) |macos_sdk| {
-                    const macos_sdk_path = macos_sdk.path("");
-
-                    // add macos sdk to sdl
-                    sdl_lib.root_module.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                    sdl_lib.root_module.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                    sdl_lib.root_module.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-
-                    // add to exe
-                    app.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
-                    app.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
-                    app.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
-                }
+                // add to exe
+                app.addSystemFrameworkPath(macos_sdk_path.path(b, "System/Library/Frameworks"));
+                app.addSystemIncludePath(macos_sdk_path.path(b, "usr/include"));
+                app.addLibraryPath(macos_sdk_path.path(b, "usr/lib"));
             }
-
-            break :blk sdl_dep.namedLazyPath("include_path");
-        };
-
-        // add freetype
-        const freetype_include_path = blk: {
-            var freetype_dep = b.dependency("freetype", .{
-                .target = target,
-                .optimize = library_optimize,
-                .platform = platform,
-            });
-            const freetype_lib = freetype_dep.artifact("freetype");
-            if (target.result.os.tag != .emscripten) {
-                // NOTE(jae): 2025-02-02
-                // - Link with Emscripten toolchains version instead due to setjmp/etc symbols not being found.
-                app.linkLibrary(freetype_lib);
-            }
-            app.addImport("freetype", freetype_dep.module("freetype"));
-            break :blk freetype_dep.namedLazyPath("include_path");
-        };
-
-        // add imgui
-        {
-            var imgui_dep = b.dependency("imgui", .{
-                .target = target,
-                // NOTE(jae): 2025-01-27
-                // We want assertions in ImGui to tell is if we messed up so we
-                // don't just want ReleaseFast here.
-                .optimize = library_optimize,
-                // Add directory containing "ft2build.h" so we can compile with Freetype support
-                .freetype_include_path = freetype_include_path,
-                // Add directory containing "SDL3/SDL.h" so we can compile the platform/rendering backends
-                .sdl_include_path = sdl_include_path,
-            });
-            const imgui_lib = imgui_dep.artifact("imgui");
-            app.linkLibrary(imgui_lib);
-            app.addImport("imgui", imgui_dep.module("imgui"));
         }
 
         // add wuffs
@@ -408,8 +357,6 @@ pub fn build(b: *std.Build) !void {
         }
     }
 
-    // note(jae): 2025-09-15
-    // Currently broken, I want to refactor the "Duration" stuff later anyway
     const test_step = b.step("test", "Run the test suite");
     const test_cmd = b.addRunArtifact(b.addTest(.{
         .root_module = b.createModule(.{
