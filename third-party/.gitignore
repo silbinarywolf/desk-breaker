@@ -1,9 +1,0 @@
-# Handle .gitignore logic for inlined Zig modules
-
-# zigimg
-/zigimg/*
-!/zigimg/.gitattributes
-!/zigimg/*.zig
-!/zigimg/build.zig.zon
-!/zigimg/LICENSE
-!/zigimg/src
