@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
-const Dir = std.fs.Dir;
+const Dir = std.Io.Dir;
 const PlatformProcessList = switch (builtin.os.tag) {
     .windows => WindowsProcessList,
     .linux => LinuxProcessList,
@@ -26,8 +26,8 @@ pub fn deinit(self: *Self) void {
     self.impl = undefined;
 }
 
-pub fn open(self: *Self, allocator: std.mem.Allocator) OpenError!void {
-    try self.impl.open(allocator);
+pub fn open(self: *Self, allocator: std.mem.Allocator, io: std.Io) OpenError!void {
+    try self.impl.open(allocator, io);
 }
 
 pub fn next(self: *Self) !?Entry {
@@ -61,6 +61,7 @@ pub const OpenError = error{ AccessDenied, OutOfMemory, Unexpected };
 // Based of example code here: https://learn.microsoft.com/en-us/windows/win32/psapi/enumerating-all-processes
 const WindowsProcessList = struct {
     const windows = std.os.windows;
+
     iterator: Iterator = .empty,
 
     exe_filepath_buffer: [std.fs.max_path_bytes:0]u8,
@@ -95,10 +96,10 @@ const WindowsProcessList = struct {
         self.* = undefined;
     }
 
-    fn open(self: *@This(), allocator: std.mem.Allocator) OpenError!void {
+    fn open(self: *@This(), allocator: std.mem.Allocator, _: std.Io) OpenError!void {
         const process_buffer_in_bytes = self.processes_buffer.len * @sizeOf(windows.DWORD);
         var given_processes_len_in_bytes: windows.DWORD = 0;
-        if (kernel32.K32EnumProcesses(&self.processes_buffer[0], process_buffer_in_bytes, &given_processes_len_in_bytes) == 0)
+        if (kernel32.K32EnumProcesses(&self.processes_buffer[0], process_buffer_in_bytes, &given_processes_len_in_bytes) == .FALSE)
             return windows.unexpectedError(windows.GetLastError());
         // From MDN: if lpcbNeeded equals cb (given), consider retrying the call with a larger array.
         if (given_processes_len_in_bytes >= process_buffer_in_bytes) {
@@ -119,7 +120,7 @@ const WindowsProcessList = struct {
             if (process_id == 0) continue;
 
             const name: []const u8 = procblk: {
-                const process_handle = kernel32.OpenProcess(kernel32.PROCESS_QUERY_LIMITED_INFORMATION, windows.FALSE, process_id) orelse {
+                const process_handle = kernel32.OpenProcess(kernel32.PROCESS_QUERY_LIMITED_INFORMATION, .FALSE, process_id) orelse {
                     const win32err = windows.GetLastError();
                     switch (win32err) {
                         // If the specified process is the System process or one of the Client Server Run-Time Subsystem (CSRSS) processes,
@@ -143,7 +144,7 @@ const WindowsProcessList = struct {
                 var name: []u8 = nameblk: {
                     var name_buffer_len: u32 = windows.PATH_MAX_WIDE + 1;
                     var name_buffer: [windows.PATH_MAX_WIDE:0]u16 = undefined;
-                    if (kernel32.QueryFullProcessImageNameW(process_handle, 0, name_buffer[0..], &name_buffer_len) == 0) {
+                    if (kernel32.QueryFullProcessImageNameW(process_handle, 0, name_buffer[0..], &name_buffer_len) == .FALSE) {
                         const err = windows.GetLastError();
                         switch (err) {
                             // Undocumented in 2025: If we can't do anything with it, just ignore it.
@@ -211,6 +212,8 @@ const WindowsProcessList = struct {
         /// it and then pad it out with spaces.
         const QueryProcessMaxBuffer = std.unicode.wtf8ToWtf16LeStringLiteral(QueryProcess ++ "4294967295");
 
+        const Win32Error = std.os.windows.Win32Error;
+
         fn init(self: *@This()) !void {
             // Initialize COM
             {
@@ -223,14 +226,14 @@ const WindowsProcessList = struct {
                     co_init_ex_hr = ole32.CoInitializeEx(null, ole32.COINIT_MULTITHREADED);
                 }
                 // - S_FALSE = The COM library is already initialized on this thread. Still requires calling "CoUninitialize"
-                if (co_init_ex_hr != windows.S_OK and co_init_ex_hr != windows.S_FALSE) return windows.unexpectedError(windows.HRESULT_CODE(co_init_ex_hr));
+                if (co_init_ex_hr != .SUCCESS and co_init_ex_hr != .INVALID_FUNCTION) return windows.unexpectedError(co_init_ex_hr);
             }
             errdefer ole32.CoUninitialize();
 
             // Init CoInitializeSecurity
             {
                 const hr = ole32.CoInitializeSecurity(null, -1, null, null, ole32.RPC_C_AUTHN_LEVEL_DEFAULT, ole32.RPC_C_IMP_LEVEL_IMPERSONATE, null, ole32.EOAC_NONE, null);
-                if (hr != windows.S_OK) return windows.unexpectedError(windows.HRESULT_CODE(hr));
+                if (hr != .SUCCESS) return windows.unexpectedError(hr);
             }
 
             // Connect to WMI
@@ -238,7 +241,7 @@ const WindowsProcessList = struct {
             const locator: *wbemuuid.IWbemLocator = hrblk: {
                 var result: *wbemuuid.IWbemLocator = undefined;
                 const hr = ole32.CoCreateInstance(&wbemuuid.CLSID_WbemLocator, null, ole32.CLSCTX_INPROC_SERVER, &wbemuuid.IID_IWbemLocator, @ptrCast(&result));
-                if (hr != windows.S_OK) return windows.unexpectedError(windows.HRESULT_CODE(hr));
+                if (hr != .SUCCESS) return windows.unexpectedError(hr);
                 break :hrblk result;
             };
             errdefer _ = locator.lpVtbl.*.Release.?(locator);
@@ -259,8 +262,8 @@ const WindowsProcessList = struct {
                 defer ole32.SysFreeString(resource);
 
                 var r: *wbemuuid.IWbemServices = undefined;
-                const hr = locator.lpVtbl.*.ConnectServer.?(locator, resource, null, null, null, 0, null, null, @ptrCast(&r));
-                if (hr != windows.S_OK) return windows.unexpectedError(windows.HRESULT_CODE(hr));
+                const hr: Win32Error = @enumFromInt(locator.lpVtbl.*.ConnectServer.?(locator, resource, null, null, null, 0, null, null, @ptrCast(&r)));
+                if (hr != .SUCCESS) return windows.unexpectedError(hr);
                 break :hrblk r;
             };
             errdefer _ = services.lpVtbl.*.Release.?(services);
@@ -303,8 +306,8 @@ const WindowsProcessList = struct {
             // Issue a WMI query
             const results: *wbemuuid.IEnumWbemClassObject = hrblk: {
                 var r: *wbemuuid.IEnumWbemClassObject = undefined;
-                const hr = services.lpVtbl.*.ExecQuery.?(services, self.language, self.query, wbemuuid.WBEM_FLAG_FORWARD_ONLY, null, @ptrCast(&r));
-                if (hr != windows.S_OK) return windows.unexpectedError(windows.HRESULT_CODE(hr));
+                const hr: Win32Error = @enumFromInt(services.lpVtbl.*.ExecQuery.?(services, self.language, self.query, wbemuuid.WBEM_FLAG_FORWARD_ONLY, null, @ptrCast(&r)));
+                if (hr != .SUCCESS) return windows.unexpectedError(hr);
                 break :hrblk r;
             };
             defer _ = results.lpVtbl.*.Release.?(results);
@@ -318,8 +321,8 @@ const WindowsProcessList = struct {
                 var result: *wbemuuid.IWbemClassObject = undefined;
                 var returned_count: windows.ULONG = 0;
                 {
-                    const hr = results.lpVtbl.*.Next.?(results, ms_wait, 1, @ptrCast(&result), &returned_count);
-                    if (hr != windows.S_OK) break;
+                    const hr: Win32Error = @enumFromInt(results.lpVtbl.*.Next.?(results, ms_wait, 1, @ptrCast(&result), &returned_count));
+                    if (hr != .SUCCESS) break;
                 }
                 defer _ = result.lpVtbl.*.Release.?(result);
                 if (returned_count == 0) break;
@@ -334,8 +337,8 @@ const WindowsProcessList = struct {
                 // - exe: "C:\Microsoft VS Code\Code.exe" --type=utility --utility-sub-type=node.mojom.NodeService
                 var column: wbemuuid.VARIANT = undefined;
                 {
-                    const hr = result.lpVtbl.*.Get.?(result, std.unicode.wtf8ToWtf16LeStringLiteral("CommandLine"), 0, &column, 0, 0);
-                    if (hr != windows.S_OK) return windows.unexpectedError(windows.HRESULT_CODE(hr));
+                    const hr: Win32Error = @enumFromInt(result.lpVtbl.*.Get.?(result, std.unicode.wtf8ToWtf16LeStringLiteral("CommandLine"), 0, &column, 0, 0));
+                    if (hr != .SUCCESS) return windows.unexpectedError(hr);
                 }
                 const column_ptr = column.unnamed_0.unnamed_0.unnamed_0.bstrVal;
                 if (column_ptr == null) continue;
@@ -376,6 +379,7 @@ const WindowsProcessList = struct {
 };
 
 const LinuxProcessList = struct {
+    io: std.Io,
     allocator: std.mem.Allocator,
     proc: ?Dir,
     it: Dir.Iterator,
@@ -384,9 +388,10 @@ const LinuxProcessList = struct {
 
     fn init(self: *@This()) !void {
         self.* = .{
+            .io = undefined,
+            .allocator = undefined,
             .proc = null,
             .it_exe_and_args_buf = &[0]u8{},
-            .allocator = undefined,
             .it = undefined,
             .it_exe_filepath_buf = undefined,
         };
@@ -398,8 +403,8 @@ const LinuxProcessList = struct {
         assert(self.proc == null);
     }
 
-    fn open(self: *@This(), allocator: std.mem.Allocator) OpenError!void {
-        var proc = std.fs.openDirAbsolute("/proc", .{
+    fn open(self: *@This(), allocator: std.mem.Allocator, io: std.Io) OpenError!void {
+        var proc = Dir.openDirAbsolute(io, "/proc", .{
             .iterate = true,
         }) catch |err| switch (err) {
             error.AccessDenied => return error.AccessDenied,
@@ -411,6 +416,7 @@ const LinuxProcessList = struct {
         assert(self.it_exe_and_args_buf.len == 0);
         self.* = .{
             .allocator = allocator,
+            .io = io,
             .proc = proc,
             .it = it,
             .it_exe_filepath_buf = undefined,
@@ -425,16 +431,17 @@ const LinuxProcessList = struct {
             return error.Unexpected;
         };
         var proc_pid_info_buf: [64]u8 = undefined;
-        entryloop: while (try self.it.next()) |entry| {
+        entryloop: while (try self.it.next(self.io)) |entry| {
             if (entry.name.len >= 1 and entry.name[0] >= '0' and entry.name[0] <= '9') {
                 const proc_exe_path = try std.fmt.bufPrintZ(proc_pid_info_buf[0..], "{s}/exe", .{entry.name});
-                const filepath = proc.readLinkZ(proc_exe_path, self.it_exe_filepath_buf[0..]) catch |err| switch (err) {
+                const filepath_size = proc.readLink(self.io, proc_exe_path, self.it_exe_filepath_buf[0..]) catch |err| switch (err) {
                     // Ignore processes that
                     // - We don't have access to
                     // - That were closed / no longer exist
                     error.AccessDenied, error.FileNotFound => continue :entryloop,
                     else => return err,
                 };
+                const filepath = self.it_exe_filepath_buf[0..filepath_size];
                 const basename = std.fs.path.basename(filepath);
 
                 const jar_arguments: []const u8 = argblk: {
@@ -448,7 +455,7 @@ const LinuxProcessList = struct {
                     // If Java application, then extract the argument contains references to '.jar' files
                     const proc_args = try std.fmt.bufPrintZ(proc_pid_info_buf[0..], "{s}/cmdline", .{entry.name});
                     const allocator = self.allocator;
-                    self.it_exe_and_args_buf = proc.readFileAlloc(allocator, proc_args, 2_097_152) catch |err| switch (err) {
+                    self.it_exe_and_args_buf = proc.readFileAlloc(self.io, proc_args, allocator, .limited(2_096_152)) catch |err| switch (err) {
                         // Ignore processes that
                         // - We don't have access to
                         // - That were closed / no longer exist
@@ -480,7 +487,7 @@ const LinuxProcessList = struct {
     fn close(self: *@This()) void {
         self.freeExeAndArgsIfSet();
         if (self.proc) |*proc| {
-            proc.close();
+            proc.close(self.io);
             self.proc = null;
         }
     }
@@ -499,7 +506,7 @@ const DummyProcessList = struct {
 
     fn deinit(_: *@This()) void {}
 
-    fn open(_: *@This(), _: std.mem.Allocator) OpenError!void {
+    fn open(_: *@This(), _: std.mem.Allocator, _: std.Io) OpenError!void {
         @compileError("Do not call open() as target is not supported. Check with 'isSupported' first.");
     }
 
@@ -567,7 +574,7 @@ const ole32 = struct {
     const windows = std.os.windows;
     const LPVOID = windows.LPVOID;
     const DWORD = windows.DWORD;
-    const HRESULT = windows.HRESULT;
+    const HRESULT = windows.Win32Error;
     const OLECHAR = u16;
     const BSTR = windows.BSTR;
     const UINT = windows.UINT;
@@ -578,7 +585,7 @@ const ole32 = struct {
     pub const COINIT_DISABLE_OLE1DDE: DWORD = 4;
     pub const COINIT_SPEED_OVER_MEMORY: DWORD = 8;
 
-    pub const RPC_E_CHANGED_MODE: c_long = -0x7FFEFEFA; // ie. 0x80010106;
+    pub const RPC_E_CHANGED_MODE: HRESULT = @enumFromInt(0x80010106); // ie. 0x80010106 or -0x7FFEFEFA
 
     pub const EOAC_NONE: c_int = 0;
 
@@ -620,8 +627,8 @@ const ole32 = struct {
 pub const unknwn = struct {
     const windows = std.os.windows;
 
-    pub const QueryInterface = *const fn (*IUnknown, *const windows.GUID, [*c]?*anyopaque) callconv(.c) windows.HRESULT;
-    pub const AddRef = *const fn (*IUnknown, *const windows.GUID, [*c]?*anyopaque) callconv(.c) windows.HRESULT;
+    pub const QueryInterface = *const fn (*IUnknown, *const windows.GUID, [*c]?*anyopaque) callconv(.c) windows.Win32Error;
+    pub const AddRef = *const fn (*IUnknown, *const windows.GUID, [*c]?*anyopaque) callconv(.c) windows.Win32Error;
     pub const Release = **const fn (*IUnknown) callconv(.c) windows.ULONG;
 
     /// https://learn.microsoft.com/en-us/windows/win32/api/unknwn/nn-unknwn-iunknown
@@ -659,5 +666,9 @@ pub const wbemuuid = struct {
 
     pub const VARIANT = c.VARIANT;
 };
+
+fn toWin32Error(err: c_long) std.os.windows.Win32Error {
+    return @enumFromInt(err);
+}
 
 const Self = @This();

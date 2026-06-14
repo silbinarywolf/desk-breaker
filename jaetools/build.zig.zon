@@ -1,0 +1,23 @@
+.{
+    .name = .jaetools,
+    .version = "0.0.0",
+    .fingerprint = 0x7d2993c829f942e9,
+    .dependencies = .{
+        .sdl = .{
+            .path = "third-party/sdl",
+        },
+        .freetype = .{
+            .path = "third-party/freetype",
+        },
+        .imgui = .{
+            .path = "third-party/imgui",
+        },
+    },
+    .paths = .{
+        "LICENSE",
+        "README.md",
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

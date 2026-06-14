@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+
 const wayland = if (builtin.os.tag == .linux) @import("wayland-gen.zig") else void;
 const wl = wayland.client.wl;
 const IdleNotifierV1 = wayland.client.ext.IdleNotifierV1;
@@ -131,7 +132,7 @@ fn handleGlobalListener(registry: *wl.Registry, event: wl.Registry.Event, notify
 
 fn handleSeatListener(_: *wl.Seat, event: wl.Seat.Event, _: *WaylandNotifyState) void {
     switch (event) {
-        .capabilities => |_| {
+        .capabilities => {
             // std.debug.print("Seat capabilities\n  Pointer {}\n  Keyboard {}\n  Touch {}\n", .{
             //     data.capabilities.pointer,
             //     data.capabilities.keyboard,

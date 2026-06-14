@@ -1,11 +1,17 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const de = @import("de");
+
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 
 const log = std.log.scoped(.Window);
 const assert = std.debug.assert;
+
+// TODO(jae): 2026-06-13
+// Update and use Window/Renderer from Jaetools
+// pub const Options = de.Window.Options;
 
 pub const Options = struct {
     title: [:0]const u8 = &[0:0]u8{},
@@ -33,7 +39,23 @@ renderer: *sdl.SDL_Renderer,
 imgui_context: *imgui.ImGuiContext,
 imgui_new_frame: bool,
 
-pub fn init(options: Options) error{ SdlFailed, ImguiFailed }!Window {
+pub fn init(options: Options) !Window {
+    // TODO(jae): 2026-06-13
+    // Update and use Window/Renderer from Jaetools
+    //
+    // var window = try de.Window.init(options);
+    // var renderer = try de.Renderer.init(window);
+    // var imgui_context = try de.ImGuiContext.init(window, renderer, .{
+    //     .font_data = @embedFile("resources/fonts/Lato-Regular.ttf"),
+    //     .size_pixels = 28,
+    //     // const font_data = @embedFile("resources/fonts/Lato-Regular.ttf");
+    //     // font_config.FontData = @ptrCast(@constCast(font_data[0..].ptr));
+    //     // font_config.FontDataSize = font_data.len;
+    //     // font_config.FontDataOwnedByAtlas = false;
+    //     // // font_config.FontLoader = imgui.ImGuiFreeType_GetFontLoader();
+    //     // font_config.SizePixels = 28;
+    // });
+
     const props = sdl.SDL_CreateProperties();
     if (props == 0) {
         log.err("SDL_CreateProperties failed: {s}", .{sdl.SDL_GetError()});

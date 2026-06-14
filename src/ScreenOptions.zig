@@ -59,8 +59,9 @@ pub fn open(app: *App) !void {
                     error.ValueNameNotFound => "",
                     else => return err,
                 };
-                const out_buf = try temp_allocator.alloc(u8, std.fs.max_path_bytes);
-                const exe_path = try std.fs.selfExePath(out_buf);
+                defer temp_allocator.free(startup_desk_breaker_path);
+                const exe_path = try std.process.executablePathAlloc(app.io, temp_allocator);
+                defer temp_allocator.free(exe_path);
                 break :blk std.mem.eql(u8, exe_path, startup_desk_breaker_path);
             };
         },
@@ -280,8 +281,8 @@ pub fn render(app: *App) !void {
                             else => return err,
                         };
                     } else {
-                        const out_buf = try temp_allocator.alloc(u8, std.fs.max_path_bytes);
-                        const exe_path = try std.fs.selfExePath(out_buf);
+                        const exe_path = try std.process.executablePathAlloc(app.io, temp_allocator);
+                        defer temp_allocator.free(exe_path);
                         try startup_run.setString(App.StartupRegistryKey, exe_path);
                     }
                 },
@@ -311,7 +312,7 @@ pub fn render(app: *App) !void {
             };
 
             // save
-            try UserConfig.save(app.temp_allocator.allocator(), app.user_settings);
+            try UserConfig.save(app.temp_allocator.allocator(), app.io, app.user_settings);
 
             // close
             app.ui.screen = .overview;

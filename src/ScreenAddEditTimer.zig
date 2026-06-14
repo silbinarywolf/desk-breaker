@@ -118,7 +118,7 @@ pub fn render(app: *App) !void {
             app.ui.screen = .overview;
 
             // save
-            try UserConfig.save(app.temp_allocator.allocator(), app.user_settings);
+            try UserConfig.save(app.temp_allocator.allocator(), app.io, app.user_settings);
         }
     }
     imgui.igSameLine(0, 8);
@@ -128,8 +128,7 @@ pub fn render(app: *App) !void {
     if (!is_new) {
         imgui.igSameLine(0, 0);
         imgui.igSetCursorPosX(0);
-        var viewport_size: imgui.ImVec2 = undefined;
-        imgui.igGetWindowSize(&viewport_size);
+        const viewport_size = imgui.igGetWindowSize();
         imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = imgui.igGetCursorPosY() }, imgui.ImGuiCond_Always, .{ .x = 1 });
         if (imgui.igBegin("deletewindow", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
@@ -138,7 +137,7 @@ pub fn render(app: *App) !void {
                 app.ui.screen = .overview;
 
                 // save
-                try UserConfig.save(app.temp_allocator.allocator(), app.user_settings);
+                try UserConfig.save(app.temp_allocator.allocator(), app.io, app.user_settings);
             }
         }
     }

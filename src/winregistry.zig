@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const windows = std.os.windows;
-const RRF = windows.advapi32.RRF;
+const RRF = advapi32.RRF;
 
 const BOOL = windows.BOOL;
 const DWORD = windows.DWORD;
@@ -12,12 +12,13 @@ const LPCSTR = windows.LPCSTR;
 const LSTATUS = windows.LSTATUS;
 const REGSAM = windows.REGSAM;
 const ULONG = windows.ULONG;
+const REG = windows.REG.ValueType;
 
 pub extern "advapi32" fn RegSetValueExW(
     hKey: HKEY,
     lpValueName: LPCWSTR,
     Reserved: DWORD,
-    dwType: DWORD,
+    dwType: REG,
     lpData: ?*anyopaque,
     cbData: DWORD,
 ) callconv(.winapi) LSTATUS;
@@ -53,8 +54,7 @@ pub const RegistryWtf8 = struct {
 
     /// Closes key, after that usage is invalid
     pub fn closeKey(reg: RegistryWtf8) void {
-        const return_code_int: windows.HRESULT = windows.advapi32.RegCloseKey(reg.key);
-        const return_code: windows.Win32Error = @enumFromInt(return_code_int);
+        const return_code: windows.Win32Error = advapi32.RegCloseKey(reg.key);
         switch (return_code) {
             .SUCCESS => {},
             else => {},
@@ -170,16 +170,24 @@ const RegistryWtf16Le = struct {
     /// After finishing work, call `closeKey`.
     fn openKey(hkey: windows.HKEY, key_wtf16le: [:0]const u16, options: OpenOptions) error{KeyNotFound}!RegistryWtf16Le {
         var key: windows.HKEY = undefined;
-        var access: windows.REGSAM = windows.KEY_QUERY_VALUE | windows.KEY_ENUMERATE_SUB_KEYS | windows.KEY_SET_VALUE;
-        if (options.wow64_32) access |= windows.KEY_WOW64_32KEY;
-        const return_code_int: windows.HRESULT = windows.advapi32.RegOpenKeyExW(
+        const access: windows.REGSAM = .{
+            // windows.KEY_QUERY_VALUE | windows.KEY_ENUMERATE_SUB_KEYS | windows.KEY_SET_VALUE;
+            .SPECIFIC = .{
+                .KEY = .{
+                    .QUERY_VALUE = true,
+                    .ENUMERATE_SUB_KEYS = true,
+                    .SET_VALUE = true,
+                    .WOW64_32KEY = options.wow64_32, // access |= windows.KEY_WOW64_32KEY;
+                },
+            },
+        };
+        const return_code = advapi32.RegOpenKeyExW(
             hkey,
             key_wtf16le,
             0,
             access,
             &key,
         );
-        const return_code: windows.Win32Error = @enumFromInt(return_code_int);
         switch (return_code) {
             .SUCCESS => {},
             .FILE_NOT_FOUND => return error.KeyNotFound,
@@ -191,8 +199,7 @@ const RegistryWtf16Le = struct {
 
     /// Closes key, after that usage is invalid
     fn closeKey(reg: RegistryWtf16Le) void {
-        const return_code_int: windows.HRESULT = windows.advapi32.RegCloseKey(reg.key);
-        const return_code: windows.Win32Error = @enumFromInt(return_code_int);
+        const return_code = advapi32.RegCloseKey(reg.key);
         switch (return_code) {
             .SUCCESS => {},
             else => {},
@@ -221,7 +228,7 @@ const RegistryWtf16Le = struct {
             reg.key,
             value_name_wtf16le,
             0, // reserved
-            windows.REG.SZ,
+            REG.SZ,
             @constCast(value_wtf16le[0..].ptr),
             value_wtf16le_buf_len,
         );
@@ -243,11 +250,12 @@ const RegistryWtf16Le = struct {
 
     /// Get string ([:0]const u16) from registry.
     fn getString(reg: RegistryWtf16Le, allocator: std.mem.Allocator, subkey_wtf16le: [:0]const u16, value_name_wtf16le: [:0]const u16) error{ OutOfMemory, ValueNameNotFound, NotAString, StringNotFound }![]const u16 {
-        var actual_type: windows.ULONG = undefined;
+        var actual_type: REG = undefined;
 
         // Calculating length to allocate
         var value_wtf16le_buf_size: u32 = 0; // in bytes, including any terminating NUL character or characters.
-        var return_code_int: windows.HRESULT = windows.advapi32.RegGetValueW(
+        // Check returned code and type
+        var return_code = advapi32.RegGetValueW(
             reg.key,
             subkey_wtf16le,
             value_name_wtf16le,
@@ -256,9 +264,6 @@ const RegistryWtf16Le = struct {
             null,
             &value_wtf16le_buf_size,
         );
-
-        // Check returned code and type
-        var return_code: windows.Win32Error = @enumFromInt(return_code_int);
         switch (return_code) {
             .SUCCESS => std.debug.assert(value_wtf16le_buf_size != 0),
             .MORE_DATA => unreachable, // We are only reading length
@@ -267,14 +272,15 @@ const RegistryWtf16Le = struct {
             else => return error.StringNotFound,
         }
         switch (actual_type) {
-            windows.REG.SZ => {},
+            REG.SZ => {},
             else => return error.NotAString,
         }
 
         const value_wtf16le_buf: []u16 = try allocator.alloc(u16, std.math.divCeil(u32, value_wtf16le_buf_size, 2) catch unreachable);
         errdefer allocator.free(value_wtf16le_buf);
 
-        return_code_int = windows.advapi32.RegGetValueW(
+        // Check returned code and (just in case) type again.
+        return_code = advapi32.RegGetValueW(
             reg.key,
             subkey_wtf16le,
             value_name_wtf16le,
@@ -283,9 +289,6 @@ const RegistryWtf16Le = struct {
             value_wtf16le_buf.ptr,
             &value_wtf16le_buf_size,
         );
-
-        // Check returned code and (just in case) type again.
-        return_code = @enumFromInt(return_code_int);
         switch (return_code) {
             .SUCCESS => {},
             .MORE_DATA => unreachable, // Calculated first time length should be enough, even overestimated
@@ -294,7 +297,7 @@ const RegistryWtf16Le = struct {
             else => return error.StringNotFound,
         }
         switch (actual_type) {
-            windows.REG.SZ => {},
+            REG.SZ => {},
             else => return error.NotAString,
         }
 
@@ -316,7 +319,7 @@ const RegistryWtf16Le = struct {
         var reg_size: u32 = @sizeOf(u32);
         var reg_value: u32 = 0;
 
-        const return_code_int: windows.HRESULT = windows.advapi32.RegGetValueW(
+        const return_code = advapi32.RegGetValueW(
             reg.key,
             subkey_wtf16le,
             value_name_wtf16le,
@@ -325,7 +328,6 @@ const RegistryWtf16Le = struct {
             &reg_value,
             &reg_size,
         );
-        const return_code: windows.Win32Error = @enumFromInt(return_code_int);
         switch (return_code) {
             .SUCCESS => {},
             .MORE_DATA => return error.DwordTooLong,
@@ -335,7 +337,7 @@ const RegistryWtf16Le = struct {
         }
 
         switch (actual_type) {
-            windows.REG.DWORD => {},
+            REG.DWORD => {},
             else => return error.NotADword,
         }
 
@@ -348,7 +350,7 @@ const RegistryWtf16Le = struct {
     fn loadFromPath(absolute_path_as_wtf16le: [:0]const u16) error{KeyNotFound}!RegistryWtf16Le {
         var key: windows.HKEY = undefined;
 
-        const return_code_int: windows.HRESULT = std.os.windows.advapi32.RegLoadAppKeyW(
+        const return_code_int: windows.HRESULT = advapi32.RegLoadAppKeyW(
             absolute_path_as_wtf16le,
             &key,
             windows.KEY_QUERY_VALUE | windows.KEY_ENUMERATE_SUB_KEYS,
@@ -363,4 +365,54 @@ const RegistryWtf16Le = struct {
 
         return .{ .key = key };
     }
+};
+
+const advapi32 = struct {
+    pub extern "advapi32" fn RegOpenKeyExW(
+        hKey: HKEY,
+        lpSubKey: LPCWSTR,
+        ulOptions: DWORD,
+        samDesired: REGSAM,
+        phkResult: *HKEY,
+    ) callconv(.winapi) windows.Win32Error;
+
+    pub extern "advapi32" fn RegCloseKey(hKey: HKEY) callconv(.winapi) windows.Win32Error;
+
+    pub extern "advapi32" fn RegGetValueW(
+        hkey: HKEY,
+        lpSubKey: LPCWSTR,
+        lpValue: LPCWSTR,
+        dwFlags: DWORD,
+        pdwType: ?*REG,
+        pvData: ?*anyopaque,
+        pcbData: ?*DWORD,
+    ) callconv(.winapi) windows.Win32Error;
+
+    pub extern "advapi32" fn RegLoadAppKeyW(
+        lpFile: LPCWSTR,
+        phkResult: *HKEY,
+        samDesired: REGSAM,
+        dwOptions: DWORD,
+        reserved: DWORD,
+    ) callconv(.winapi) windows.Win32Error;
+
+    pub const RRF = struct {
+        pub const RT_ANY: DWORD = 0x0000ffff;
+
+        pub const RT_DWORD: DWORD = 0x00000018;
+        pub const RT_QWORD: DWORD = 0x00000048;
+
+        pub const RT_REG_BINARY: DWORD = 0x00000008;
+        pub const RT_REG_DWORD: DWORD = 0x00000010;
+        pub const RT_REG_EXPAND_SZ: DWORD = 0x00000004;
+        pub const RT_REG_MULTI_SZ: DWORD = 0x00000020;
+        pub const RT_REG_NONE: DWORD = 0x00000001;
+        pub const RT_REG_QWORD: DWORD = 0x00000040;
+        pub const RT_REG_SZ: DWORD = 0x00000002;
+
+        pub const NOEXPAND: DWORD = 0x10000000;
+        pub const ZEROONFAILURE: DWORD = 0x20000000;
+        pub const SUBKEY_WOW6464KEY: DWORD = 0x00010000;
+        pub const SUBKEY_WOW6432KEY: DWORD = 0x00020000;
+    };
 };
