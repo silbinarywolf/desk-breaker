@@ -13,6 +13,7 @@
 # Ignore any non-code within /sdl3/src
 /sdl3/src/**/*.*
 !/sdl3/src/**/*.c
+!/sdl3/src/**/*.sym
 !/sdl3/src/**/*.h
 !/sdl3/src/**/*.cc
 !/sdl3/src/**/*.cpp

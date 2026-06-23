@@ -21,19 +21,25 @@ pub fn render(app: *App) !void {
         };
         const viewport_pos = viewport.Pos;
         const viewport_size = viewport.Size;
-        imgui.igSetNextWindowPos(viewport_pos, imgui.ImGuiCond_None, .{});
-        imgui.igSetNextWindowSize(viewport_size, imgui.ImGuiCond_None);
-        if (!imgui.igBegin("###taking_break", null, App.ImGuiDefaultWindowFlags)) {
-            continue;
-        }
-        defer imgui.igEnd();
+
+        // NOTE(jae): 2026-06-23
+        // Nesting "igBegin"/"igEnd" causes buttons to stop working if a user presses TAB/SPACE or any keyboard key when the
+        // break screen pops up. By commenting out this code, it should fix the break screen inputs not working anymore.
+        //
+        // imgui.igSetNextWindowPos(viewport_pos, imgui.ImGuiCond_None, .{});
+        // imgui.igSetNextWindowSize(viewport_size, imgui.ImGuiCond_None);
+        // if (!imgui.igBegin("###taking_break", null, App.ImGuiDefaultWindowFlags)) {
+        //     continue;
+        // }
+        // defer imgui.igEnd();
 
         var has_triggered_exiting_break_mode = false;
         const required_esc_presses = 30;
 
         // Top-Left
         imgui.igSetNextWindowPos(viewport_pos, imgui.ImGuiCond_Always, .{ .x = 0, .y = 0 });
-        if (imgui.igBegin("###break-top-left", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
+        imgui.igSetNextWindowSize(.{ .x = 0, .y = 0 }, imgui.ImGuiCond_None);
+        if (imgui.igBegin("###break-top-left", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
 
             imgui.igText(try app.tprint("Time till break is over: {f}", .{
@@ -43,7 +49,8 @@ pub fn render(app: *App) !void {
 
         // Top-Right
         imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = 0 }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 0 });
-        if (imgui.igBegin("###break-top-right", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
+        imgui.igSetNextWindowSize(.{ .x = 0, .y = 0 }, imgui.ImGuiCond_None);
+        if (imgui.igBegin("###break-top-right", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
 
             if (imgui.igButton("Exit", .{})) {
@@ -56,13 +63,14 @@ pub fn render(app: *App) !void {
 
                 // DEBUG: Quit immediately as we're likely just testing the screen
                 if (app.user_settings.time_till_break_or_default().nanoseconds <= 1 * time.ns_per_s) {
-                    app.has_quit = true;
+                    app.has_tray_quit = true;
                 }
             }
         }
 
         // Center
         imgui.igSetNextWindowPos(.{ .x = viewport_size.x / 2, .y = viewport_size.y / 2 }, imgui.ImGuiCond_Always, .{ .x = 0.5, .y = 0.5 });
+        imgui.igSetNextWindowSize(.{ .x = 0, .y = 0 }, imgui.ImGuiCond_None);
         if (imgui.igBegin("###break-center", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
 
@@ -111,9 +119,10 @@ pub fn render(app: *App) !void {
         }
 
         // Bottom-right
-        {
-            imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 1 });
-            _ = imgui.igBegin("break-bottom-right-corner", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize);
+        imgui.igSetNextWindowPos(.{ .x = viewport_size.x, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 1, .y = 1 });
+        // NOTE(jae): 2026-06-23: Need to set to 0,0 explicitly or else "Will exit..." etc text will appear off-screen.
+        imgui.igSetNextWindowSize(.{ .x = 0, .y = 0 }, imgui.ImGuiCond_None);
+        if (imgui.igBegin("###break-bottom-right-corner", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
 
             if (app.break_mode.held_down_timer) |*exit_timer| {
@@ -128,11 +137,19 @@ pub fn render(app: *App) !void {
                 );
             }
 
-            if (app.can_snooze()) {
-                if (imgui.igButton("Snooze", .{})) {
-                    app.snooze();
-                    has_triggered_exiting_break_mode = true;
-                }
+            switch (app.snoozeCondition()) {
+                .can_snooze => {
+                    if (imgui.igButton("Snooze", .{})) {
+                        app.snooze();
+                        has_triggered_exiting_break_mode = true;
+                    }
+                },
+                .cannot_snooze_max_snoozes_exceeded => {
+                    imgui.igText("Cannot snooze, max snoozes exceeded");
+                },
+                .cannot_snooze_is_timer_or_alarm => {
+                    imgui.igText("Cannot snooze as this is a timer or alarm. Go do the task");
+                },
             }
         }
 

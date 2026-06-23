@@ -81,7 +81,7 @@ pub fn render(app: *App) !void {
     // Bottom-left-corner
     const viewport_size = imgui.igGetWindowSize();
     imgui.igSetNextWindowPos(.{ .x = 0, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 0, .y = 1 });
-    if (imgui.igBegin("general-bottom-left-corner", null, App.ImGuiDefaultWindowFlags | imgui.ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (imgui.igBegin("###general-bottom-left-corner", null, App.ImGuiDefaultWindowFlags)) {
         defer imgui.igEnd();
 
         if (app.snooze_times > 0) {

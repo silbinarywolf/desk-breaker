@@ -647,12 +647,13 @@ pub const wbemuuid = struct {
     const windows = std.os.windows;
 
     /// The IWbemServices interface is used by clients and providers to access WMI services. The interface is implemented by WMI and WMI providers, and is the primary WMI interface.
-    const c = @cImport({
-        @cDefine("WIN32_LEAN_AND_MEAN", "1");
-        @cDefine("_WIN32_WINNT", "0x0400");
-        @cDefine("_WIN32_DCOM", "1");
-        @cInclude("wbemcli.h");
-    });
+    // const c = @cImport({
+    //     @cDefine("WIN32_LEAN_AND_MEAN", "1");
+    //     @cDefine("_WIN32_WINNT", "0x0400");
+    //     @cDefine("_WIN32_DCOM", "1");
+    //     @cInclude("wbemcli.h");
+    // });
+    const c = @import("windows_wbemuuid");
 
     pub const WBEM_FLAG_FORWARD_ONLY: c_int = 32;
 

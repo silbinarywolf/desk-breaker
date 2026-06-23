@@ -58,6 +58,12 @@ pub fn build(b: *Build) !void {
         });
         const sdl_lib = sdl_dep.artifact("SDL3");
 
+        // Export sdljava from package
+        const sdljava = b.addNamedWriteFiles("sdljava");
+        for (sdl_dep.namedWriteFiles("sdljava").files.items) |file| {
+            _ = sdljava.addCopyFile(file.contents.copy, file.sub_path);
+        }
+
         const sdl_mod = exportAndGetModule(b, sdl_dep, "sdl");
         sdl_mod.linkLibrary(sdl_lib);
         // if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
@@ -100,10 +106,10 @@ pub fn build(b: *Build) !void {
         });
         const imgui_lib = imgui_dep.artifact("imgui");
 
-        // Must link "freetype" to "imgui" or else we get: 'ft2build.h' file not found
-        imgui_lib.root_module.linkLibrary(freetype_lib);
-        // Must link "sdl" to "imgui" or else we can get: 'SDL3/SDL.h' file not found
-        imgui_lib.root_module.linkLibrary(sdl_lib);
+        // Add includes from "freetype" to "imgui" or else we get: 'ft2build.h' file not found
+        imgui_lib.root_module.addIncludePath(freetype_lib.getEmittedIncludeTree());
+        // Add includes from "sdl" to "imgui" or else we can get: 'SDL3/SDL.h' file not found
+        imgui_lib.root_module.addIncludePath(sdl_lib.getEmittedIncludeTree());
 
         const imgui_mod = exportAndGetModule(b, imgui_dep, "imgui");
         imgui_mod.linkLibrary(imgui_lib);

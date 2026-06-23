@@ -87,16 +87,18 @@ inline fn handleAppSdlEvent(app_memory: *AppMemory, event: *sdl.SDL_Event) !void
 
 inline fn handleAppLoop(app_memory: *AppMemory) !void {
     const platform = &app_memory.platform;
-    while (!has_triggered_app_quit) {
+    AppLoop: while (true) {
         var event_it = platform.events();
         if (build_options.has_sdl) {
             while (event_it.next()) |ev| {
                 try handleAppSdlEvent(app_memory, ev);
+                if (has_triggered_app_quit) break :AppLoop;
             }
         } else {
             @compileError("Missing platform logic for configured app");
         }
         try handleAppIterate(app_memory);
+        if (has_triggered_app_quit) break :AppLoop;
     }
 }
 

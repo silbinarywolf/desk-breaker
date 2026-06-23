@@ -28,8 +28,9 @@
         // Used as an experiment to run Desk Breaker on Android and validate the Zig Android SDK against a more complicated
         // project.
         // .android = .{
-        //     .url = "https://github.com/silbinarywolf/zig-android-sdk/archive/941fc65ad732a3374d1c01eace2158eea324887d.tar.gz",
-        //     .hash = "android-0.2.0-7iz7QnXiAQDeKz9QSJFXowVap3mLsf04GnoIyeWGhgCp",
+        // .path = "../zig-android-sdk",
+        // .url = "git+https://github.com/silbinarywolf/zig-android-sdk#e72f0bb19b0b770fe65b74515594fea62ee369cf",
+        // .hash = "android-0.3.0-7iz7QkgyAgCCCsGXARq_j2DYLmIZoVlDh5ugZUUhKxAQ",
         // },
         // NOTE(jae): 2024-11-05
         // Used as an experiment to run Desk Breaker in browser
