@@ -52,7 +52,7 @@ pub fn render(app: *App) !void {
         if (next_timer.id == .activity_timer or
             next_timer.id == .snooze_timer)
         {
-            if (app.can_snooze()) {
+            if (app.snoozeCondition() == .can_snooze) {
                 if (imgui.igButton("Snooze", .{})) {
                     app.snooze();
                     try app.change_mode(.regular);

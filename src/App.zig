@@ -33,10 +33,6 @@ const winuser = struct {
     pub const SW_SHOWNOACTIVATE = @as(c_int, 4);
     pub extern fn ShowWindow(hWnd: HWND, nCmdShow: c_int) WINBOOL;
 };
-// const winuser_ = @cImport({
-//     @cDefine("WIN32_LEAN_AND_MEAN", "1");
-//     @cInclude("windows.h");
-// });
 
 /// Threshold to have responsive event polling based on:
 /// - Wait N frames before we do WaitEvent so that the initial rendering sets things up nicely
@@ -267,7 +263,7 @@ tray: ?*sdl.SDL_Tray,
 tray_icon: TrayIconMode = .default,
 
 /// set to true to quit the application at the start of the next frame
-has_quit: bool = false,
+has_tray_quit: bool = false,
 /// set to true if the window was opened from system tray
 has_opened_from_tray: bool = false,
 /// set to true if the operating supports system tray
@@ -356,10 +352,11 @@ pub fn init(startup: de.Startup, app: *App) !void {
                 }
             }
         }
-
-        // Setup platform, ie. SDL_Init
-        try startup.platform.init(.{});
     }
+
+    // Setup platform, ie. SDL_Init
+    try startup.platform.init(.{});
+    errdefer startup.platform.deinit();
 
     // Load your settings
     var user_settings: *UserSettings = gpa.create(UserSettings) catch |err| {
@@ -472,7 +469,7 @@ pub fn init(startup: de.Startup, app: *App) !void {
             sdl.SDL_SetTrayEntryCallback(tray_entry, struct {
                 pub fn callback(app_ptr: ?*anyopaque, _: ?*sdl.SDL_TrayEntry) callconv(.c) void {
                     const app_in_tray: *App = @ptrCast(@alignCast(app_ptr));
-                    app_in_tray.has_quit = true;
+                    app_in_tray.has_tray_quit = true;
                 }
             }.callback, app);
         }
@@ -541,18 +538,32 @@ pub fn deinit(app: *App) void {
 
 pub fn onEvent(sdl_event: *const sdl.SDL_Event, app: *App) !void {
     // process events for each ImGui
+    var want_capture_mouse: bool = false;
+    var want_capture_keyboard: bool = false;
     {
         if (app.window) |window| {
             imgui.igSetCurrentContext(window.imgui_context);
             _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
+
+            const io = &imgui.igGetIO_ContextPtr(window.imgui_context)[0];
+            want_capture_mouse = want_capture_mouse or io.WantCaptureMouse;
+            want_capture_keyboard = want_capture_keyboard or io.WantCaptureKeyboard;
         }
         for (app.popup_windows.items) |*window| {
             imgui.igSetCurrentContext(window.imgui_context);
             _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
+
+            const io = &imgui.igGetIO_ContextPtr(window.imgui_context)[0];
+            want_capture_mouse = want_capture_mouse or io.WantCaptureMouse;
+            want_capture_keyboard = want_capture_keyboard or io.WantCaptureKeyboard;
         }
         for (app.taking_break_windows.items) |*window| {
             imgui.igSetCurrentContext(window.imgui_context);
             _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
+
+            const io = &imgui.igGetIO_ContextPtr(window.imgui_context)[0];
+            want_capture_mouse = want_capture_mouse or io.WantCaptureMouse;
+            want_capture_keyboard = want_capture_keyboard or io.WantCaptureKeyboard;
         }
     }
 
@@ -592,10 +603,14 @@ pub fn onEvent(sdl_event: *const sdl.SDL_Event, app: *App) !void {
             }
             switch (event.button) {
                 sdl.SDL_BUTTON_LEFT => {
-                    // event.state == sdl.SDL_RELEASED
-                    if (!event.down) {
-                        if (app.break_mode.held_down_timer != null) {
-                            app.break_mode.held_down_timer = null;
+                    // Ignore mouse release events that can affect ImGui layout
+                    // ie. 'held_down_timer = null' can re-layout ImGui so pressing "Snooze" wont take.
+                    if (!want_capture_mouse) {
+                        // event.state == sdl.SDL_RELEASED
+                        if (!event.down) {
+                            if (app.break_mode.held_down_timer != null) {
+                                app.break_mode.held_down_timer = null;
+                            }
                         }
                     }
                 },
@@ -607,13 +622,18 @@ pub fn onEvent(sdl_event: *const sdl.SDL_Event, app: *App) !void {
             if (event.down) {
                 app.frames_without_app_input = 0;
             }
+
             switch (event.key) {
                 sdl.SDLK_ESCAPE => {
-                    // event.state == sdl.SDL_RELEASED
-                    if (!event.down) {
-                        // If released reset the held down timer
-                        if (app.break_mode.held_down_timer == null) {
-                            app.break_mode.held_down_timer = try Timer.start();
+                    // Ignore keyboard release events that can affect ImGui layout
+                    // ie. 'held_down_timer = null' can re-layout ImGui so pressing "Snooze" wont take.
+                    if (!want_capture_keyboard) {
+                        // event.state == sdl.SDL_RELEASED
+                        if (!event.down) {
+                            // If released reset the held down timer
+                            if (app.break_mode.held_down_timer == null) {
+                                app.break_mode.held_down_timer = try Timer.start();
+                            }
                         }
                     }
                     app.break_mode.esc_or_exit_presses += 1;
@@ -626,6 +646,9 @@ pub fn onEvent(sdl_event: *const sdl.SDL_Event, app: *App) !void {
 }
 
 pub fn onIterate(app: *App) !void {
+    // Has processed quit from system tray
+    if (app.has_tray_quit) try de.quit();
+
     const allocator = app.allocator;
     _ = app.temp_allocator.reset(.retain_capacity);
 
@@ -1073,6 +1096,10 @@ pub fn onIterate(app: *App) !void {
         }
         defer imgui.igEnd();
 
+        // DEBUG: Open metrics window
+        // var open = true;
+        // imgui.igShowMetricsWindow(&open);
+
         // Heading
         {
             const uiHeadingButton = struct {
@@ -1290,22 +1317,27 @@ pub fn time_till_next_timer_complete(app: *App) ?NextTimer {
     return next_timer;
 }
 
-/// can_snooze is true if it's an activity timer but not a special alarm
-pub fn can_snooze(app: *App) bool {
+const SnoozeState = enum {
+    can_snooze,
+    cannot_snooze_max_snoozes_exceeded,
+    cannot_snooze_is_timer_or_alarm,
+};
+
+pub fn snoozeCondition(app: *App) SnoozeState {
     // Disallow snooze button if hit max snooze limit
     const max_snoozes_in_a_row = app.user_settings.max_snoozes_in_a_row_or_default();
     if (max_snoozes_in_a_row != UserConfig.Settings.MaxSnoozesDisabled and
         app.snooze_times_in_a_row >= max_snoozes_in_a_row)
     {
-        return false;
+        return .cannot_snooze_max_snoozes_exceeded;
     }
 
     // If it was an alarm or timer, disallow snoozing
     if (app.has_timer_or_alarm_triggered()) {
-        return false;
+        return .cannot_snooze_is_timer_or_alarm;
     }
 
-    return true;
+    return .can_snooze;
 }
 
 fn has_timer_or_alarm_triggered(app: *App) bool {
@@ -1328,7 +1360,7 @@ fn has_timer_or_alarm_triggered(app: *App) bool {
 }
 
 pub fn snooze(app: *App) void {
-    const is_snoozeable: bool = app.can_snooze();
+    const is_snoozeable: bool = app.snoozeCondition() == .can_snooze;
     assert(is_snoozeable);
     if (!is_snoozeable) {
         return;

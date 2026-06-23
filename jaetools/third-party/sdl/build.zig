@@ -92,7 +92,7 @@ pub fn build(b: *std.Build) void {
     var windows = false;
     var linux = false;
     var linux_deps_values: ?LinuxDepsValues = null;
-    var android = false;
+    const android = target.result.abi.isAndroid();
     var ios = false;
     var macos = false;
     var emscripten = false;
@@ -104,9 +104,7 @@ pub fn build(b: *std.Build) void {
             msvc = target.result.abi == .msvc;
         },
         .linux => {
-            if (target.result.abi.isAndroid()) {
-                android = true;
-            } else {
+            if (!target.result.abi.isAndroid()) {
                 linux = true;
                 if (b.lazyImport(@This(), "sdl_linux_deps")) |build_zig| {
                     linux_deps_values = LinuxDepsValues.fromBuildZig(b, build_zig);
@@ -360,9 +358,9 @@ pub fn build(b: *std.Build) void {
             .SDL_AUDIO_DRIVER_OPENSLES = android,
             .SDL_AUDIO_DRIVER_AAUDIO = android,
             .SDL_AUDIO_DRIVER_COREAUDIO = macos or ios,
-            .SDL_AUDIO_DRIVER_DISK = windows or linux or macos or emscripten or android,
+            .SDL_AUDIO_DRIVER_DISK = windows or linux or macos or emscripten, // android
             .SDL_AUDIO_DRIVER_DSOUND = windows,
-            .SDL_AUDIO_DRIVER_DUMMY = windows or linux or macos or emscripten or android,
+            .SDL_AUDIO_DRIVER_DUMMY = windows or linux or macos or emscripten, // or android,
             .SDL_AUDIO_DRIVER_EMSCRIPTEN = emscripten,
             .SDL_AUDIO_DRIVER_HAIKU = false,
             .SDL_AUDIO_DRIVER_JACK = linux,
@@ -461,7 +459,7 @@ pub fn build(b: *std.Build) void {
             .SDL_TIMER_PRIVATE = false,
             .SDL_VIDEO_DRIVER_ANDROID = android,
             .SDL_VIDEO_DRIVER_COCOA = macos,
-            .SDL_VIDEO_DRIVER_DUMMY = windows or linux or macos or emscripten or android or ios,
+            .SDL_VIDEO_DRIVER_DUMMY = windows or linux or macos or emscripten or ios, // or android,
             .SDL_VIDEO_DRIVER_EMSCRIPTEN = emscripten,
             .SDL_VIDEO_DRIVER_HAIKU = false,
             .SDL_VIDEO_DRIVER_KMSDRM = linux,
@@ -562,7 +560,7 @@ pub fn build(b: *std.Build) void {
             .SDL_FILESYSTEM_PSP = false,
             .SDL_FILESYSTEM_PS2 = false,
             .SDL_FILESYSTEM_N3DS = false,
-            .SDL_STORAGE_STEAM = windows or linux or macos or android,
+            .SDL_STORAGE_STEAM = windows or linux or macos, // or android,
             .SDL_FSOPS_POSIX = linux or macos or emscripten or android or ios,
             .SDL_FSOPS_WINDOWS = windows,
             .SDL_FSOPS_DUMMY = false,
@@ -577,7 +575,7 @@ pub fn build(b: *std.Build) void {
             .SDL_CAMERA_DRIVER_PIPEWIRE_DYNAMIC = if (linux_deps_values) |x| b.fmt("\"{s}\"", .{x.pipewire_soname}) else "",
             .SDL_CAMERA_DRIVER_VITA = false,
             .SDL_CAMERA_DRIVER_PRIVATE = false,
-            .SDL_TRAY_DUMMY = emscripten,
+            .SDL_TRAY_DUMMY = android or emscripten,
             .SDL_DIALOG_DUMMY = ios,
             .SDL_ALTIVEC_BLITTERS = false,
             .DYNAPI_NEEDS_DLOPEN = linux or macos or emscripten or android or ios,
@@ -650,6 +648,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        .link_libcpp = if (android) true else null,
         .strip = strip,
         .sanitize_c = sanitize_c,
         .pic = pic,
@@ -738,11 +737,10 @@ pub fn build(b: *std.Build) void {
     if (sdl_lib.linkage.? == .dynamic) {
         sdl_c_flags.appendAssumeCapacity("-fvisibility=hidden");
     }
-    if (linux) {
+    if (linux or macos or android) {
         sdl_c_flags.appendAssumeCapacity("-pthread");
     }
     if (macos) {
-        sdl_c_flags.appendAssumeCapacity("-pthread");
         sdl_c_flags.appendAssumeCapacity("-fobjc-arc");
     }
     if (emscripten and emscripten_pthreads) {
@@ -752,6 +750,7 @@ pub fn build(b: *std.Build) void {
         // NOTE(jae): 2026-06-09
         // In Android branch. Should check if this is needed.
         // sdl_c_flags.appendAssumeCapacity("-fno-sanitize=undefined");
+        // sdl_c_flags.appendAssumeCapacity("-std=c++11");
     }
 
     sdl_mod.addCSourceFiles(.{
@@ -941,6 +940,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = optimize,
                 .link_libc = true,
+                .link_libcpp = if (android) true else null,
                 .strip = strip,
                 .sanitize_c = sanitize_c,
                 .pic = pic,
@@ -960,6 +960,7 @@ pub fn build(b: *std.Build) void {
             sdl_uclibc_mod.addIncludePath(sdl3_dep.path("src"));
 
             sdl_uclibc_mod.addCSourceFiles(.{
+                .root = sdl3_dep.path(""),
                 .flags = &(common_c_flags ++ .{"-fvisibility=hidden"}),
                 .files = &sdl_uclibc_c_files,
             });
@@ -1409,34 +1410,55 @@ pub fn build(b: *std.Build) void {
         }
     }
     if (android) {
+        // https://github.com/libsdl-org/SDL/blob/release-2.30.6/Android.mk#L82C62-L82C69
+        sdl_mod.linkSystemLibrary("dl", .{});
+        sdl_mod.linkSystemLibrary("GLESv1_CM", .{});
+        sdl_mod.linkSystemLibrary("GLESv2", .{});
+        sdl_mod.linkSystemLibrary("OpenSLES", .{});
+        sdl_mod.linkSystemLibrary("log", .{});
+        sdl_mod.linkSystemLibrary("android", .{});
+
         sdl_mod.addCSourceFiles(.{
             .root = sdl3_dep.path(""),
             .flags = sdl_c_flags.items,
             .files = &.{
+                "src/audio/dummy/SDL_dummyaudio.c",
+                // "src/audio/disk/SDL_diskaudio.c",
                 "src/core/android/SDL_android.c",
                 "src/audio/openslES/SDL_openslES.c",
                 "src/audio/aaudio/SDL_aaudio.c",
                 "src/gpu/vulkan/SDL_gpu_vulkan.c",
                 "src/main/generic/SDL_sysmain_callbacks.c",
                 "src/haptic/android/SDL_syshaptic.c",
+                "src/haptic/hidapi/SDL_hidapihaptic.c",
+                "src/haptic/hidapi/SDL_hidapihaptic_lg4ff.c",
+                "src/joystick/hidapi/SDL_hidapi_8bitdo.c",
                 "src/joystick/hidapi/SDL_hidapi_combined.c",
+                "src/joystick/hidapi/SDL_hidapi_flydigi.c",
                 "src/joystick/hidapi/SDL_hidapi_gamecube.c",
+                "src/joystick/hidapi/SDL_hidapi_gip.c",
+                "src/joystick/hidapi/SDL_hidapi_lg4ff.c",
                 "src/joystick/hidapi/SDL_hidapi_luna.c",
                 "src/joystick/hidapi/SDL_hidapi_ps3.c",
                 "src/joystick/hidapi/SDL_hidapi_ps4.c",
                 "src/joystick/hidapi/SDL_hidapi_ps5.c",
                 "src/joystick/hidapi/SDL_hidapi_rumble.c",
                 "src/joystick/hidapi/SDL_hidapi_shield.c",
+                "src/joystick/hidapi/SDL_hidapi_sinput.c",
                 "src/joystick/hidapi/SDL_hidapi_stadia.c",
                 "src/joystick/hidapi/SDL_hidapi_steam.c",
                 "src/joystick/hidapi/SDL_hidapi_steam_hori.c",
+                "src/joystick/hidapi/SDL_hidapi_steam_triton.c",
                 "src/joystick/hidapi/SDL_hidapi_steamdeck.c",
                 "src/joystick/hidapi/SDL_hidapi_switch.c",
+                "src/joystick/hidapi/SDL_hidapi_switch2.c",
                 "src/joystick/hidapi/SDL_hidapi_wii.c",
                 "src/joystick/hidapi/SDL_hidapi_xbox360.c",
                 "src/joystick/hidapi/SDL_hidapi_xbox360w.c",
                 "src/joystick/hidapi/SDL_hidapi_xboxone.c",
+                "src/joystick/hidapi/SDL_hidapi_zuiki.c",
                 "src/joystick/hidapi/SDL_hidapijoystick.c",
+                "src/joystick/hidapi/SDL_report_descriptor.c",
                 "src/joystick/android/SDL_sysjoystick.c",
                 "src/joystick/virtual/SDL_virtualjoystick.c",
                 "src/storage/generic/SDL_genericstorage.c",
@@ -1445,6 +1467,7 @@ pub fn build(b: *std.Build) void {
                 "src/power/android/SDL_syspower.c",
                 "src/filesystem/android/SDL_sysfilesystem.c",
                 "src/filesystem/posix/SDL_sysfsops.c",
+                "src/camera/dummy/SDL_camera_dummy.c",
                 "src/camera/android/SDL_camera_android.c",
                 "src/sensor/android/SDL_androidsensor.c",
                 "src/process/posix/SDL_posixprocess.c",
@@ -1459,7 +1482,7 @@ pub fn build(b: *std.Build) void {
                 "src/thread/pthread/SDL_systhread.c",
                 "src/thread/pthread/SDL_systls.c",
                 "src/thread/pthread/SDL_sysrwlock.c",
-                "src/tray/unix/SDL_tray.c",
+                "src/tray/dummy/SDL_tray.c",
                 "src/video/android/SDL_androidclipboard.c",
                 "src/video/android/SDL_androidevents.c",
                 "src/video/android/SDL_androidgl.c",
@@ -1471,6 +1494,12 @@ pub fn build(b: *std.Build) void {
                 "src/video/android/SDL_androidpen.c",
                 "src/video/android/SDL_androidvulkan.c",
                 "src/video/android/SDL_androidwindow.c",
+                "src/video/offscreen/SDL_offscreenevents.c",
+                "src/video/offscreen/SDL_offscreenframebuffer.c",
+                "src/video/offscreen/SDL_offscreenopengles.c",
+                "src/video/offscreen/SDL_offscreenvideo.c",
+                "src/video/offscreen/SDL_offscreenvulkan.c",
+                "src/video/offscreen/SDL_offscreenwindow.c",
             },
         });
         sdl_mod.addCSourceFiles(.{
@@ -1480,14 +1509,30 @@ pub fn build(b: *std.Build) void {
             },
             .flags = &.{"-std=c++11"},
         });
-        sdl_mod.link_libcpp = true;
 
         // This is needed for "src/render/opengles/SDL_render_gles.c" to compile
         sdl_mod.addCMacro("GL_GLEXT_PROTOTYPES", "1");
+    }
 
-        // Add Java files to dependency
-        const java_dir = sdl3_dep.path("android-project/app/src/main/java/org/libsdl/app");
-        b.addNamedLazyPath("sdljava", java_dir);
+    // Add Java files to dependency
+    const java_dir = sdl3_dep.path("android-project/app/src/main/java/org/libsdl/app");
+    const java_files: []const []const u8 = &.{
+        "HIDDevice.java",
+        "HIDDeviceBLESteamController.java",
+        "HIDDeviceManager.java",
+        "HIDDeviceUSB.java",
+        "SDL.java",
+        "SDLActivity.java",
+        "SDLAudioManager.java",
+        "SDLControllerManager.java",
+        "SDLDummyEdit.java",
+        "SDLInputConnection.java",
+        "SDLSensorManager.java",
+        "SDLSurface.java",
+    };
+    const java_write_files = b.addNamedWriteFiles("sdljava");
+    for (java_files) |java_file| {
+        _ = java_write_files.addCopyFile(java_dir.path(b, java_file), java_file);
     }
 
     if (sdl_lib.linkage.? == .dynamic) {

@@ -142,6 +142,12 @@ pub fn processSdlEvent(context: *ImGuiContext, sdl_event: *const sdl.SDL_Event) 
     _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
 }
 
+/// When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
+pub inline fn wantCaptureKeyboard(context: *ImGuiContext) bool {
+    const io = imgui.igGetIO_ContextPtr(context.context);
+    return io.*.WantCaptureKeyboard;
+}
+
 pub inline fn render(context: *ImGuiContext) !void {
     return try context.renderSdl(context.renderer.internal);
 }

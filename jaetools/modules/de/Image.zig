@@ -63,7 +63,7 @@ pub fn loadPng(gpa: std.mem.Allocator, image_file: [:0]const u8) !Image {
         const io_stream = sdl.SDL_IOFromFile(image_file, "rb") orelse
             return error.SdlFailed;
 
-        const temp_surface = @as(?*sdl.SDL_Surface, sdl.SDL_LoadPNG_IO(io_stream)) orelse
+        const temp_surface = @as(?*sdl.SDL_Surface, sdl.SDL_LoadPNG_IO(io_stream, true)) orelse
             return error.SdlFailed;
         defer sdl.SDL_DestroySurface(temp_surface);
 

@@ -130,9 +130,10 @@ pub fn build(b: *std.Build) !void {
 
         const android_sdk = android.Sdk.create(b, .{});
         const apk = android.Apk.create(android_sdk, .{
+            .name = exe_name,
             .api_level = .android15,
-            .build_tools_version = "35.0.0",
-            .ndk_version = "29.0.13113456",
+            .build_tools_version = "36.1.0",
+            .ndk_version = "29.0.14206865",
         });
 
         const key_store_file = android_sdk.createKeyStore(.example);
@@ -144,11 +145,11 @@ pub fn build(b: *std.Build) !void {
         apk.addJavaSourceFile(.{ .file = b.path("android/src/DeskBreakerSDLActivity.java") });
 
         // Add SDL3's Java files like SDL.java, SDLActivity.java, HIDDevice.java, etc
-        const sdl_dep = b.dependency("sdl", .{
-            .optimize = optimize,
+        const jt_dep = b.dependency("jaetools", .{
             .target = targets[0],
+            .optimize = optimize,
         });
-        const sdl_java_files = sdl_dep.namedLazyPath("sdljava");
+        const sdl_java_files = jt_dep.namedWriteFiles("sdljava");
         for (sdl_java_files.files.items) |file| {
             apk.addJavaSourceFile(.{ .file = file.contents.copy });
         }
@@ -175,7 +176,7 @@ pub fn build(b: *std.Build) !void {
             // In Zig 0.14.0, for Android/Emscripten builds, make sure we build libraries with ReleaseSafe
             // otherwise we get errors relating to libubsan_rt.a either missing symbols or getting RELOCATION errors
             // https://github.com/silbinarywolf/zig-android-sdk/issues/18
-            if (optimize == .Debug) .ReleaseSafe else optimize;
+            if (optimize == .Debug) .ReleaseFast else optimize;
 
         const jt_dep = b.dependency("jaetools", .{
             .target = target,
@@ -195,6 +196,16 @@ pub fn build(b: *std.Build) !void {
         app.addImport("de", jt_dep.module("de"));
         app.addImport("sdl", jt_dep.module("sdl"));
         app.addImport("imgui", jt_dep.module("imgui"));
+
+        // add wbemuuid.h for Windows
+        if (target.result.os.tag == .windows) {
+            const wbemuuid_c = b.addTranslateC(.{
+                .root_source_file = b.path("src/windows_wbemuuid.h"),
+                .target = target,
+                .optimize = optimize,
+            });
+            app.addImport("windows_wbemuuid", wbemuuid_c.createModule());
+        }
 
         // add wuffs
         // {
@@ -241,7 +252,7 @@ pub fn build(b: *std.Build) !void {
             // Android:    zig build -Dtarget=x86_64-linux-android && adb install ./zig-out/bin/desk-breaker.apk
             // Emscripten: zig build -Dtarget=wasm32-emscripten -Doptimize=ReleaseFast
             b.addLibrary(.{
-                .name = exe_name,
+                .name = if (target.result.abi.isAndroid()) "main" else exe_name,
                 .root_module = app,
                 .linkage = linkage,
             })
