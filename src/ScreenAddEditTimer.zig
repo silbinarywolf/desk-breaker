@@ -79,10 +79,10 @@ pub fn render(app: *App) !void {
                 .alarm => "Unnamed Alarm",
             };
             if (t.name.len > 0) app.allocator.free(t.name);
-            t.name = try app.allocator.dupeZ(u8, default_name);
+            t.name = try app.allocator.dupeSentinel(u8, default_name, 0);
         } else {
             if (t.name.len > 0) app.allocator.free(t.name);
-            t.name = try app.allocator.dupeZ(u8, timer_name);
+            t.name = try app.allocator.dupeSentinel(u8, timer_name, 0);
         }
         var should_save_or_create = false;
         switch (t.kind) {

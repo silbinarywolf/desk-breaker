@@ -217,27 +217,44 @@ pub fn build(b: *std.Build) !void {
         // }
 
         // add Wayland module if building on Linux
-        if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
-            if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+        if (target.result.os.tag == .linux and !target.result.abi.isAndroid()) {
+            // NOTE(jae): 2026-06-30
+            // Cannot link wayland-client on Windows
+            const is_build_os_linux = comptime builtin.os.tag == .linux and !builtin.abi.isAndroid();
+            if (is_build_os_linux) {
+                // TODO(jae): Ideally do an SDL-like approach and dynamically try to load this
+                // for detecting if idle or not.
                 app.linkSystemLibrary("wayland-client", .{});
+            }
 
-                // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
-                const add_generated_wayland_module = false;
-                if (add_generated_wayland_module) {
-                    const wayland = @import("zig_wayland");
-                    var scanner = wayland.Scanner.create(b, .{});
+            // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
+            const add_generated_wayland_module = false;
+            if (!add_generated_wayland_module) {
+                // NOTE(jae): 2026-01-03
+                // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
+                app.addImport("wayland", b.createModule(.{
+                    .root_source_file = b.path("src/wayland-gen-016.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                }));
+            } else {
+                if (!is_build_os_linux) @panic("NOTE: Cannot build on Windows right now");
 
-                    const wayland_protocols_dep = b.dependency("wayland_protocols", .{});
-                    scanner.addCustomProtocol(wayland_protocols_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
-                    scanner.generate("ext_idle_notifier_v1", 2);
-                    scanner.generate("wl_seat", 5);
+                const wayland_protocols_dep = b.lazyDependency("wayland_protocols", .{}) orelse return;
 
-                    // NOTE(jae): 2026-01-03
-                    // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
-                    app.addImport("_wayland", b.createModule(.{
-                        .root_source_file = scanner.result,
-                    }));
-                }
+                var scanner = @import("wayland").Scanner.create(b, .{
+                    .wayland_protocols = wayland_protocols_dep.path(""),
+                });
+                const wayland_protocols_subset_dep = b.dependency("wayland_protocols_subset", .{});
+                scanner.addCustomProtocol(wayland_protocols_subset_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
+                scanner.generate("ext_idle_notifier_v1", 2);
+                scanner.generate("wl_seat", 5);
+
+                app.addImport("wayland", b.createModule(.{
+                    .root_source_file = scanner.result,
+                    .target = target,
+                    .optimize = optimize,
+                }));
             }
         }
 
@@ -306,29 +323,31 @@ pub fn build(b: *std.Build) !void {
 
             apk.addArtifact(exe);
         } else if (target.result.os.tag == .emscripten) {
-            const em = emscripten.Tools.create(b, .{
-                .version = "3.1.53",
-            }) orelse return;
+            @panic("TODO: Fix Emscripten compilation code");
+            // const em = emscripten.Tools.create(b, .{
+            //     .version = "3.1.53",
+            // }) orelse return;
 
-            const run_step = b.step("run", "Run the application in browser");
-            const emcc_cmd = em.addRunArtifact(exe, .{
-                .browser = .none,
-                .hostname = "192.168.0.165",
-            });
-            run_step.dependOn(&emcc_cmd.step);
+            // const run_step = b.step("run", "Run the application in browser");
+            // const emcc_cmd = em.addRunArtifact(exe, .{
+            //     .browser = .none,
+            //     .hostname = "192.168.0.165",
+            // });
+            // run_step.dependOn(&emcc_cmd.step);
 
-            const installed_web_html = em.addInstallArtifact(exe);
-            b.getInstallStep().dependOn(&installed_web_html.step);
+            // const installed_web_html = em.addInstallArtifact(exe);
+            // b.getInstallStep().dependOn(&installed_web_html.step);
         } else if (platform == .psp) {
-            const psp_dep = b.lazyDependency("psp", .{
-                .target = target,
-                .optimize = optimize,
-            }) orelse return;
+            @panic("TODO: Fix PSP compilation code");
+            // const psp_dep = b.lazyDependency("psp", .{
+            //     .target = target,
+            //     .optimize = optimize,
+            // }) orelse return;
 
-            app.addImport("psp", psp_dep.module("psp"));
+            // app.addImport("psp", psp_dep.module("psp"));
 
-            const psptool = psp.Tools.create(b, .{}) orelse return;
-            psptool.buildPBP(exe);
+            // const psptool = psp.Tools.create(b, .{}) orelse return;
+            // psptool.buildPBP(exe);
         } else {
             const run_step = b.step("run", "Run the application");
             const run_cmd = b.addRunArtifact(exe);
@@ -383,9 +402,6 @@ pub fn build(b: *std.Build) !void {
         }
         if (deploy_target.suffix.len > 0) {
             build_cmd.addArg(b.fmt("-DbinSuffix={s}", .{deploy_target.suffix}));
-        }
-        if (b.verbose) {
-            build_cmd.addArg("--verbose");
         }
         all_targets_step.dependOn(&build_cmd.step);
     }

@@ -13,7 +13,7 @@ pub fn render(app: *App) !void {
         app.popup_windows.clearRetainingCapacity();
     }
     for (app.popup_windows.items) |*window| {
-        imgui.igSetCurrentContext(window.imgui_context);
+        imgui.igSetCurrentContext(window.imgui.context);
 
         const viewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
             continue; // If no viewport skip

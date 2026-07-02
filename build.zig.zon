@@ -10,12 +10,17 @@
         .wuffs = .{
             .path = "third-party/wuffs",
         },
-        .zig_wayland = .{
-            .path = "third-party/zig-wayland",
-            // .url = "https://codeberg.org/ifreund/zig-wayland/archive/f2480d25764a50ed2fe29f49e4209c074a557f46.tar.gz",
-            // .hash = "wayland-0.5.0-dev-lQa1kvTUAQCsD8AobfOXJA_-TVG-WTYXju68OZ8L85RM",
+        .wayland = .{
+            .path = "third-party/wayland",
+            // .url = "git+https://codeberg.org/ifreund/zig-wayland.git#a8e10e87e5ebb49ce518ac3d2198909c87ee615a",
+            // .hash = "wayland-0.7.0-dev-lQa1kjT8AQDBstL61Gy3WCMtGwVaMN1p6w5wGfdDvP15",
         },
         .wayland_protocols = .{
+            .url = "git+https://gitlab.freedesktop.org/wayland/wayland-protocols.git#afb614d5fcbd02d261a6ae91920aa91cf3915a8a",
+            .hash = "N-V-__8AAOPQEAB31bZvcUcZFTncb4Gq5yHzGLF1W3ud-t3N",
+            .lazy = true,
+        },
+        .wayland_protocols_subset = .{
             .path = "third-party/wayland-protocols",
         },
         // Wayland Handling
@@ -27,11 +32,11 @@
         // NOTE(jae): 2025-04-13
         // Used as an experiment to run Desk Breaker on Android and validate the Zig Android SDK against a more complicated
         // project.
-        // .android = .{
-        // .path = "../zig-android-sdk",
-        // .url = "git+https://github.com/silbinarywolf/zig-android-sdk#e72f0bb19b0b770fe65b74515594fea62ee369cf",
-        // .hash = "android-0.3.0-7iz7QkgyAgCCCsGXARq_j2DYLmIZoVlDh5ugZUUhKxAQ",
-        // },
+        .android = .{
+            .path = "../zig-android-sdk",
+            //.url = "git+https://github.com/silbinarywolf/zig-android-sdk#e72f0bb19b0b770fe65b74515594fea62ee369cf",
+            //.hash = "android-0.3.0-7iz7QkgyAgCCCsGXARq_j2DYLmIZoVlDh5ugZUUhKxAQ",
+        },
         // NOTE(jae): 2024-11-05
         // Used as an experiment to run Desk Breaker in browser
         .emscripten = .{
