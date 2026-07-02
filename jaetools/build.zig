@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const Build = @import("std").Build;
 const Module = Build.Module;
 const Dependency = Build.Dependency;
@@ -34,15 +35,20 @@ pub fn build(b: *Build) !void {
     var system_framework_path: ?LazyPath = null;
     var system_include_path: ?LazyPath = null;
     var library_path: ?LazyPath = null;
-    if (!target.query.isNative()) {
-        if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
-            if (b.graph.host.result.os.tag == .windows) {
-                @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
+    // NOTE(jae): 2026-06-30
+    // Avoid downloading MacOS SDK lazily on MacOS and Windows
+    if (comptime builtin.os.tag != .macos and builtin.os.tag != .windows) {
+        if (!target.query.isNative()) macosblk: {
+            if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
+                if (b.graph.host.result.os.tag == .windows) {
+                    @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
+                }
+                const macos_sdk_dep = b.lazyDependency("macos_sdk", .{}) orelse
+                    break :macosblk;
+                system_framework_path = macos_sdk_dep.path("System/Library/Frameworks");
+                system_include_path = macos_sdk_dep.path("usr/include");
+                library_path = macos_sdk_dep.path("usr/lib");
             }
-            const macos_sdk_path = if (b.lazyDependency("macos_sdk", .{})) |ld| ld.path("") else b.path("");
-            system_framework_path = macos_sdk_path.path(b, "System/Library/Frameworks");
-            system_include_path = macos_sdk_path.path(b, "usr/include");
-            library_path = macos_sdk_path.path(b, "usr/lib");
         }
     }
 
@@ -59,9 +65,17 @@ pub fn build(b: *Build) !void {
         const sdl_lib = sdl_dep.artifact("SDL3");
 
         // Export sdljava from package
-        const sdljava = b.addNamedWriteFiles("sdljava");
-        for (sdl_dep.namedWriteFiles("sdljava").files.items) |file| {
-            _ = sdljava.addCopyFile(file.contents.copy, file.sub_path);
+        if (target.result.abi.isAndroid()) {
+            const sdljava = b.addNamedWriteFiles("sdljava");
+            const sdl_dep_javafiles = sdl_dep.namedWriteFiles("sdljava");
+            if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 16) {
+                // Deprecated
+                for (sdl_dep_javafiles.files.items) |file| {
+                    _ = sdljava.addCopyFile(file.contents.copy, file.sub_path);
+                }
+            } else {
+                @panic("TODO: Figure out how to make this work in Zig 0.17.0");
+            }
         }
 
         const sdl_mod = exportAndGetModule(b, sdl_dep, "sdl");
@@ -101,8 +115,6 @@ pub fn build(b: *Build) !void {
             // NOTE(jae): 2026-06-14
             // Only need system_framework_path for ImGui+SDL support
             .system_framework_path = system_framework_path,
-            // .system_include_path = system_include_path,
-            // .library_path = library_path,
         });
         const imgui_lib = imgui_dep.artifact("imgui");
 

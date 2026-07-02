@@ -226,6 +226,9 @@ pub fn build(b: *std.Build) !void {
         .linkage = .static,
         .root_module = mod,
     });
+    if (target.result.abi.isAndroid()) {
+        mod.pic = true;
+    }
     b.installArtifact(lib);
 
     // Imgui Translate C-code

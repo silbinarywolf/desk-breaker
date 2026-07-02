@@ -51,10 +51,7 @@ pub const Vector2us = extern struct {
 
     /// convert vector from 16-bit unsigned integer to 32-bit float
     pub fn float(vec: Vector2us) Vector2f {
-        return .{
-            .x = @floatFromInt(vec.x),
-            .y = @floatFromInt(vec.y),
-        };
+        return .{ .x = @floatFromInt(vec.x), .y = @floatFromInt(vec.y) };
     }
 
     const mixin = Vector2Mixin(Vector2us, u16);
@@ -73,10 +70,7 @@ pub const Vector2s = extern struct {
 
     /// convert vector from 16-bit signed integer to 32-bit float
     pub fn float(vec: Vector2s) Vector2f {
-        return .{
-            .x = @floatFromInt(vec.x),
-            .y = @floatFromInt(vec.y),
-        };
+        return .{ .x = @floatFromInt(vec.x), .y = @floatFromInt(vec.y) };
     }
 
     const mixin = Vector2Mixin(Vector2s, i16);
@@ -85,23 +79,36 @@ pub const Vector2s = extern struct {
     pub const addValue = mixin.addValue;
 };
 
+/// Useful for storing positional data that is castable to float
+///
 /// 24-bit signed Vector with x and y fields
 /// Range: -8,388,608 to 8,388,607
-pub const Vector2i = struct {
+pub const Vector2p = struct {
     x: i24,
     y: i24,
 
-    pub const zero: Vector2i = .{ .x = 0, .y = 0 };
+    pub const zero: @This() = .{ .x = 0, .y = 0 };
 
     /// convert vector from 24-bit signed integer to 32-bit float
-    pub fn float(vec: Vector2i) Vector2f {
-        return .{
-            .x = vec.x,
-            .y = vec.y,
-        };
+    pub fn float(vec: @This()) Vector2f {
+        return .{ .x = vec.x, .y = vec.y };
     }
 
-    const mixin = Vector2Mixin(Vector2i, i24);
+    const mixin = Vector2Mixin(@This(), i24);
+
+    pub const init = mixin.init;
+    pub const addValue = mixin.addValue;
+};
+
+/// 32-bit signed Vector with x and y fields
+/// Range: -8,388,608 to 8,388,607
+pub const Vector2i = struct {
+    x: i32,
+    y: i32,
+
+    pub const zero: @This() = .{ .x = 0, .y = 0 };
+
+    const mixin = Vector2Mixin(@This(), i32);
 
     pub const init = mixin.init;
     pub const addValue = mixin.addValue;
@@ -112,17 +119,14 @@ pub const Vector2f = extern struct {
     x: f32,
     y: f32,
 
-    pub const zero: Vector2f = .{ .x = 0, .y = 0 };
+    pub const zero: @This() = .{ .x = 0, .y = 0 };
 
     /// convert vector from 32-bit float to 32-bit signed integer
-    pub fn int(vec: Vector2f) Vector2i {
-        return .{
-            .x = @intFromFloat(vec.x),
-            .y = @intFromFloat(vec.y),
-        };
+    pub fn int(vec: @This()) Vector2p {
+        return .{ .x = vec.x, .y = vec.y };
     }
 
-    const mixin = Vector2Mixin(Vector2f, f32);
+    const mixin = Vector2Mixin(@This(), f32);
 
     pub const init = mixin.init;
     pub const addValue = mixin.addValue;

@@ -433,7 +433,7 @@ const LinuxProcessList = struct {
         var proc_pid_info_buf: [64]u8 = undefined;
         entryloop: while (try self.it.next(self.io)) |entry| {
             if (entry.name.len >= 1 and entry.name[0] >= '0' and entry.name[0] <= '9') {
-                const proc_exe_path = try std.fmt.bufPrintZ(proc_pid_info_buf[0..], "{s}/exe", .{entry.name});
+                const proc_exe_path = try std.fmt.bufPrint(proc_pid_info_buf[0..], "{s}/exe", .{entry.name});
                 const filepath_size = proc.readLink(self.io, proc_exe_path, self.it_exe_filepath_buf[0..]) catch |err| switch (err) {
                     // Ignore processes that
                     // - We don't have access to
@@ -453,7 +453,7 @@ const LinuxProcessList = struct {
                     self.freeExeAndArgsIfSet();
 
                     // If Java application, then extract the argument contains references to '.jar' files
-                    const proc_args = try std.fmt.bufPrintZ(proc_pid_info_buf[0..], "{s}/cmdline", .{entry.name});
+                    const proc_args = try std.fmt.bufPrint(proc_pid_info_buf[0..], "{s}/cmdline", .{entry.name});
                     const allocator = self.allocator;
                     self.it_exe_and_args_buf = proc.readFileAlloc(self.io, proc_args, allocator, .limited(2_096_152)) catch |err| switch (err) {
                         // Ignore processes that
