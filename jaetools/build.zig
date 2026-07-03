@@ -38,16 +38,15 @@ pub fn build(b: *Build) !void {
     // NOTE(jae): 2026-06-30
     // Avoid downloading MacOS SDK lazily on MacOS and Windows
     if (comptime builtin.os.tag != .macos and builtin.os.tag != .windows) {
-        if (!target.query.isNative()) macosblk: {
+        if (!target.query.isNative()) {
             if (target.result.os.tag == .macos or target.result.os.tag == .ios) {
                 if (b.graph.host.result.os.tag == .windows) {
                     @panic("Windows cannot cross-compile to Mac due to symlink not working on all Windows setups: https://github.com/ziglang/zig/issues/17652");
                 }
-                const macos_sdk_dep = b.lazyDependency("macos_sdk", .{}) orelse
-                    break :macosblk;
-                system_framework_path = macos_sdk_dep.path("System/Library/Frameworks");
-                system_include_path = macos_sdk_dep.path("usr/include");
-                library_path = macos_sdk_dep.path("usr/lib");
+                const macos_sdk_path = if (b.lazyDependency("macos_sdk", .{})) |dep| dep.path("") else b.path("");
+                system_framework_path = macos_sdk_path.path(b, "System/Library/Frameworks");
+                system_include_path = macos_sdk_path.path(b, "usr/include");
+                library_path = macos_sdk_path.path(b, "usr/lib");
             }
         }
     }
