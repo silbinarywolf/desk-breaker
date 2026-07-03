@@ -155,9 +155,25 @@ const UiDuration = [64:0]u8;
 /// [128:0]u8
 const UiMessage = [128:0]u8;
 
+pub const TimerId = enum(i32) {
+    new = -1,
+    _,
+
+    pub inline fn fromIndex(index: usize) TimerId {
+        return @enumFromInt(index);
+    }
+
+    /// Returns the existing index for the timer or null if it does not exist yet
+    pub inline fn existingIndex(id: TimerId) ?u31 {
+        const index = @intFromEnum(id);
+        if (index < 0) return null;
+        return @intCast(index);
+    }
+};
+
 /// UiTimer is temporary user-interface data when creating and editing a timer
 const UiTimer = struct {
-    id: i32 = -1, // -1 = new
+    id: TimerId = .new, // -1 = new
     kind: TimerKind = .timer,
     name: [128:0]u8 = std.mem.zeroes([128:0]u8),
     alarm_time: UiDuration = std.mem.zeroes(UiDuration),
@@ -178,35 +194,53 @@ const UiState = struct {
     /// allocate buffers for each input field as needed, this buffer is cleared when the timer or options
     /// screen is opened.
     ui_allocator: std.heap.ArenaAllocator,
-    timer: UiTimer,
-    options: struct {
-        /// os_startup is true if you want the application to boot on operating system startup
-        os_startup: ?bool = switch (builtin.os.tag) {
-            .windows => false,
-            else => null,
+    data: Data,
+
+    const Data = struct {
+        timer: UiTimer,
+        options: struct {
+            /// os_startup is true if you want the application to boot on operating system startup
+            os_startup: ?bool = switch (builtin.os.tag) {
+                .windows => false,
+                else => null,
+            },
+            display_index: Window.DisplayIndex = .primary,
+            is_activity_break_enabled: bool = false,
+            time_till_break: [:0]u8,
+            break_time: [:0]u8,
+            incoming_break: [:0]u8,
+            incoming_break_message: [:0]u8,
+            max_snoozes_in_a_row: [:0]u8,
+            errors: struct {
+                time_till_break: []const u8 = &[0]u8{},
+                break_time: []const u8 = &[0]u8{},
+                incoming_break: []const u8 = &[0]u8{},
+                incoming_break_message: []const u8 = &[0]u8{},
+                max_snoozes_in_a_row: []const u8 = &[0]u8{},
+            } = .{},
         },
-        display_index: Window.DisplayIndex = .primary,
-        is_activity_break_enabled: bool = false,
-        time_till_break: [:0]u8,
-        break_time: [:0]u8,
-        incoming_break: [:0]u8,
-        incoming_break_message: [:0]u8,
-        max_snoozes_in_a_row: [:0]u8,
-        errors: struct {
-            time_till_break: []const u8 = &[0]u8{},
-            break_time: []const u8 = &[0]u8{},
-            incoming_break: []const u8 = &[0]u8{},
-            incoming_break_message: []const u8 = &[0]u8{},
-            max_snoozes_in_a_row: []const u8 = &[0]u8{},
-        } = .{},
-    },
-    options_metadata: struct {
-        display_names_buf: [4096:0]u8 = std.mem.zeroes([4096:0]u8),
-    },
+        options_metadata: struct {
+            display_names_buf: [4096:0]u8 = std.mem.zeroes([4096:0]u8),
+        },
+    };
 
     const Error = Allocator.Error || std.fmt.BufPrintError; //mem.PrintError;
 
     const InputBufferSize = 256;
+
+    pub fn init(gpa: Allocator) UiState {
+        return .{
+            .ui_allocator = std.heap.ArenaAllocator.init(gpa),
+            .data = undefined,
+        };
+    }
+
+    pub fn reset(self: *UiState) void {
+        if (!self.ui_allocator.reset(.retain_capacity)) {
+            log.debug("[ui allocator] failed to reset", .{});
+        }
+        self.data = undefined;
+    }
 
     /// allocInputBuffer will get a temporary buffer to use for UI elements that is null-terminated.
     inline fn allocInputBuffer(self: *@This()) Allocator.Error!*[InputBufferSize:0]u8 {
@@ -283,6 +317,9 @@ icon_flash_timer: ?Timer,
 window: ?*Window,
 popup_windows: std.ArrayListUnmanaged(Window) = .empty,
 taking_break_windows: std.ArrayListUnmanaged(Window) = .empty,
+
+/// used by "window" field when we have created a window.
+backing_window_memory: Window,
 
 /// system tray
 tray: ?*sdl.SDL_Tray,
@@ -460,35 +497,16 @@ pub fn onInit(startup: de.Startup, app: *App) !void {
         .activity_timer = try Timer.start(),
         .process_list = undefined, // Init after
         .process_check_timer = try Timer.start(),
-        .ui = .{
-            .ui_allocator = std.heap.ArenaAllocator.init(gpa),
-            .timer = undefined,
-            .options = undefined,
-            .options_metadata = undefined,
-        },
+        .ui = .init(gpa),
+        // Initialized when needed and used by "window" field
+        .backing_window_memory = undefined,
     };
 
     // setup process list
     try app.process_list.init();
 
     // setup main application window
-    app.window = blk: {
-        var main_app_window = try gpa.create(Window);
-        errdefer gpa.destroy(main_app_window);
-        try main_app_window.init(.{
-            .title = App.Name,
-            .size = .{
-                .windowed_divided_by = 3,
-                // .pixels = .{
-                //     .x = 680,
-                //     .y = 480,
-                // },
-            },
-            .resizeable = true,
-            .icon = app.icon.surface,
-        });
-        break :blk main_app_window;
-    };
+    try app.createOrFocusAppWindow();
 
     // setup tray
     if (app.has_tray_support) {
@@ -751,30 +769,8 @@ pub fn onIterate(app: *App) !void {
     // Handle tray logic
     if (app.has_opened_from_tray) {
         app.has_opened_from_tray = false;
-
-        if (app.window) |app_window| {
-            if (!sdl.SDL_RestoreWindow(app_window.window.internal)) return error.SdlFailed;
-        } else {
-            // If no app window exists, create it
-            app.window = blk: {
-                const app_window = try allocator.create(Window);
-                errdefer allocator.destroy(app_window);
-                try app_window.init(.{
-                    .title = App.Name,
-                    .size = .{
-                        .windowed_divided_by = 3,
-                        // .pixels = .{
-                        //     .x = 680,
-                        //     .y = 480,
-                        // },
-                    },
-                    .resizeable = true,
-                    .icon = app.icon.surface,
-                });
-                break :blk app_window;
-            };
-            app.frames_without_app_input = 0;
-        }
+        app.frames_without_app_input = 0;
+        try app.createOrFocusAppWindow();
     }
     if (app.minimize_to_tray) {
         app.minimize_to_tray = false;
@@ -1200,7 +1196,7 @@ pub fn onIterate(app: *App) !void {
             }
 
             const has_selected_add_or_edit_timer = app.ui.screen == .timer;
-            const add_edit_timer: [:0]const u8 = if (!has_selected_add_or_edit_timer or app.ui.timer.id == -1)
+            const add_edit_timer: [:0]const u8 = if (!has_selected_add_or_edit_timer or app.ui.data.timer.id == .new)
                 "Add Timer"
             else
                 "Edit Timer";
@@ -1301,8 +1297,28 @@ pub fn onIterate(app: *App) !void {
 pub fn onQuit(_: *App) !void {}
 
 /// tprint will allocate temporary text into a buffer that will stop existing next render frame
-pub fn tprint(self: *App, comptime fmt: []const u8, args: anytype) error{OutOfMemory}![:0]u8 {
-    return std.fmt.allocPrintSentinel(self.temp_allocator.allocator(), fmt, args, 0);
+pub fn tprint(app: *App, comptime fmt: []const u8, args: anytype) error{OutOfMemory}![:0]u8 {
+    return std.fmt.allocPrintSentinel(app.temp_allocator.allocator(), fmt, args, 0);
+}
+
+fn createOrFocusAppWindow(app: *App) !void {
+    if (app.window) |app_window| {
+        // If application window exists, just restore/focus it
+        if (!sdl.SDL_RestoreWindow(app_window.window.internal)) return error.SdlFailed;
+        return;
+    }
+    var window = &app.backing_window_memory;
+    try window.init(.{
+        .title = App.Name,
+        // NOTE(jae): 2026-07-03
+        // Previously set to: .pixels = .{ .x = 680, .y = 480 }
+        // Opting to make the window relative to the user resolution for now.
+        .size = .{ .windowed_divided_by = 3 },
+        .resizeable = true,
+        .icon = app.icon.surface,
+    });
+    app.window = window;
+    app.frames_without_app_input = 0;
 }
 
 /// check if a timers criteria has been triggered
@@ -1478,12 +1494,7 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
                     .borderless = true,
                     .always_on_top = true,
                     .pos = .bottom_right,
-                    .size = .{
-                        .pixels = .{
-                            .x = 200,
-                            .y = 200,
-                        },
-                    },
+                    .size = .{ .pixels = .{ .x = 200, .y = 200 } },
                     .display = .fromSdl(app.user_settings.settings.display_index.toSdl()),
                     // NOTE(jae): 2025-12-27
                     // Attempt to have the *audacity* on my own computer to get a
@@ -1514,7 +1525,9 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
                 .borderless = true,
                 .always_on_top = true,
                 .mouse_grabbed = true,
-                .size = .windowed_fullscreen,
+                // NOTE(jae): 2026-07-03
+                // .maximized = Take up as much of the screen as possible excluding the taskbar
+                .size = .maximized,
                 .display = .fromSdl(app.user_settings.settings.display_index.toSdl()),
             }) catch |err| {
                 log.err("taking_break: failed to init window after creation: {}", .{err});

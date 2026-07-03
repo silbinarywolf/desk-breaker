@@ -13,12 +13,10 @@ const log = std.log.scoped(.ScreenOptions);
 const assert = std.debug.assert;
 
 pub fn open(app: *App) !void {
-    if (!app.ui.ui_allocator.reset(.retain_capacity)) {
-        log.debug("[ui allocator] failed to reset", .{});
-    }
+    app.ui.reset();
 
-    const ui_options = &app.ui.options;
-    app.ui.options = .{
+    const ui_options = &app.ui.data.options;
+    ui_options.* = .{
         // ... resets all options ui state ...
         // set this
         .is_activity_break_enabled = app.user_settings.settings.is_activity_break_enabled,
@@ -61,13 +59,14 @@ pub fn open(app: *App) !void {
     // - MacOS: "0: 0" and "1: 1"
     {
         // Reset options
-        app.ui.options_metadata = .{};
+        const options_metadata = &app.ui.data.options_metadata;
+        options_metadata.* = .{};
 
         var display_count: c_int = undefined;
         const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
         defer sdl.SDL_free(display_list_or_err);
         if (display_list_or_err != null) {
-            var writer = std.Io.Writer.fixed(&app.ui.options_metadata.display_names_buf);
+            var writer = std.Io.Writer.fixed(&options_metadata.display_names_buf);
             const display_list = display_list_or_err[0..@intCast(display_count)];
             for (display_list, 0..) |display_id, i| {
                 const name_c_str = sdl.SDL_GetDisplayName(display_id);
@@ -81,8 +80,8 @@ pub fn open(app: *App) !void {
 }
 
 pub fn render(app: *App) !void {
-    const ui_options = &app.ui.options;
-    const ui_metadata = &app.ui.options_metadata;
+    const ui_options = &app.ui.data.options;
+    const ui_options_metadata = &app.ui.data.options_metadata;
 
     imgui.igPushItemWidth(300);
     defer imgui.igPopItemWidth();
@@ -98,12 +97,12 @@ pub fn render(app: *App) !void {
         }
     }
 
-    if (app.ui.options_metadata.display_names_buf.len > 0) {
+    if (ui_options_metadata.display_names_buf.len > 0) {
         var display_index_ui: c_int = @intFromEnum(ui_options.display_index);
         _ = imgui.igCombo_Str(
             "Display",
             &display_index_ui,
-            ui_metadata.display_names_buf[0..],
+            ui_options_metadata.display_names_buf[0..],
             0,
         );
         if (display_index_ui >= 0) {

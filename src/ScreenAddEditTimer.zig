@@ -12,10 +12,8 @@ const assert = std.debug.assert;
 
 /// called when the screen is first opened
 pub fn open(app: *App) void {
-    if (!app.ui.ui_allocator.reset(.retain_capacity)) {
-        log.debug("[ui allocator] failed to reset", .{});
-    }
-    app.ui.timer = .{
+    app.ui.reset();
+    app.ui.data.timer = .{
         // ... resets all timer ui state ...
     };
 }
@@ -26,7 +24,7 @@ pub fn render(app: *App) !void {
     imgui.igBeginGroup();
     defer imgui.igEndGroup();
 
-    const ui_timer = &app.ui.timer;
+    const ui_timer = &app.ui.data.timer;
     _ = imgui.igCombo_Str("Type", @ptrCast(&ui_timer.kind), @TypeOf(ui_timer.kind).ImGuiItems, 0);
     _ = imgui.igInputTextWithHint(
         "Name (Optional)",
@@ -66,7 +64,7 @@ pub fn render(app: *App) !void {
             );
         },
     }
-    const is_new = ui_timer.id == -1;
+    const is_new = ui_timer.id == .new;
     const save_label: [:0]const u8 = if (is_new) "Create" else "Save";
     if (imgui.igButton(save_label, .{})) {
         var t: StateTimer = .{
@@ -107,13 +105,13 @@ pub fn render(app: *App) !void {
             },
         }
         if (should_save_or_create) {
-            if (ui_timer.id == -1) {
-                // Create
-                try app.user_settings.timers.append(app.allocator, t);
-                ui_timer.id = @intCast(app.user_settings.timers.items.len - 1);
+            if (ui_timer.id.existingIndex()) |timer_id_index| {
+                // Save existing
+                app.user_settings.timers.items[timer_id_index] = t;
             } else {
-                // Save
-                app.user_settings.timers.items[@intCast(ui_timer.id)] = t;
+                // Create new
+                try app.user_settings.timers.append(app.allocator, t);
+                ui_timer.id = .fromIndex(app.user_settings.timers.items.len - 1);
             }
             app.ui.screen = .overview;
 
@@ -125,7 +123,7 @@ pub fn render(app: *App) !void {
     if (imgui.igButton("Cancel", .{})) {
         app.ui.screen = .overview;
     }
-    if (!is_new) {
+    if (ui_timer.id.existingIndex()) |ui_timer_index| {
         imgui.igSameLine(0, 0);
         imgui.igSetCursorPosX(0);
         const viewport_size = imgui.igGetWindowSize();
@@ -133,7 +131,7 @@ pub fn render(app: *App) !void {
         if (imgui.igBegin("deletewindow", null, App.ImGuiDefaultWindowFlags)) {
             defer imgui.igEnd();
             if (imgui.igButton("Delete", .{})) {
-                _ = app.user_settings.timers.orderedRemove(@intCast(ui_timer.id));
+                _ = app.user_settings.timers.orderedRemove(ui_timer_index);
                 app.ui.screen = .overview;
 
                 // save

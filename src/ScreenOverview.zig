@@ -45,9 +45,9 @@ pub fn render(app: *App) !void {
             {
                 imgui.igSameLine(0, 16);
                 if (imgui.igButton("Edit", .{})) {
-                    const ui_timer = &app.ui.timer;
+                    const ui_timer = &app.ui.data.timer;
                     ui_timer.* = .{
-                        .id = @intCast(i),
+                        .id = .fromIndex(i),
                         .kind = t.kind,
                         // .duration_time = if (t.timer_duration) |td| td. else "",
                     };
