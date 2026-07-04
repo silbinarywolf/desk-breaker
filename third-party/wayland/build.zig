@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const Build = std.Build;
 const fs = std.fs;
 const mem = std.mem;
@@ -24,10 +23,15 @@ pub fn build(b: *Build) void {
         .optimize = optimize,
     });
 
+    scanner.addCustomProtocol(b.path("test/color-management-v1.xml"));
+    scanner.addCustomProtocol(b.path("test/presentation-time.xml"));
+
     scanner.generate("wl_compositor", 5);
     scanner.generate("wl_shm", 1);
     scanner.generate("wl_seat", 5);
     scanner.generate("wl_output", 4);
+    scanner.generate("wp_color_manager_v1", 2);
+    scanner.generate("wp_presentation", 2);
 
     inline for ([_][]const u8{ "globals", "list", "listener", "seats" }) |example| {
         const exe = b.addExecutable(.{
@@ -36,11 +40,11 @@ pub fn build(b: *Build) void {
                 .root_source_file = b.path("example/" ++ example ++ ".zig"),
                 .target = target,
                 .optimize = optimize,
+                .link_libc = true,
             }),
         });
 
         exe.root_module.addImport("wayland", wayland);
-        exe.root_module.link_libc = true;
         exe.root_module.linkSystemLibrary("wayland-client", .{});
 
         b.installArtifact(exe);
@@ -53,11 +57,11 @@ pub fn build(b: *Build) void {
                 .root_source_file = b.path("test/ref_all.zig"),
                 .target = target,
                 .optimize = optimize,
+                .link_libc = true,
             }),
         });
 
         ref_all.root_module.addImport("wayland", wayland);
-        ref_all.root_module.link_libc = true;
         ref_all.root_module.linkSystemLibrary("wayland-client", .{});
         ref_all.root_module.linkSystemLibrary("wayland-server", .{});
         ref_all.root_module.linkSystemLibrary("wayland-egl", .{});
@@ -94,6 +98,12 @@ pub const Scanner = struct {
     wayland_protocols: Build.LazyPath,
 
     pub const Options = struct {
+        /// Set this to a module name to skip generating extern function definitions, and import a module with the
+        /// given name instead. The module must provide the libwayland functions referenced via zig-wayland.
+        /// With this mechanism, the user could choose to load them with dlopen() at runtime, for example.
+        /// See src/ffi.zig for the libwayland function signatures.
+        /// If null, zig-wayland will emit extern function declarations in the generated code.
+        ffi_import: ?[]const u8 = null,
         /// Path to the wayland.xml file.
         /// If null, the output of `pkg-config --variable=pkgdatadir wayland-scanner` will be used.
         wayland_xml: ?Build.LazyPath = null,
@@ -103,12 +113,7 @@ pub const Scanner = struct {
     };
 
     pub fn create(b: *Build, options: Options) *Scanner {
-        const maybe_pkg_config = if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 15)
-            b.graph.env_map.get("PKG_CONFIG")
-        else
-            b.graph.environ_map.get("PKG_CONFIG");
-
-        const pkg_config_exe_path = maybe_pkg_config orelse "pkg-config";
+        const pkg_config_exe_path = b.graph.environ_map.get("PKG_CONFIG") orelse "pkg-config";
         const wayland_xml: Build.LazyPath = options.wayland_xml orelse blk: {
             const pc_output = b.run(&.{ pkg_config_exe_path, "--variable=pkgdatadir", "wayland-scanner" });
             break :blk .{
@@ -143,6 +148,11 @@ pub const Scanner = struct {
 
         run.addArg("-i");
         run.addFileArg(wayland_xml);
+
+        if (options.ffi_import) |import| {
+            run.addArg("-f");
+            run.addArg(import);
+        }
 
         const scanner = b.allocator.create(Scanner) catch @panic("OOM");
         scanner.* = .{

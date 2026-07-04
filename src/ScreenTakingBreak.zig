@@ -14,7 +14,7 @@ pub fn render(app: *App) !void {
         app.taking_break_windows.clearRetainingCapacity();
     }
     for (app.taking_break_windows.items) |*window| {
-        imgui.igSetCurrentContext(window.imgui_context);
+        imgui.igSetCurrentContext(window.imgui.context);
 
         const viewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
             continue; // If no viewport skip

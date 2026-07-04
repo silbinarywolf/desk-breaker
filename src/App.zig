@@ -2,8 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const time = std.time;
 const Timer = @import("Timer.zig");
-const GlobalCAllocator = @import("GlobalCAllocator.zig");
 const wayland = @import("wayland.zig");
+const Allocator = std.mem.Allocator;
 const de = @import("de");
 
 const mem = std.mem;
@@ -86,7 +86,7 @@ pub const StateTimer = struct {
     // // Alarm
     // alarm_time: i64 = 0,
 
-    pub fn deinit(t: *StateTimer, allocator: std.mem.Allocator) void {
+    pub fn deinit(t: *StateTimer, allocator: Allocator) void {
         if (t.name.len > 0) allocator.free(t.name);
     }
 };
@@ -106,7 +106,7 @@ pub const UserSettings = struct {
         .timers = .empty,
     };
 
-    pub fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *@This(), allocator: Allocator) void {
         self.settings.deinit(allocator);
         for (self.timers.items) |*t| {
             t.deinit(allocator);
@@ -155,9 +155,25 @@ const UiDuration = [64:0]u8;
 /// [128:0]u8
 const UiMessage = [128:0]u8;
 
+pub const TimerId = enum(i32) {
+    new = -1,
+    _,
+
+    pub inline fn fromIndex(index: usize) TimerId {
+        return @enumFromInt(index);
+    }
+
+    /// Returns the existing index for the timer or null if it does not exist yet
+    pub inline fn existingIndex(id: TimerId) ?u31 {
+        const index = @intFromEnum(id);
+        if (index < 0) return null;
+        return @intCast(index);
+    }
+};
+
 /// UiTimer is temporary user-interface data when creating and editing a timer
 const UiTimer = struct {
-    id: i32 = -1, // -1 = new
+    id: TimerId = .new, // -1 = new
     kind: TimerKind = .timer,
     name: [128:0]u8 = std.mem.zeroes([128:0]u8),
     alarm_time: UiDuration = std.mem.zeroes(UiDuration),
@@ -178,44 +194,89 @@ const UiState = struct {
     /// allocate buffers for each input field as needed, this buffer is cleared when the timer or options
     /// screen is opened.
     ui_allocator: std.heap.ArenaAllocator,
-    timer: UiTimer,
-    options: struct {
-        /// os_startup is true if you want the application to boot on operating system startup
-        os_startup: ?bool = switch (builtin.os.tag) {
-            .windows => false,
-            else => null,
-        },
-        display_index: u32 = 0,
-        is_activity_break_enabled: bool = false,
-        time_till_break: [:0]u8,
-        break_time: [:0]u8,
-        incoming_break: UiDuration = std.mem.zeroes(UiDuration),
-        incoming_break_message: [128:0]u8 = std.mem.zeroes([128:0]u8),
-        max_snoozes_in_a_row: [128:0]u8 = std.mem.zeroes([128:0]u8),
-        errors: struct {
-            time_till_break: []const u8 = &[0]u8{},
-            break_time: []const u8 = &[0]u8{},
-            incoming_break: []const u8 = &[0]u8{},
-            incoming_break_message: []const u8 = &[0]u8{},
-            max_snoozes_in_a_row: []const u8 = &[0]u8{},
-        } = .{},
-    },
-    options_metadata: struct {
-        display_names_buf: [4096:0]u8 = std.mem.zeroes([4096:0]u8),
-    },
+    data: Data,
 
-    /// allocBuffer will get a temporary buffer to use for UI elements
-    pub fn allocBuffer(self: *@This()) std.mem.Allocator.Error![:0]u8 {
-        return try self.ui_allocator.allocator().allocSentinel(u8, 96, 0);
+    const Data = struct {
+        timer: UiTimer,
+        options: struct {
+            /// os_startup is true if you want the application to boot on operating system startup
+            os_startup: ?bool = switch (builtin.os.tag) {
+                .windows => false,
+                else => null,
+            },
+            display_index: Window.DisplayIndex = .primary,
+            is_activity_break_enabled: bool = false,
+            time_till_break: [:0]u8,
+            break_time: [:0]u8,
+            incoming_break: [:0]u8,
+            incoming_break_message: [:0]u8,
+            max_snoozes_in_a_row: [:0]u8,
+            errors: struct {
+                time_till_break: []const u8 = &[0]u8{},
+                break_time: []const u8 = &[0]u8{},
+                incoming_break: []const u8 = &[0]u8{},
+                incoming_break_message: []const u8 = &[0]u8{},
+                max_snoozes_in_a_row: []const u8 = &[0]u8{},
+            } = .{},
+        },
+        options_metadata: struct {
+            display_names_buf: [4096:0]u8 = std.mem.zeroes([4096:0]u8),
+        },
+    };
+
+    const Error = Allocator.Error || std.fmt.BufPrintError; //mem.PrintError;
+
+    const InputBufferSize = 256;
+
+    pub fn init(gpa: Allocator) UiState {
+        return .{
+            .ui_allocator = std.heap.ArenaAllocator.init(gpa),
+            .data = undefined,
+        };
     }
 
-    /// allocDuration will return a buffer of [N:0]
-    pub fn allocDuration(self: *@This(), duration: ?Duration) error{ OutOfMemory, NoSpaceLeft }![:0]u8 {
-        const buf = try self.allocBuffer();
-        buf[0] = '\x00';
-        if (duration) |td| _ = try std.fmt.bufPrintZ(buf, "{f}", .{td.formatShort()});
+    pub fn reset(self: *UiState) void {
+        if (!self.ui_allocator.reset(.retain_capacity)) {
+            log.debug("[ui allocator] failed to reset", .{});
+        }
+        self.data = undefined;
+    }
+
+    /// allocInputBuffer will get a temporary buffer to use for UI elements that is null-terminated.
+    inline fn allocInputBuffer(self: *@This()) Allocator.Error!*[InputBufferSize:0]u8 {
+        const buf = try self.ui_allocator.allocator().allocSentinel(u8, InputBufferSize, 0);
+        buf[0] = '\x00'; // Default to appearing empty in ImGui fields
+        return buf[0..InputBufferSize :0];
+    }
+
+    pub fn allocShortDuration(self: *@This(), duration: ?Duration) Error!*[InputBufferSize:0]u8 {
+        const writeable_buf = try self.allocInputBuffer();
+        const td = duration orelse
+            return writeable_buf;
+        _ = try std.fmt.bufPrint(writeable_buf, "{f}\x00", .{td.formatShort()});
         // NOTE(jae): 2025-01-31
         // Return the full buffer for use with ImGui, this is why we ignore bufPrintZ
+        return writeable_buf;
+    }
+
+    pub fn allocString(self: *@This(), str: ?[]const u8) Error!*[InputBufferSize:0]u8 {
+        const buf = try self.allocInputBuffer();
+        const actual_str = str orelse
+            // Return empty string that is null-terminated
+            return buf;
+        if (actual_str.len == 0)
+            // Return empty string that is null-terminated
+            return buf;
+        _ = try std.fmt.bufPrint(buf, "{s}\x00", .{actual_str});
+        return buf;
+    }
+
+    pub fn allocInt(self: *@This(), integer: ?i32) Error!*[InputBufferSize:0]u8 {
+        const buf = try self.allocInputBuffer();
+        const actual_integer = integer orelse
+            // Return empty string if unset integer
+            return buf;
+        _ = try std.fmt.bufPrint(buf, "{}\x00", .{actual_integer});
         return buf;
     }
 };
@@ -240,8 +301,7 @@ pub const NextTimer = struct {
 mode: Mode,
 
 io: std.Io,
-allocator: std.mem.Allocator,
-global_c_allocator: *GlobalCAllocator,
+allocator: Allocator,
 /// stores printed text per-frame and other temporary things
 temp_allocator: std.heap.ArenaAllocator,
 
@@ -257,6 +317,9 @@ icon_flash_timer: ?Timer,
 window: ?*Window,
 popup_windows: std.ArrayListUnmanaged(Window) = .empty,
 taking_break_windows: std.ArrayListUnmanaged(Window) = .empty,
+
+/// used by "window" field when we have created a window.
+backing_window_memory: Window,
 
 /// system tray
 tray: ?*sdl.SDL_Tray,
@@ -322,41 +385,62 @@ ui: UiState,
 
 debug_frame_count: u32 = 0,
 
-pub fn init(startup: de.Startup, app: *App) !void {
+pub fn onInit(startup: de.Startup, app: *App) !void {
     const gpa = startup.gpa;
     const io = startup.io;
 
-    // Setup custom allocators for SDL and Imgui
-    // - We can use the GeneralPurposeAllocator to catch memory leaks
-    var global_c_allocator = try GlobalCAllocator.init(gpa, io);
-    errdefer global_c_allocator.deinit();
+    if (builtin.os.tag == .windows) {
+        const windows = @import("windows.zig");
+
+        // Check if application is already running
+        // - Debug mode has its own unique ID so I can be running the release build and my own testing build simultaneously
+        //
+        // https://stackoverflow.com/a/14176581
+        const unique_application_name = if (builtin.mode == .Debug)
+            "da5cd5eb-0d82-476a-9280-af68ae22a64d"
+        else
+            "b15383a6-be9d-418b-9aa9-c1c462d93431";
+        _ = windows.createMutex(null, false, unique_application_name) catch |err| switch (err) {
+            error.AlreadyExists => {
+                log.debug("application already running, closing", .{});
+                return;
+            },
+            else => {
+                log.err("unexpected CreateMutex error: {}", .{err});
+                return err;
+            },
+        };
+    }
 
     // Setup platform
     {
         // Make the event polling wait
         // if (!sdl.SDL_SetHint(sdl.SDL_HINT_MAIN_CALLBACK_RATE, "waitevent")) return error.SdlFailed;
 
-        // NOTE(jae): 2025-12-27
-        // If we're on Linux and have X11, prefer it over Wayland
+        // NOTE(jae): 2026-06-30
+        // If we're on Linux and have X11 or XWayland, prefer it over Wayland
         // - I can control where the "Incoming Break" window gets created
-        // - I can detect activity with global mouse movement
         if (comptime builtin.os.tag == .linux and !builtin.abi.isAndroid()) {
-            const video_driver_count: u32 = @intCast(sdl.SDL_GetNumVideoDrivers());
-            for (0..video_driver_count) |video_driver_index| {
-                const video_driver_name_cstr = sdl.SDL_GetVideoDriver(@intCast(video_driver_index));
-                if (video_driver_name_cstr == null) continue;
-                const video_driver_name = std.mem.span(video_driver_name_cstr);
-                if (std.mem.eql(u8, video_driver_name, "x11")) {
-                    if (!sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_DRIVER, "x11")) return error.SdlFailed;
-                    break;
+            // NOTE(jae): 2026-07-01
+            // Only force fallback to X11/Xwayland if there is no existing hint
+            const video_driver_hint = sdl.SDL_GetHint(sdl.SDL_HINT_VIDEO_DRIVER);
+            if (video_driver_hint == null) {
+                const video_driver_count: u32 = @intCast(sdl.SDL_GetNumVideoDrivers());
+                for (0..video_driver_count) |video_driver_index| {
+                    const video_driver_name_cstr = sdl.SDL_GetVideoDriver(@intCast(video_driver_index));
+                    if (video_driver_name_cstr == null) continue;
+                    const video_driver_name = std.mem.span(video_driver_name_cstr);
+                    if (std.mem.eql(u8, video_driver_name, "x11")) {
+                        if (!sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_DRIVER, "x11")) return error.SdlFailed;
+                        break;
+                    }
                 }
             }
         }
     }
 
     // Setup platform, ie. SDL_Init
-    try startup.platform.init(.{});
-    errdefer startup.platform.deinit();
+    try startup.platform.init(gpa, io, .{});
 
     // Load your settings
     var user_settings: *UserSettings = gpa.create(UserSettings) catch |err| {
@@ -401,7 +485,6 @@ pub fn init(startup: de.Startup, app: *App) !void {
         .mode = .regular,
         .io = io,
         .allocator = gpa,
-        .global_c_allocator = global_c_allocator,
         .temp_allocator = std.heap.ArenaAllocator.init(gpa),
         .platform = startup.platform,
         .icon = icon,
@@ -414,30 +497,16 @@ pub fn init(startup: de.Startup, app: *App) !void {
         .activity_timer = try Timer.start(),
         .process_list = undefined, // Init after
         .process_check_timer = try Timer.start(),
-        .ui = .{
-            .ui_allocator = std.heap.ArenaAllocator.init(gpa),
-            .timer = undefined,
-            .options = undefined,
-            .options_metadata = undefined,
-        },
+        .ui = .init(gpa),
+        // Initialized when needed and used by "window" field
+        .backing_window_memory = undefined,
     };
 
     // setup process list
     try app.process_list.init();
 
     // setup main application window
-    app.window = blk: {
-        const main_app_window = try gpa.create(Window);
-        main_app_window.* = try Window.init(.{
-            .title = App.Name,
-            // .size = .windowed_halfscreen,
-            .width = 680,
-            .height = 480,
-            .resizeable = true,
-            .icon = app.icon.surface,
-        });
-        break :blk main_app_window;
-    };
+    try app.createOrFocusAppWindow();
 
     // setup tray
     if (app.has_tray_support) {
@@ -532,36 +601,38 @@ pub fn deinit(app: *App) void {
     allocator.destroy(app.user_settings);
     app.temp_allocator.deinit();
     app.platform.deinit();
-    app.global_c_allocator.deinit();
     app.* = undefined;
 }
 
-pub fn onEvent(sdl_event: *const sdl.SDL_Event, app: *App) !void {
+pub fn onEvent(sdl_event: *sdl.SDL_Event, app: *App) !void {
     // process events for each ImGui
     var want_capture_mouse: bool = false;
     var want_capture_keyboard: bool = false;
     {
         if (app.window) |window| {
-            imgui.igSetCurrentContext(window.imgui_context);
+            const imgui_context = &window.imgui;
+            imgui.igSetCurrentContext(imgui_context.context);
             _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
 
-            const io = &imgui.igGetIO_ContextPtr(window.imgui_context)[0];
+            const io = imgui_context.io();
             want_capture_mouse = want_capture_mouse or io.WantCaptureMouse;
             want_capture_keyboard = want_capture_keyboard or io.WantCaptureKeyboard;
         }
         for (app.popup_windows.items) |*window| {
-            imgui.igSetCurrentContext(window.imgui_context);
+            const imgui_context = &window.imgui;
+            imgui.igSetCurrentContext(imgui_context.context);
             _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
 
-            const io = &imgui.igGetIO_ContextPtr(window.imgui_context)[0];
+            const io = imgui_context.io();
             want_capture_mouse = want_capture_mouse or io.WantCaptureMouse;
             want_capture_keyboard = want_capture_keyboard or io.WantCaptureKeyboard;
         }
         for (app.taking_break_windows.items) |*window| {
-            imgui.igSetCurrentContext(window.imgui_context);
+            const imgui_context = &window.imgui;
+            imgui.igSetCurrentContext(imgui_context.context);
             _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
 
-            const io = &imgui.igGetIO_ContextPtr(window.imgui_context)[0];
+            const io = imgui_context.io();
             want_capture_mouse = want_capture_mouse or io.WantCaptureMouse;
             want_capture_keyboard = want_capture_keyboard or io.WantCaptureKeyboard;
         }
@@ -572,10 +643,26 @@ pub fn onEvent(sdl_event: *const sdl.SDL_Event, app: *App) !void {
             // If triggered quit, close entire app
             try de.quit();
         },
+        // TODO(jae): 2026-07-02
+        // Properly handle display scaling
+        // sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED, sdl.SDL_EVENT_WINDOW_DISPLAY_CHANGED, sdl.SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED => {
+        //     const event = sdl_event.window;
+        //     const maybe_window: ?*Window = blk: {
+        //         if (app.window) |app_window| {
+        //             if (event.windowID == sdl.SDL_GetWindowID(app_window.window.internal)) {
+        //                 break :blk app_window;
+        //             }
+        //         }
+        //         break :blk null;
+        //     };
+        //     if (maybe_window) |window| {
+        //         log.debug("pixel size, display or display-scale changed! {d:.2}", .{try window.window.getDisplayScale()});
+        //     }
+        // },
         sdl.SDL_EVENT_WINDOW_CLOSE_REQUESTED => {
             const event = sdl_event.window;
             if (app.window) |app_window| {
-                if (event.windowID == sdl.SDL_GetWindowID(app_window.window)) {
+                if (event.windowID == sdl.SDL_GetWindowID(app_window.window.internal)) {
                     try de.quit();
                     // TODO: Add ability to configure when/how we minimize to system tray
                     // If closed the main app window and has no system tray, close entire app
@@ -656,13 +743,13 @@ pub fn onIterate(app: *App) !void {
     // (as per example code: https://github.com/ocornut/imgui/blob/master/examples/example_sdl2_sdlrenderer2/main.cpp)
     {
         for (app.popup_windows.items) |*window| {
-            window.imguiNewFrame();
+            window.imgui.newFrame();
         }
         for (app.taking_break_windows.items) |*window| {
-            window.imguiNewFrame();
+            window.imgui.newFrame();
         }
         if (app.window) |app_window| {
-            app_window.imguiNewFrame();
+            app_window.imgui.newFrame();
         }
     }
 
@@ -682,24 +769,8 @@ pub fn onIterate(app: *App) !void {
     // Handle tray logic
     if (app.has_opened_from_tray) {
         app.has_opened_from_tray = false;
-
-        if (app.window) |app_window| {
-            if (!sdl.SDL_RestoreWindow(app_window.window)) return error.SdlFailed;
-        } else {
-            // If no app window exists, create it
-            app.window = blk: {
-                const app_window = try allocator.create(Window);
-                app_window.* = try Window.init(.{
-                    .title = App.Name,
-                    .width = 680,
-                    .height = 480,
-                    .resizeable = true,
-                    .icon = app.icon.surface,
-                });
-                break :blk app_window;
-            };
-            app.frames_without_app_input = 0;
-        }
+        app.frames_without_app_input = 0;
+        try app.createOrFocusAppWindow();
     }
     if (app.minimize_to_tray) {
         app.minimize_to_tray = false;
@@ -724,7 +795,7 @@ pub fn onIterate(app: *App) !void {
 
             const is_main_window_minimized_or_occluded = blk: {
                 const app_window = app.window orelse break :blk false;
-                const window_flags = sdl.SDL_GetWindowFlags(app_window.window);
+                const window_flags = sdl.SDL_GetWindowFlags(app_window.window.internal);
                 break :blk (window_flags & sdl.SDL_WINDOW_MINIMIZED != 0) or
                     (window_flags & sdl.SDL_WINDOW_OCCLUDED != 0);
             };
@@ -1084,7 +1155,7 @@ pub fn onIterate(app: *App) !void {
 
     // Main application window
     if (app.window) |app_window| appwindowblk: {
-        imgui.igSetCurrentContext(app_window.imgui_context);
+        imgui.igSetCurrentContext(app_window.imgui.context);
 
         const viewport = @as(?*imgui.ImGuiViewport, imgui.igGetMainViewport()) orelse {
             break :appwindowblk; // If no viewport skip
@@ -1125,7 +1196,7 @@ pub fn onIterate(app: *App) !void {
             }
 
             const has_selected_add_or_edit_timer = app.ui.screen == .timer;
-            const add_edit_timer: [:0]const u8 = if (!has_selected_add_or_edit_timer or app.ui.timer.id == -1)
+            const add_edit_timer: [:0]const u8 = if (!has_selected_add_or_edit_timer or app.ui.data.timer.id == .new)
                 "Add Timer"
             else
                 "Edit Timer";
@@ -1199,48 +1270,55 @@ pub fn onIterate(app: *App) !void {
 
     // Render
     const renderWindow = struct {
-        pub fn renderWindow(window: *Window) void {
-            const renderer = window.renderer;
-
-            // Setup ImGui Context + Render Scale
-            assert(window.imgui_new_frame);
-            imgui.igSetCurrentContext(window.imgui_context);
-            imgui.igRender();
-            const io = &imgui.igGetIO_ContextPtr(imgui.igGetCurrentContext())[0];
-            _ = sdl.SDL_SetRenderScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
-
+        pub fn renderWindow(window: *Window) !void {
             // Clear screen
-            _ = sdl.SDL_SetRenderDrawColor(renderer, 20, 20, 20, 0);
-            _ = sdl.SDL_RenderClear(renderer);
+            try window.renderer.clearScreen();
 
             // Render ImGui Draw Calls
-            imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(window.renderer));
-            window.imgui_new_frame = false;
+            try window.imgui.render();
 
-            if (!sdl.SDL_RenderPresent(renderer)) {
-                // TODO: Handle not rendering?
-                @panic("SDL_RenderPresent failed for main application window");
-            }
+            // Present to the screen
+            try window.renderer.render();
         }
     }.renderWindow;
 
     // Render app window
     if (app.window) |app_window| {
-        renderWindow(app_window);
+        try renderWindow(app_window);
     }
     for (app.popup_windows.items) |*incoming_break_window| {
-        renderWindow(incoming_break_window);
+        try renderWindow(incoming_break_window);
     }
     for (app.taking_break_windows.items) |*taking_break_window| {
-        renderWindow(taking_break_window);
+        try renderWindow(taking_break_window);
     }
 }
 
 pub fn onQuit(_: *App) !void {}
 
 /// tprint will allocate temporary text into a buffer that will stop existing next render frame
-pub fn tprint(self: *App, comptime fmt: []const u8, args: anytype) error{OutOfMemory}![:0]u8 {
-    return std.fmt.allocPrintSentinel(self.temp_allocator.allocator(), fmt, args, 0);
+pub fn tprint(app: *App, comptime fmt: []const u8, args: anytype) error{OutOfMemory}![:0]u8 {
+    return std.fmt.allocPrintSentinel(app.temp_allocator.allocator(), fmt, args, 0);
+}
+
+fn createOrFocusAppWindow(app: *App) !void {
+    if (app.window) |app_window| {
+        // If application window exists, just restore/focus it
+        if (!sdl.SDL_RestoreWindow(app_window.window.internal)) return error.SdlFailed;
+        return;
+    }
+    var window = &app.backing_window_memory;
+    try window.init(.{
+        .title = App.Name,
+        // NOTE(jae): 2026-07-03
+        // Previously set to: .pixels = .{ .x = 680, .y = 480 }
+        // Opting to make the window relative to the user resolution for now.
+        .size = .{ .windowed_divided_by = 3 },
+        .resizeable = true,
+        .icon = app.icon.surface,
+    });
+    app.window = window;
+    app.frames_without_app_input = 0;
 }
 
 /// check if a timers criteria has been triggered
@@ -1407,27 +1485,17 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
         .incoming_break => {
             log.debug("change_mode: incoming break", .{});
             const should_change_state = blk: {
-                const display_index = app.user_settings.settings.display_index;
-
-                // Don't work if we can't get display dimensions
-                const display = Window.getDisplayUsableBoundsFromIndex(display_index) orelse {
-                    log.err("incoming_break: unable to query display usable bounds: {s}", .{sdl.SDL_GetError()});
-                    return error.SdlFailed;
-                };
-
-                const width: u16 = 200;
-                const height: u16 = 200;
-
-                const popup_window = Window.init(.{
+                try app.popup_windows.append(app.allocator, undefined);
+                var popup_window = &app.popup_windows.items[app.popup_windows.items.len - 1];
+                popup_window.init(.{
                     .title = "Incoming Break",
                     .icon = app.icon.surface,
                     .focusable = false,
                     .borderless = true,
                     .always_on_top = true,
-                    .x = display.x + display.w - width,
-                    .y = display.y + display.h - height,
-                    .width = width,
-                    .height = height,
+                    .pos = .bottom_right,
+                    .size = .{ .pixels = .{ .x = 200, .y = 200 } },
+                    .display = .fromSdl(app.user_settings.settings.display_index.toSdl()),
                     // NOTE(jae): 2025-12-27
                     // Attempt to have the *audacity* on my own computer to get a
                     // a window to pop up in the right-bottom corner of the screen with Wayland (and fail)
@@ -1437,7 +1505,6 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
                     log.err("incoming_break: failed to init window after creation: {}", .{err});
                     return err;
                 };
-                try app.popup_windows.append(app.allocator, popup_window);
 
                 break :blk true;
             };
@@ -1450,32 +1517,22 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
         .taking_break => {
             log.debug("change_mode: taking break", .{});
 
-            const display_index = app.user_settings.settings.display_index;
-
-            // Don't work if we can't get display dimensions
-            const display: Window.Rect = Window.getDisplayUsableBoundsFromIndex(display_index) orelse .{
-                // Fallback if cannot query display
-                .x = 0,
-                .y = 0,
-                .w = 640,
-                .h = 480,
-            };
-
-            const taking_break_window = Window.init(.{
+            try app.taking_break_windows.append(app.allocator, undefined);
+            var taking_break_window = &app.taking_break_windows.items[app.taking_break_windows.items.len - 1];
+            taking_break_window.init(.{
                 .title = "Take a break",
                 .icon = app.icon.surface,
                 .borderless = true,
                 .always_on_top = true,
                 .mouse_grabbed = true,
-                .x = display.x,
-                .y = display.y,
-                .width = display.w,
-                .height = display.h,
+                // NOTE(jae): 2026-07-03
+                // .maximized = Take up as much of the screen as possible excluding the taskbar
+                .size = .maximized,
+                .display = .fromSdl(app.user_settings.settings.display_index.toSdl()),
             }) catch |err| {
                 log.err("taking_break: failed to init window after creation: {}", .{err});
                 return err;
             };
-            try app.taking_break_windows.append(app.allocator, taking_break_window);
 
             // Setup break time
             var break_time_duration = app.user_settings.break_time_or_default();

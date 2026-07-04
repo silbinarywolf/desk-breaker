@@ -1,15 +1,15 @@
 const builtin = @import("builtin");
-const build_options = @import("build_options.zig");
+const build_options = @import("../build_options.zig");
 const Window = @import("SdlWindow.zig");
 const Allocator = @import("std").mem.Allocator;
-const ImGuiContext = @import("ImGuiContext.zig");
+const SdlPlatform = @import("../platform.zig").Platform;
 
 const sdl = @import("sdl");
-const root_options = @import("RootOptions.zig").current;
+const root_options = @import("../RootOptions.zig").current;
 
 internal: *sdl.SDL_Renderer,
 
-pub const InitRendererError = error{SdlFailed} || ImGuiContext.Error || Allocator.Error;
+pub const InitRendererError = SdlPlatform.Error || Allocator.Error;
 
 pub fn init(window: *Window) InitRendererError!SdlRenderer {
     const default_renderer: ?[*:0]const u8 = switch (root_options.renderer_type) {

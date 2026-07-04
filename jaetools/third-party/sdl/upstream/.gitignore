@@ -48,6 +48,7 @@
 !/sdl3/android-project/app/src
 /sdl3/android-project/app/src/main/*
 !/sdl3/android-project/app/src/main/java
+!/sdl3/android-project/app/src/main/AndroidManifest.xml
 
 # Keep LICENSE
 !/sdl3/LICENSE.txt

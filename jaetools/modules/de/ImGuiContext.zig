@@ -1,10 +1,12 @@
 const build_options = @import("build_options.zig");
 const builtin = @import("builtin");
+const platform = @import("platform.zig");
 const imgui = if (build_options.has_imgui) @import("imgui") else void;
 const sdl = if (build_options.has_sdl) @import("sdl") else void;
 const assert = @import("std").debug.assert;
-const Window = if (build_options.has_sdl) @import("SdlWindow.zig") else void;
-const Renderer = if (build_options.has_sdl) @import("SdlRenderer.zig") else void;
+const Window = platform.Window;
+const de_options = @import("RootOptions.zig").current;
+const Renderer = platform.Renderer;
 
 const log = @import("std").log.scoped(.imgui);
 
@@ -37,10 +39,11 @@ pub fn init(window: *Window, renderer: *Renderer) Error!ImGuiContext {
     errdefer imgui.igDestroyContext(imgui_context);
 
     // NOTE(jae): This call is needed for multiple windows, ie. creation of the second window
-    if (previous_imgui_context != null)
+    if (previous_imgui_context != null) {
         imgui.igSetCurrentContext(imgui_context);
+    }
 
-    const main_scale = window.getScale() catch |err| switch (err) {
+    const main_scale = window.getDisplayScale() catch |err| switch (err) {
         error.SdlFailed => return error.ImguiWindowGetScaleFailed,
     };
     const style = &imgui.igGetStyle()[0];
@@ -68,7 +71,7 @@ pub fn init(window: *Window, renderer: *Renderer) Error!ImGuiContext {
         font_config.FontData = @ptrCast(@constCast(font_data[0..].ptr));
         font_config.FontDataSize = font_data.len;
         font_config.FontDataOwnedByAtlas = false;
-        font_config.SizePixels = 24;
+        font_config.SizePixels = de_options.imgui.default_font_size;
 
         const font = imgui.ImFontAtlas_AddFont(imgui_io.Fonts, font_config);
         imgui.igPushFont(font, 0.0);
@@ -86,11 +89,15 @@ pub fn init(window: *Window, renderer: *Renderer) Error!ImGuiContext {
         return error.ImguiSdlRendererFailed;
     errdefer imgui.ImGui_ImplSDLRenderer3_Shutdown();
 
-    return .{
+    var context: ImGuiContext = .{
         .context = imgui_context,
         .renderer = renderer,
         .new_frames_count = 0,
     };
+    if (previous_imgui_context != null) {
+        context.newFrame();
+    }
+    return context;
 }
 
 pub fn deinit(context: *ImGuiContext) void {
@@ -116,6 +123,13 @@ pub fn newFrame(context: *ImGuiContext) void {
     // }
     // assert(context.new_frames_count == 0);
 
+    // Swap context
+    const previous_imgui_context = imgui.igGetCurrentContext();
+    defer if (previous_imgui_context) |prev_imgui_context| {
+        imgui.igSetCurrentContext(prev_imgui_context);
+    };
+    imgui.igSetCurrentContext(context.context);
+
     // setup new frame (so things won't crash if we create a window after eventing)
     imgui.ImGui_ImplSDLRenderer3_NewFrame();
     imgui.ImGui_ImplSDL3_NewFrame();
@@ -133,19 +147,26 @@ pub fn newFrame(context: *ImGuiContext) void {
 ///
 /// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
 pub fn processSdlEvent(context: *ImGuiContext, sdl_event: *const sdl.SDL_Event) void {
+    // Swap context
     const previous_context = imgui.igGetCurrentContext();
     defer if (previous_context) |imgui_context| {
         imgui.igSetCurrentContext(imgui_context);
     };
-
     imgui.igSetCurrentContext(context.context);
+
+    // Handle event
     _ = imgui.ImGui_ImplSDL3_ProcessEvent(@ptrCast(sdl_event));
 }
 
-/// When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
+/// Get Io to read variables like "WantCaptureKeyboard"
+pub inline fn io(context: *ImGuiContext) *const imgui.ImGuiIO {
+    const r: *imgui.ImGuiIO = imgui.igGetIO_ContextPtr(context.context) orelse unreachable;
+    return r;
+}
+
+/// Deprecated: Use io() instead
 pub inline fn wantCaptureKeyboard(context: *ImGuiContext) bool {
-    const io = imgui.igGetIO_ContextPtr(context.context);
-    return io.*.WantCaptureKeyboard;
+    return context.io().WantCaptureKeyboard;
 }
 
 pub inline fn render(context: *ImGuiContext) !void {
@@ -155,13 +176,16 @@ pub inline fn render(context: *ImGuiContext) !void {
 fn renderSdl(context: *ImGuiContext, renderer: *sdl.SDL_Renderer) error{SdlFailed}!void {
     assert(context.new_frames_count > 0);
 
+    // Swap context
     const previous_imgui_context = imgui.igGetCurrentContext();
     defer if (previous_imgui_context) |prev_imgui_context| {
         imgui.igSetCurrentContext(prev_imgui_context);
     };
     imgui.igSetCurrentContext(context.context);
+
+    // Do render
     imgui.igRender();
-    const io = &imgui.igGetIO_ContextPtr(context.context)[0];
+    const imgui_io = context.io();
 
     // SDL-specific code
     var old_scale_x: f32 = undefined;
@@ -169,7 +193,7 @@ fn renderSdl(context: *ImGuiContext, renderer: *sdl.SDL_Renderer) error{SdlFaile
     if (!sdl.SDL_GetRenderScale(renderer, &old_scale_x, &old_scale_y))
         return error.SdlFailed;
     defer _ = sdl.SDL_SetRenderScale(renderer, old_scale_x, old_scale_y);
-    if (!sdl.SDL_SetRenderScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y))
+    if (!sdl.SDL_SetRenderScale(renderer, imgui_io.DisplayFramebufferScale.x, imgui_io.DisplayFramebufferScale.y))
         return error.SdlFailed;
     imgui.ImGui_ImplSDLRenderer3_RenderDrawData(@ptrCast(imgui.igGetDrawData()), @ptrCast(renderer));
 }

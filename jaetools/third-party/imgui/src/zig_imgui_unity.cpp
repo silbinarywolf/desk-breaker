@@ -11,8 +11,6 @@
 #include "imgui_draw.cpp"
 #include "imgui_demo.cpp"
 
-#include "cimgui.cpp"
-
 #ifdef IMGUI_ENABLE_FREETYPE
     #include "misc/freetype/imgui_freetype.cpp"
 #endif
@@ -21,5 +19,7 @@
     #include "backends/imgui_impl_sdl3.cpp"
     #include "backends/imgui_impl_sdlrenderer3.cpp"
 #endif
+
+#include "cimgui.cpp"
 
 #endif

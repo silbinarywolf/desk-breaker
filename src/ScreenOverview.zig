@@ -45,15 +45,15 @@ pub fn render(app: *App) !void {
             {
                 imgui.igSameLine(0, 16);
                 if (imgui.igButton("Edit", .{})) {
-                    const ui_timer = &app.ui.timer;
+                    const ui_timer = &app.ui.data.timer;
                     ui_timer.* = .{
-                        .id = @intCast(i),
+                        .id = .fromIndex(i),
                         .kind = t.kind,
                         // .duration_time = if (t.timer_duration) |td| td. else "",
                     };
                     app.ui.screen = .timer;
-                    _ = try std.fmt.bufPrintZ(ui_timer.name[0..], "{s}", .{t.name});
-                    if (t.timer_duration) |td| _ = try std.fmt.bufPrintZ(ui_timer.duration_time[0..], "{f}", .{td.formatShort()});
+                    _ = try std.fmt.bufPrint(ui_timer.name[0..], "{s}\x00", .{t.name});
+                    if (t.timer_duration) |td| _ = try std.fmt.bufPrint(ui_timer.duration_time[0..], "{f}\x00", .{td.formatShort()});
                 }
             }
         }
@@ -81,6 +81,7 @@ pub fn render(app: *App) !void {
     // Bottom-left-corner
     const viewport_size = imgui.igGetWindowSize();
     imgui.igSetNextWindowPos(.{ .x = 0, .y = viewport_size.y }, imgui.ImGuiCond_Always, .{ .x = 0, .y = 1 });
+    imgui.igSetNextWindowSize(.{ .x = 0, .y = 0 }, imgui.ImGuiCond_None);
     if (imgui.igBegin("###general-bottom-left-corner", null, App.ImGuiDefaultWindowFlags)) {
         defer imgui.igEnd();
 

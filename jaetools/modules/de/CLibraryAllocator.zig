@@ -1,26 +1,17 @@
 //! Setup allocation functions for third-party C libraries like SDL, ImGui, etc
 
-// comptime {
-//     _ = @import("GlobalCppAllocator.zig");
-// }
-
 const std = @import("std");
 const builtin = @import("builtin");
 const sdl = @import("sdl");
 const imgui = @import("imgui");
 const assert = std.debug.assert;
+const PlatformError = @import("platform.zig").Platform.Error;
 
 const log = std.log.scoped(.GlobalCAllocator);
 
 const use_sdl_mutex = builtin.os.tag == .freestanding or builtin.object_format == .c;
 
-var _instance_data: GlobalCAllocator = .{
-    .io = undefined,
-    .mu = .init,
-    .allocator = undefined,
-    .allocations = .empty,
-};
-var instance: ?*GlobalCAllocator = null;
+var instance: ?*CLibraryAllocator = null;
 
 const debug_log_allocs = false;
 
@@ -49,11 +40,11 @@ const AllocatorContext = struct {
     };
 };
 
-pub fn init(allocator: std.mem.Allocator, io: std.Io) error{SdlFailed}!*GlobalCAllocator {
+pub fn init(self: *CLibraryAllocator, allocator: std.mem.Allocator, io: std.Io) PlatformError!void {
     assert(instance == null);
 
     // Init
-    _instance_data = .{
+    self.* = .{
         .io = io,
         .mu = .init,
         .allocator = allocator,
@@ -61,12 +52,9 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io) error{SdlFailed}!*GlobalCA
         .contexts = .{},
     };
     if (use_sdl_mutex) {
-        try _instance_data.mu.create();
+        try self.mu.create();
     }
-    instance = &_instance_data;
-
-    // Use self logic
-    const self = instance.?;
+    instance = self;
 
     // Setup SDL memory allocator
     // - Do not use custom allocator on platforms that use SDL_CreateMutex as it uses the SDL allocator
@@ -76,17 +64,16 @@ pub fn init(allocator: std.mem.Allocator, io: std.Io) error{SdlFailed}!*GlobalCA
         }
         imgui.igSetAllocatorFunctions(imguiMalloc, imguiFree, self);
     }
-
-    return self;
 }
 
-pub inline fn getInstance() *GlobalCAllocator {
+pub inline fn getInstance() *CLibraryAllocator {
     return instance.?;
 }
 
-pub fn deinit(self: *GlobalCAllocator) void {
-    self.mu.lockUncancelable(self.io);
-    defer self.mu.unlock(self.io);
+pub fn deinit(self: *CLibraryAllocator) void {
+    const io = self.io;
+    self.mu.lockUncancelable(io);
+    defer self.mu.unlock(io);
 
     const sdl_allocations = sdl.SDL_GetNumAllocations();
     const remaining_alloc_count = self.allocations.count();
@@ -97,24 +84,26 @@ pub fn deinit(self: *GlobalCAllocator) void {
     self.allocations.deinit(self.allocator);
     self.allocator = undefined;
     self.allocations = undefined;
+    self.io = undefined;
+    // self.mu = _KEEP_;
     instance = null;
 }
 
 /// WARNING: Must have unlocked mutex before calling this
-inline fn putEntry(self: *GlobalCAllocator, context: *AllocatorContext, mem: [*]align(default_alignment.toByteUnits()) u8, size: usize) void {
+inline fn putEntry(self: *CLibraryAllocator, context: *AllocatorContext, mem: [*]align(default_alignment.toByteUnits()) u8, size: usize) void {
     self.allocations.put(self.allocator, @ptrCast(mem), size) catch
         @panic("c_allocator: out of memory");
     context.current_memory_usage += size;
 }
 
 /// WARNING: Must have unlocked mutex before calling this
-inline fn handleStatsForRemovedEntry(self: *GlobalCAllocator, context: *AllocatorContext, ptr: *anyopaque, old_size: usize) void {
+inline fn handleStatsForRemovedEntry(self: *CLibraryAllocator, context: *AllocatorContext, ptr: *anyopaque, old_size: usize) void {
     _ = self;
     _ = ptr;
     context.current_memory_usage -= old_size;
 }
 
-pub fn malloc(self: *GlobalCAllocator, context: *AllocatorContext, size: usize) ?*anyopaque {
+pub fn malloc(self: *CLibraryAllocator, context: *AllocatorContext, size: usize) ?*anyopaque {
     if (debug_log_allocs) log.debug("malloc: start", .{});
     defer if (debug_log_allocs) log.debug("malloc: end", .{});
 
@@ -132,7 +121,7 @@ pub fn malloc(self: *GlobalCAllocator, context: *AllocatorContext, size: usize) 
     return mem.ptr;
 }
 
-fn calloc(self: *GlobalCAllocator, context: *AllocatorContext, elements: usize, size_of_each: usize) ?*anyopaque {
+fn calloc(self: *CLibraryAllocator, context: *AllocatorContext, elements: usize, size_of_each: usize) ?*anyopaque {
     if (debug_log_allocs) log.debug("calloc: start (elements: {}, size of each: {})", .{ elements, size_of_each });
     defer if (debug_log_allocs) log.debug("calloc: end", .{});
 
@@ -156,7 +145,7 @@ fn calloc(self: *GlobalCAllocator, context: *AllocatorContext, elements: usize, 
     return mem.ptr;
 }
 
-fn realloc(self: *GlobalCAllocator, context: *AllocatorContext, optional_ptr: ?*anyopaque, size: usize) ?*anyopaque {
+fn realloc(self: *CLibraryAllocator, context: *AllocatorContext, optional_ptr: ?*anyopaque, size: usize) ?*anyopaque {
     if (debug_log_allocs) log.debug("realloc: start", .{});
     defer if (debug_log_allocs) log.debug("realloc: end", .{});
 
@@ -186,14 +175,15 @@ fn realloc(self: *GlobalCAllocator, context: *AllocatorContext, optional_ptr: ?*
     return new_mem.ptr;
 }
 
-pub fn free(self: *GlobalCAllocator, context: *AllocatorContext, maybe_ptr: ?*anyopaque) void {
+pub fn free(self: *CLibraryAllocator, context: *AllocatorContext, maybe_ptr: ?*anyopaque) void {
     const ptr = maybe_ptr orelse return;
 
     if (debug_log_allocs) log.debug("free: start {?}", .{maybe_ptr});
     defer if (debug_log_allocs) log.debug("free: end {?}", .{maybe_ptr});
 
-    self.mu.lockUncancelable(self.io);
-    defer self.mu.unlock(self.io);
+    const io = self.io;
+    self.mu.lockUncancelable(io);
+    defer self.mu.unlock(io);
 
     const size = self.allocations.fetchRemove(@ptrCast(ptr)).?.value;
     const mem = @as([*]align(default_alignment.toByteUnits()) u8, @ptrCast(@alignCast(ptr)))[0..size];
@@ -223,12 +213,12 @@ fn sdlFree(ptr: ?*anyopaque) callconv(.c) void {
 }
 
 fn imguiMalloc(size: usize, user_context: ?*anyopaque) callconv(.c) ?*anyopaque {
-    const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context.?));
+    const self: *CLibraryAllocator = @ptrCast(@alignCast(user_context.?));
     return self.malloc(&self.contexts.imgui, size);
 }
 
 fn imguiFree(ptr: ?*anyopaque, user_context: ?*anyopaque) callconv(.c) void {
-    const self: *GlobalCAllocator = @ptrCast(@alignCast(user_context.?));
+    const self: *CLibraryAllocator = @ptrCast(@alignCast(user_context.?));
     return self.free(&self.contexts.imgui, ptr);
 }
 
@@ -239,7 +229,7 @@ const SdlMutex = struct {
         .impl = undefined,
     };
 
-    fn create(mu: *SdlMutex) error{SdlFailed}!void {
+    fn create(mu: *SdlMutex) PlatformError!void {
         const sdl_mutex = sdl.SDL_CreateMutex() orelse return error.SdlFailed;
         mu.* = .{ .impl = sdl_mutex };
     }
@@ -253,4 +243,4 @@ const SdlMutex = struct {
     }
 };
 
-const GlobalCAllocator = @This();
+const CLibraryAllocator = @This();

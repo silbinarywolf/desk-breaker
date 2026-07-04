@@ -19,6 +19,9 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .link_libc = true,
     });
+    if (target.result.abi.isAndroid()) {
+        mod.pic = true;
+    }
     mod.addIncludePath(freetype_include_path);
     if (target.result.os.tag == .linux) {
         mod.linkSystemLibrary("m", .{});

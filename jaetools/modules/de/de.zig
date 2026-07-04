@@ -2,16 +2,19 @@ const builtin = @import("builtin");
 const process = @import("std").process;
 const Allocator = @import("std").mem.Allocator;
 const ArenaAllocator = @import("std").heap.ArenaAllocator;
+const CLibraryAllocator = @import("CLibraryAllocator.zig");
 const Io = @import("std").Io;
-const SdlPlatform = @import("SdlPlatform.zig");
+const platform = @import("platform.zig");
 const build_options = @import("build_options.zig");
 const dumpErrorReturnTrace = @import("std").debug.dumpErrorReturnTrace;
+const bufPrint = @import("std").fmt.bufPrint;
 
 // Platform
 pub const sdl = if (build_options.has_sdl) @import("sdl") else @compileError("cannot access de.sdl if use_sdl = false");
-pub const Platform = SdlPlatform;
-pub const Window = @import("SdlWindow.zig");
-pub const Renderer = @import("SdlRenderer.zig");
+pub const Startup = @import("Startup.zig");
+pub const Platform = platform.Platform;
+pub const Window = platform.Window;
+pub const Renderer = platform.Renderer;
 pub const ImGuiContext = @import("ImGuiContext.zig");
 pub const Image = @import("Image.zig");
 
@@ -28,41 +31,40 @@ pub const FrameTimer = @import("FrameTimer.zig");
 
 const log = @import("std").log.scoped(.de);
 
+const LogLevel = @import("std").log.Level;
+
 pub const Options = @import("RootOptions.zig"); // MUST export for end-user app
 const App = Options.current.application_type;
 
-pub const main = switch (Options.current.platform_type) {
+pub const main = if (build_options.has_sdl and sdl.ZIG_SDL_MAIN_USE_CALLBACKS == 1)
+    void
+else switch (Options.current.platform_type) {
     .sdl_callback => sdl_callback_entry.main,
     .sdl_zig => sdl_zig_entry.main,
 };
 
+/// Provide logFn for use `std_options: std.Options = .{ .logFn =  }`
+pub const logFn: fn (comptime message_level: LogLevel, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void =
+    if (builtin.abi.isAndroid() or builtin.os.tag == .emscripten or builtin.os.tag == .freestanding)
+        SDL_logFn
+    else
+        @import("std").log.defaultLog;
+
 /// Initial main() startup information
 var default_init: Startup = undefined;
+
+/// Setup initial application memory
+var default_app_memory: AppMemory = undefined;
 
 var has_triggered_app_quit = false;
 
 const AppMemory = struct {
     /// The user-code application struct, can be anything
     app: App,
+    /// Change the default C allocator for C-libraries
+    global_c_allocator: CLibraryAllocator,
     /// Platform-specific storage
     platform: Platform,
-};
-
-/// My own customized version of Zig std.process.Init
-pub const Startup = struct {
-    /// Environment variables.
-    environ: process.Environ,
-    /// Command line arguments.
-    args: process.Args,
-    /// A default-selected general purpose allocator for temporary heap
-    /// allocations. Debug mode will set up leak checking if possible.
-    /// Threadsafe.
-    gpa: Allocator,
-    /// An appropriate default Io implementation based on the target
-    /// configuration. Debug mode will set up leak checking if possible.
-    io: Io,
-    /// Direct-access to the platform
-    platform: *Platform,
 };
 
 /// Exit successfully at the end of the next loop
@@ -72,12 +74,20 @@ pub fn quit() error{Quit}!void {
 
 inline fn initPlatformAndAppAndCallOnStart() !*AppMemory {
     const gpa = default_init.gpa;
+    const io = default_init.io;
 
-    const app_memory: *AppMemory = try gpa.create(AppMemory);
-    errdefer gpa.destroy(app_memory);
+    const app_memory: *AppMemory = &default_app_memory;
+    app_memory.* = .{
+        .app = undefined,
+        .platform = .uninitialized,
+        .global_c_allocator = undefined,
+    };
     default_init.platform = &app_memory.platform;
 
-    try App.init(default_init, &app_memory.app);
+    // Setup global c allocator
+    try app_memory.global_c_allocator.init(gpa, io);
+
+    try App.onInit(default_init, &app_memory.app);
     return app_memory;
 }
 
@@ -86,9 +96,8 @@ inline fn handleAppSdlEvent(app_memory: *AppMemory, event: *sdl.SDL_Event) !void
 }
 
 inline fn handleAppLoop(app_memory: *AppMemory) !void {
-    const platform = &app_memory.platform;
     AppLoop: while (true) {
-        var event_it = platform.events();
+        var event_it = app_memory.platform.events();
         if (build_options.has_sdl) {
             while (event_it.next()) |ev| {
                 try handleAppSdlEvent(app_memory, ev);
@@ -117,25 +126,36 @@ inline fn handleAppIterate(app_memory: *AppMemory) !void {
 
 inline fn handleAppQuit(app_memory: *AppMemory) !void {
     const app = &app_memory.app;
-    try App.onQuit(app);
-    app.deinit();
-    app_memory.platform.deinit();
-    default_init.gpa.destroy(app_memory);
+    _ = app;
+    // try App.onQuit(app);
+    // app.deinit();
+    // app_memory.platform.deinitNoError();
+    // app_memory.global_c_allocator.deinit();
+    // default_init.gpa.destroy(app_memory);
+    // default_init.deinit();
+}
+
+comptime {
+    if (sdl.ZIG_SDL_MAIN_USE_CALLBACKS == 1) {
+        @export(&sdl_callback_entry.sdlInitCallback, .{ .name = "SDL_AppInit", .linkage = .strong });
+        @export(&sdl_callback_entry.sdlIterateCallback, .{ .name = "SDL_AppIterate", .linkage = .strong });
+        @export(&sdl_callback_entry.sdlEventCallback, .{ .name = "SDL_AppEvent", .linkage = .strong });
+        @export(&sdl_callback_entry.sdlQuitCallback, .{ .name = "SDL_AppQuit", .linkage = .strong });
+    }
 }
 
 const sdl_callback_entry = struct {
-    const sdlGetError = SdlPlatform.sdlGetError;
+    const sdlGetError = @import("sdl/SdlPlatform.zig").sdlGetError;
 
-    fn main(init: process.Init) !u8 {
+    fn main(init: process.Init.Minimal) !u8 {
+        if (comptime sdl.ZIG_SDL_MAIN_USE_CALLBACKS == 1)
+            @compileError("Should not call main() when ZIG_SDL_MAIN_USE_CALLBACKS = 1");
+
         // NOTE(jae): 2026-05-05
         // If need custom setup for another platform, look at callMain() in lib/std/start.zig
-        default_init = .{
-            .environ = init.minimal.environ,
-            .args = init.minimal.args,
-            .gpa = init.gpa,
-            .io = init.io,
-            .platform = undefined,
-        };
+        default_init.init(init);
+        errdefer default_init.deinit();
+
         const result_code = sdl.SDL_RunApp(0, null, sdlMainCallback, null);
         if (result_code != 0) {
             // From docs:
@@ -170,8 +190,11 @@ const sdl_callback_entry = struct {
         if (comptime App == void) {
             @compileError("Must configure 'de_options.application_type'");
         }
-        _ = argc;
-        _ = argv;
+        if (sdl.ZIG_SDL_MAIN_USE_CALLBACKS == 1) {
+            _ = argc;
+            _ = argv;
+            default_init.initNoArg();
+        }
 
         const app_memory = initPlatformAndAppAndCallOnStart() catch |err|
             return sdlCatchUnhandledError(err);
@@ -206,7 +229,7 @@ const sdl_callback_entry = struct {
     }
 
     inline fn sdlCatchUnhandledError(err: anyerror) sdl.SDL_AppResult {
-        SdlPlatform.logUnhandledError(err);
+        @import("sdl/SdlPlatform.zig").logUnhandledError(err);
         switch (builtin.os.tag) {
             .freestanding, .other => {},
             else => if (@errorReturnTrace()) |trace| dumpErrorReturnTrace(trace),
@@ -216,16 +239,12 @@ const sdl_callback_entry = struct {
 };
 
 const sdl_zig_entry = struct {
-    fn main(init: process.Init) !void {
+    fn main(init: process.Init.Minimal) !void {
         // NOTE(jae): 2026-05-05
         // If need custom setup for another platform, look at callMain() in lib/std/start.zig
-        default_init = .{
-            .environ = init.minimal.environ,
-            .args = init.minimal.args,
-            .gpa = init.gpa,
-            .io = init.io,
-            .platform = undefined,
-        };
+        default_init.init(init);
+        errdefer default_init.deinit();
+
         const app_memory = initPlatformAndAppAndCallOnStart() catch |err| {
             Platform.logUnhandledError(err);
             return err;
@@ -240,3 +259,20 @@ const sdl_zig_entry = struct {
         };
     }
 };
+
+/// SDL_logFn can be used for platforms with non-standard logging styles
+fn SDL_logFn(
+    comptime message_level: LogLevel,
+    comptime scope: @EnumLiteral(),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const prefix = comptime message_level.asText() ++ if (scope != .default) "(" ++ @tagName(scope) ++ "): " else "";
+    const full_format = prefix ++ format ++ "\x00";
+    var buf: [full_format.len + 512 + 1]u8 = undefined;
+    const line = bufPrint(&buf, full_format, args) catch l: {
+        buf[buf.len - 3 - 1 ..][0..4].* = "...\x00".*;
+        break :l &buf;
+    };
+    sdl.SDL_Log(line[0..].ptr);
+}

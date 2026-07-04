@@ -13,39 +13,25 @@ const log = std.log.scoped(.ScreenOptions);
 const assert = std.debug.assert;
 
 pub fn open(app: *App) !void {
-    if (!app.ui.ui_allocator.reset(.retain_capacity)) {
-        log.debug("[ui allocator] failed to reset", .{});
-    }
+    app.ui.reset();
 
-    const ui_options = &app.ui.options;
-    app.ui.options = .{
+    const ui_options = &app.ui.data.options;
+    ui_options.* = .{
         // ... resets all options ui state ...
         // set this
         .is_activity_break_enabled = app.user_settings.settings.is_activity_break_enabled,
         .display_index = app.user_settings.settings.display_index,
         // set below...
-        .time_till_break = try app.ui.allocDuration(app.user_settings.settings.time_till_break),
-        .break_time = try app.ui.allocDuration(app.user_settings.settings.break_time),
-        // .incoming_break =
-        // .incoming_break_message =
-        // .max_snoozes_in_a_row =
+        .time_till_break = try app.ui.allocShortDuration(app.user_settings.settings.time_till_break),
+        .break_time = try app.ui.allocShortDuration(app.user_settings.settings.break_time),
+        .incoming_break = try app.ui.allocShortDuration(app.user_settings.settings.incoming_break),
+        .incoming_break_message = try app.ui.allocString(app.user_settings.settings.incoming_break_message),
+        .max_snoozes_in_a_row = try app.ui.allocInt(app.user_settings.settings.max_snoozes_in_a_row),
         // .break_time =
         // .incoming_break =
         // .incoming_break_message =
         // .max_snoozes_in_a_row =
     };
-
-    // TODO: Switch each item to new temporary allocator
-    if (app.user_settings.settings.incoming_break) |td| _ = try std.fmt.bufPrintZ(ui_options.incoming_break[0..], "{f}", .{td.formatShort()});
-    if (app.user_settings.settings.incoming_break_message.len > 0) _ = try std.fmt.bufPrintZ(ui_options.incoming_break_message[0..], "{s}", .{app.user_settings.settings.incoming_break_message});
-    if (app.user_settings.settings.max_snoozes_in_a_row) |max_snoozes| {
-        if (max_snoozes == UserConfig.Settings.MaxSnoozesDisabled) {
-            // Disabled
-            _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{UserConfig.Settings.MaxSnoozesDisabled});
-        } else {
-            _ = try std.fmt.bufPrintZ(ui_options.max_snoozes_in_a_row[0..], "{}", .{max_snoozes});
-        }
-    }
 
     // OS-specific
     switch (builtin.os.tag) {
@@ -73,13 +59,14 @@ pub fn open(app: *App) !void {
     // - MacOS: "0: 0" and "1: 1"
     {
         // Reset options
-        app.ui.options_metadata = .{};
+        const options_metadata = &app.ui.data.options_metadata;
+        options_metadata.* = .{};
 
         var display_count: c_int = undefined;
         const display_list_or_err = sdl.SDL_GetDisplays(&display_count);
         defer sdl.SDL_free(display_list_or_err);
         if (display_list_or_err != null) {
-            var writer = std.Io.Writer.fixed(&app.ui.options_metadata.display_names_buf);
+            var writer = std.Io.Writer.fixed(&options_metadata.display_names_buf);
             const display_list = display_list_or_err[0..@intCast(display_count)];
             for (display_list, 0..) |display_id, i| {
                 const name_c_str = sdl.SDL_GetDisplayName(display_id);
@@ -93,8 +80,8 @@ pub fn open(app: *App) !void {
 }
 
 pub fn render(app: *App) !void {
-    const ui_options = &app.ui.options;
-    const ui_metadata = &app.ui.options_metadata;
+    const ui_options = &app.ui.data.options;
+    const ui_options_metadata = &app.ui.data.options_metadata;
 
     imgui.igPushItemWidth(300);
     defer imgui.igPopItemWidth();
@@ -110,16 +97,16 @@ pub fn render(app: *App) !void {
         }
     }
 
-    if (app.ui.options_metadata.display_names_buf.len > 0) {
-        var display_index_ui: c_int = @intCast(ui_options.display_index);
+    if (ui_options_metadata.display_names_buf.len > 0) {
+        var display_index_ui: c_int = @intFromEnum(ui_options.display_index);
         _ = imgui.igCombo_Str(
             "Display",
             &display_index_ui,
-            ui_metadata.display_names_buf[0..],
+            ui_options_metadata.display_names_buf[0..],
             0,
         );
         if (display_index_ui >= 0) {
-            ui_options.display_index = @intCast(display_index_ui);
+            ui_options.display_index = @enumFromInt(display_index_ui);
         }
     }
 
@@ -170,7 +157,7 @@ pub fn render(app: *App) !void {
         if (imgui.igInputTextWithHint(
             "Incoming break",
             try app.tprint("default: {f}", .{default_value.formatShort()}),
-            current_value[0..].ptr,
+            current_value.ptr,
             current_value.len,
             0,
             null,
@@ -189,7 +176,7 @@ pub fn render(app: *App) !void {
         if (imgui.igInputTextWithHint(
             "Incoming break message",
             "default: (none)",
-            current_value[0..].ptr,
+            current_value.ptr,
             current_value.len,
             0,
             null,
@@ -208,7 +195,7 @@ pub fn render(app: *App) !void {
         if (imgui.igInputTextWithHint(
             "Max snoozes in a row (-1 = off)",
             "default: 2",
-            current_value[0..].ptr,
+            current_value.ptr,
             current_value.len,
             imgui.ImGuiInputTextFlags_CharsDecimal,
             null,
@@ -292,8 +279,8 @@ pub fn render(app: *App) !void {
 
         // Check each field in errors (currently just assume '[]const u8' type)
         var has_error = false;
-        inline for (std.meta.fields(@TypeOf(ui_options.errors))) |f| {
-            const errorField = @field(ui_options.errors, f.name);
+        inline for (@typeInfo(@TypeOf(ui_options.errors)).@"struct".fields) |field| {
+            const errorField = @field(ui_options.errors, field.name);
             has_error = has_error or errorField.len > 0;
         }
         if (!has_error) {

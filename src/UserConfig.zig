@@ -14,6 +14,7 @@ const UserSettings = App.UserSettings;
 const StateTimer = App.StateTimer;
 const TimerKind = App.TimerKind;
 
+const Window = @import("Window.zig");
 const Duration = @import("Duration.zig");
 
 const CurrentVersion = 2;
@@ -28,7 +29,7 @@ const PartialVersion = struct {
 /// UserConfig version 1
 pub const Version1 = struct {
     version: u32 = 1,
-    display_index: u32 = 0,
+    display_index: Window.DisplayIndex = .primary,
     activity_timer: struct {
         is_enabled: bool = true,
         time_till_break: ?Duration = null,
@@ -59,7 +60,7 @@ pub const Settings = struct {
     pub const MaxSnoozesDisabled: i32 = -1;
 
     /// this is the monitor to display on
-    display_index: u32 = 0,
+    display_index: Window.DisplayIndex = .primary,
     is_activity_break_enabled: bool = true,
     time_till_break: ?Duration = null,
     break_time: ?Duration = null,
@@ -136,7 +137,7 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io) LoadError!UserSettings {
             for (userconfig.timers) |*t| {
                 try user_settings.timers.append(allocator, .{
                     .kind = t.kind,
-                    .name = try allocator.dupeZ(u8, t.name),
+                    .name = try allocator.dupeSentinel(u8, t.name, 0),
                     .timer_duration = t.timer_duration,
                 });
             }
@@ -159,7 +160,7 @@ pub fn load(allocator: std.mem.Allocator, io: std.Io) LoadError!UserSettings {
             for (userconfig.timers) |*t| {
                 try user_settings.timers.append(allocator, .{
                     .kind = t.kind,
-                    .name = try allocator.dupeZ(u8, t.name),
+                    .name = try allocator.dupeSentinel(u8, t.name, 0),
                     .timer_duration = t.timer_duration,
                 });
             }

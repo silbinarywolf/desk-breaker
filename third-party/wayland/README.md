@@ -1,6 +1,6 @@
 # zig-wayland
 
-Zig 0.15 bindings and protocol scanner for libwayland.
+Zig 0.16 bindings and protocol scanner for libwayland.
 
 The main repository is on [codeberg](https://codeberg.org/ifreund/zig-wayland),
 which is where the issue tracker may be found and where contributions are accepted.
@@ -47,12 +47,12 @@ pub fn build(b: *Build) !void {
             .root_source_file = b.path("foobar.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
 
     exe.root_module.addImport("wayland", wayland);
-    exe.linkLibC();
-    exe.linkSystemLibrary("wayland-client");
+    exe.root_module.linkSystemLibrary("wayland-client", .{});
 
     b.installArtifact(exe);
 }

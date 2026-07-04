@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const wayland = if (builtin.os.tag == .linux) @import("wayland-gen.zig") else void;
+const wayland = if (builtin.os.tag == .linux) @import("wayland") else void;
 const wl = wayland.client.wl;
 const IdleNotifierV1 = wayland.client.ext.IdleNotifierV1;
 const IdleNotificationV1 = wayland.client.ext.IdleNotificationV1;

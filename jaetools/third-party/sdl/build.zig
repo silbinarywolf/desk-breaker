@@ -53,17 +53,17 @@ pub fn build(b: *std.Build) void {
         "build_config_h_overrides",
         "Override 'SDL_build_config.h' entries (e.g. '-DHAVE_SIN=1', '-UHAVE_COS')",
     );
-    var system_include_path = b.option(
+    const system_include_path = b.option(
         std.Build.LazyPath,
         "system_include_path",
         "System header search path for cross-compiling",
     );
-    var system_framework_path = b.option(
+    const system_framework_path = b.option(
         std.Build.LazyPath,
         "system_framework_path",
         "System framework search path for cross-compiling",
     );
-    var library_path = b.option(
+    const library_path = b.option(
         std.Build.LazyPath,
         "library_path",
         "Library search path for cross-compiling",
@@ -84,6 +84,16 @@ pub fn build(b: *std.Build) void {
                 .optimize = optimize,
                 .root_source_file = b.path("src/zig-sdl.h"),
             });
+            c_translate.defineCMacro("SDL_DISABLE_OLD_NAMES", "1");
+            if (target.result.abi.isAndroid() or
+                target.result.os.tag == .emscripten or
+                target.result.os.tag == .psp or
+                target.result.os.tag == .freestanding)
+            {
+                c_translate.defineCMacro("SDL_MAIN_USE_CALLBACKS", "1");
+            } else {
+                c_translate.defineCMacro("SDL_MAIN_HANDLED", "1"); // We are providing our own entry point
+            }
             c_translate.addIncludePath(sdl_include_path);
             break :blk c_translate.addModule("sdl");
         };
@@ -118,11 +128,11 @@ pub fn build(b: *std.Build) void {
                 .ios => ios = true,
                 else => unreachable,
             }
-            if (b.sysroot) |sysroot| {
-                system_include_path = system_include_path orelse .{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr/include" }) };
-                system_framework_path = system_framework_path orelse .{ .cwd_relative = b.pathJoin(&.{ sysroot, "System/Library/Frameworks" }) };
-                library_path = library_path orelse .{ .cwd_relative = "/usr/lib" }; // ???
-            }
+            // if (b.sysroot) |sysroot| {
+            //     system_include_path = system_include_path orelse .{ .cwd_relative = b.pathJoin(&.{ sysroot, "usr/include" }) };
+            //     system_framework_path = system_framework_path orelse .{ .cwd_relative = b.pathJoin(&.{ sysroot, "System/Library/Frameworks" }) };
+            //     library_path = library_path orelse .{ .cwd_relative = "/usr/lib" }; // ???
+            // }
             if (!target.query.isNative() and (system_include_path == null or system_framework_path == null or library_path == null)) {
                 std.log.err("'--sysroot' (or '-Dsystem_include_path', '-Dsystem_framework_path' and '-Dlibrary_path') is required when building SDL for non-native macOS targets", .{});
                 std.process.exit(1);
@@ -130,9 +140,9 @@ pub fn build(b: *std.Build) void {
         },
         .emscripten => {
             emscripten = true;
-            if (b.sysroot) |sysroot| {
-                system_include_path = system_include_path orelse .{ .cwd_relative = b.pathJoin(&.{ sysroot, "include" }) };
-            }
+            // if (b.sysroot) |sysroot| {
+            //     system_include_path = system_include_path orelse .{ .cwd_relative = b.pathJoin(&.{ sysroot, "include" }) };
+            // }
             if (system_include_path == null) {
                 std.log.err("'--sysroot' (or '-Dsystem_include_path') is required when building SDL for Emscripten", .{});
                 std.process.exit(1);
@@ -141,7 +151,29 @@ pub fn build(b: *std.Build) void {
         else => {},
     }
 
+    const default_build_config_h: ?std.Build.LazyPath = default_build_config_h: {
+        if (target.result.abi.isAndroid()) {
+            break :default_build_config_h sdl3_dep.path("include/build_config/SDL_build_config_android.h");
+        }
+        switch (target.result.os.tag) {
+            .windows => break :default_build_config_h sdl3_dep.path("include/build_config/SDL_build_config_windows.h"),
+            .macos => break :default_build_config_h sdl3_dep.path("include/build_config/SDL_build_config_macos.h"),
+            else => {},
+        }
+        break :default_build_config_h null;
+    };
     const build_config_h: *std.Build.Step.ConfigHeader = build_config_h: {
+        if (default_build_config_h) |config_path| {
+            if (build_config_h_overrides) |overrides| {
+                if (overrides.len > 0) {
+                    @panic("Cannot mix build_config_h_overrides with default build config");
+                }
+            }
+            break :build_config_h b.addConfigHeader(.{
+                .style = .{ .cmake = config_path },
+                .include_path = "SDL_build_config.h",
+            }, .{});
+        }
         const cpu = target.result.cpu;
         const x86 = cpu.arch.isX86();
         const arm = cpu.arch.isArm();
@@ -151,6 +183,8 @@ pub fn build(b: *std.Build) void {
             .style = .{ .cmake = sdl3_dep.path("include/build_config/SDL_build_config.h.cmake") },
             .include_path = "SDL_build_config.h",
         }, .{
+            // TODO(jae): 2026-06-27
+            // Remove each "android" reference below as we just default to SDL_build_config_android.h
             .SDL_PLATFORM_PRIVATE = false,
             .HAVE_GCC_ATOMICS = windows or linux or macos or emscripten or ios or android,
             .HAVE_GCC_SYNC_LOCK_TEST_AND_SET = false,
@@ -326,12 +360,15 @@ pub fn build(b: *std.Build) void {
             .HAVE_DSOUND_H = windows,
             .HAVE_DINPUT_H = windows,
             .HAVE_XINPUT_H = windows,
-            .HAVE_WINDOWS_GAMING_INPUT_H = false,
+            // Between Zig 0.13.0 and Zig 0.14.0, "windows.gaming.input.h" was removed from "lib/libc/include/any-windows-any"
+            // This folder brings all headers needed by that one file so that SDL3 can be compiled for Windows.
+            .HAVE_WINDOWS_GAMING_INPUT_H = windows, // Requires: mod.addIncludePath(b.path("upstream/any-windows-any"));
             .HAVE_GAMEINPUT_H = (windows and msvc),
             .HAVE_DXGI_H = windows,
             .HAVE_DXGI1_5_H = windows,
             .HAVE_DXGI1_6_H = windows,
             .HAVE_MMDEVICEAPI_H = windows,
+            // .HAVE_AUDIOCLIENT_H = windows,
             .HAVE_TPCSHRD_H = windows,
             .HAVE_ROAPI_H = (windows and !msvc),
             .HAVE_SHELLSCALINGAPI_H = windows,
@@ -403,7 +440,7 @@ pub fn build(b: *std.Build) void {
             .SDL_JOYSTICK_USBHID = false,
             .SDL_JOYSTICK_VIRTUAL = windows or linux or macos or emscripten or android or ios,
             .SDL_JOYSTICK_VITA = false,
-            .SDL_JOYSTICK_WGI = false,
+            .SDL_JOYSTICK_WGI = windows,
             .SDL_JOYSTICK_XINPUT = windows,
             .SDL_JOYSTICK_PRIVATE = false,
             .SDL_HAPTIC_DUMMY = emscripten or android or ios,
@@ -648,9 +685,19 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
+        // HIDAPI needs to link C++ on Android
         .link_libcpp = if (android) true else null,
         .strip = strip,
-        .sanitize_c = sanitize_c,
+        .sanitize_c = if (sanitize_c) |sanitize_c_value|
+            sanitize_c_value
+        else if (target.result.abi.isAndroid())
+            // NOTE(jae): 2026-06-27
+            // For Zig 0.16.X, sanitising C code causes crashes if SDL_Init_Gamepad is passed
+            // through. And likely in other places as well.
+            // ie. Android_AddJoystick+730
+            .off
+        else
+            null,
         .pic = pic,
     });
     const sdl_lib = b.addLibrary(.{
@@ -704,6 +751,11 @@ pub fn build(b: *std.Build) void {
     sdl_mod.addIncludePath(sdl3_dep.path("include"));
     sdl_mod.addIncludePath(sdl3_dep.path("src"));
     sdl_mod.addSystemIncludePath(sdl3_dep.path("src/video/khronos"));
+    if (windows) {
+        // Between Zig 0.13.0 and Zig 0.14.0, "windows.gaming.input.h" was removed from "lib/libc/include/any-windows-any"
+        // This folder brings all headers needed by that one file so that SDL3 can be compiled for Windows.
+        sdl_mod.addIncludePath(b.path("upstream/any-windows-any"));
+    }
     if (linux_deps_values) |deps_values| {
         sdl_mod.addIncludePath(deps_values.dependency.path("src"));
         sdl_mod.addSystemIncludePath(deps_values.dependency.path("include"));
@@ -747,10 +799,10 @@ pub fn build(b: *std.Build) void {
         sdl_c_flags.appendAssumeCapacity("-pthread");
     }
     if (android) {
-        // NOTE(jae): 2026-06-09
-        // In Android branch. Should check if this is needed.
+        // NOTE(jae): 2026-06-27
+        // https://github.com/libsdl-org/SDL/blob/release-3.4.10/Android.mk
         // sdl_c_flags.appendAssumeCapacity("-fno-sanitize=undefined");
-        // sdl_c_flags.appendAssumeCapacity("-std=c++11");
+        sdl_c_flags.appendAssumeCapacity("-Wstrict-prototypes");
     }
 
     sdl_mod.addCSourceFiles(.{
@@ -940,7 +992,7 @@ pub fn build(b: *std.Build) void {
                 .target = target,
                 .optimize = optimize,
                 .link_libc = true,
-                .link_libcpp = if (android) true else null,
+                .link_libcpp = null,
                 .strip = strip,
                 .sanitize_c = sanitize_c,
                 .pic = pic,
@@ -1410,7 +1462,7 @@ pub fn build(b: *std.Build) void {
         }
     }
     if (android) {
-        // https://github.com/libsdl-org/SDL/blob/release-2.30.6/Android.mk#L82C62-L82C69
+        // https://github.com/libsdl-org/SDL/blob/release-3.4.10/Android.mk#L107C62-L107C69
         sdl_mod.linkSystemLibrary("dl", .{});
         sdl_mod.linkSystemLibrary("GLESv1_CM", .{});
         sdl_mod.linkSystemLibrary("GLESv2", .{});
@@ -1459,6 +1511,7 @@ pub fn build(b: *std.Build) void {
                 "src/joystick/hidapi/SDL_hidapi_zuiki.c",
                 "src/joystick/hidapi/SDL_hidapijoystick.c",
                 "src/joystick/hidapi/SDL_report_descriptor.c",
+                "src/joystick/dummy/SDL_sysjoystick.c",
                 "src/joystick/android/SDL_sysjoystick.c",
                 "src/joystick/virtual/SDL_virtualjoystick.c",
                 "src/storage/generic/SDL_genericstorage.c",
@@ -1507,10 +1560,12 @@ pub fn build(b: *std.Build) void {
             .files = &[_][]const u8{
                 "src/hidapi/android/hid.cpp",
             },
-            .flags = &.{"-std=c++11"},
+            // From: https://github.com/libsdl-org/SDL/blob/release-3.4.10/Android.mk#L105C19-L105C31
+            .flags = &.{"-std=gnu++11"},
         });
 
         // This is needed for "src/render/opengles/SDL_render_gles.c" to compile
+        // From: https://github.com/libsdl-org/SDL/blob/release-3.4.10/Android.mk#L88
         sdl_mod.addCMacro("GL_GLEXT_PROTOTYPES", "1");
     }
 
@@ -1537,7 +1592,13 @@ pub fn build(b: *std.Build) void {
 
     if (sdl_lib.linkage.? == .dynamic) {
         sdl_lib.setVersionScript(sdl3_dep.path("src/dynapi/SDL_dynapi.sym"));
-        sdl_lib.linker_allow_undefined_version = true;
+        sdl_lib.linker_allow_undefined_version = if (android)
+            // LOCAL_LDFLAGS := -Wl,--no-undefined -Wl,
+            //                  --no-undefined-version -Wl,
+            //                  --version-script=$(LOCAL_PATH)/src/dynapi/SDL_dynapi.sym
+            false
+        else
+            true;
     }
 
     if (windows) {
