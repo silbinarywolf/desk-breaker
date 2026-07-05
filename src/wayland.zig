@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const sdl = @import("de").sdl;
 
 const wayland = if (builtin.os.tag == .linux) @import("wayland") else void;
 const wl = wayland.client.wl;
@@ -29,11 +30,9 @@ var notify_state_data: WaylandNotifyState = .{};
 
 pub const available = builtin.os.tag == .linux and !builtin.abi.isAndroid();
 
-extern fn SDL_WAYLAND_LoadSymbols() callconv(.c) bool;
-
 /// init our IdleNotification logic
 /// Based on logic from: https://github.com/rcaelers/workrave/blob/main/libs/input-monitor/src/unix/WaylandInputMonitor.cc#L98C7-L98C22
-pub fn init() error{ SdlFailed, SdlWaylandLoadSymbolsFailed, IdleNotifierNotFound, RoundtripFailed, ConnectFailed, OutOfMemory, SeatNotFound }!void {
+pub fn init() error{ SdlFailed, WaylandLoadFailed, IdleNotifierNotFound, RoundtripFailed, ConnectFailed, OutOfMemory, SeatNotFound }!void {
     // NOTE(jae): 2026-01-08
     // If I wanted, I could just use the existing display connection from SDL but
     // I see no reason to do that right now as we use 'x11' so that we can control
@@ -45,9 +44,21 @@ pub fn init() error{ SdlFailed, SdlWaylandLoadSymbolsFailed, IdleNotifierNotFoun
     // const sdl_wl_display = sdl.SDL_GetPointerProperty(global_prop, sdl.SDL_PROP_GLOBAL_VIDEO_WAYLAND_WL_DISPLAY_POINTER, null) orelse {
     //     @panic("TODO: blah it was not found");
     // };
-    if (!SDL_WAYLAND_LoadSymbols()) {
-        return error.SdlWaylandLoadSymbolsFailed;
-    }
+
+    // TODO: Figure out making Wayland use to just use installed wayland-client library
+    // {
+    //     // const sdl_wayland = struct {
+    //     //     // Requires SDL be linked statically
+    //     //     extern fn SDL_WAYLAND_LoadSymbols() callconv(.c) bool;
+    //     // };
+    //     // if (!sdl_wayland.SDL_WAYLAND_LoadSymbols()) {
+    //     //     return error.WaylandLoadFailed;
+    //     // }
+    //     const wayland_dyn = sdl.SDL_LoadObject("libwayland-client.so.0") orelse return error.WaylandLoadFailed;
+    //     errdefer sdl.SDL_UnloadObject(wayland_dyn);
+    //     const fn_ptr = sdl.SDL_LoadFunction(wayland_dyn, "wl_display_connect") orelse @panic("wow");
+    //     _ = fn_ptr;
+    // }
 
     const display = try wl.Display.connect(null);
     errdefer display.disconnect();

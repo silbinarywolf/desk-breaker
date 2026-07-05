@@ -228,12 +228,11 @@ pub fn build(b: *std.Build) !void {
                 //
                 // The current issue is that "WAYLAND_wl_proxy_add_dispatcher" does not exist in SDLs
                 // variables so we can't simply leverage that.
-                app.linkSystemLibrary("wayland-client", .{
-                    .preferred_link_mode = .static,
-                });
+                app.linkSystemLibrary("wayland-client", .{});
             }
 
-            const wayland_ffi_sdl_module_name = "ffi_sdl";
+            const wayland_ffi_sdl_module_name: [:0]const u8 = "";
+            // const wayland_ffi_sdl_module_name: [:0]const u8 = "ffi_sdl";
             const wayland_mod: *std.Build.Module = waylandblk: {
                 // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
                 const add_generated_wayland_module = false;
@@ -250,7 +249,7 @@ pub fn build(b: *std.Build) !void {
 
                     const wayland_protocols_dep = b.lazyDependency("wayland_protocols", .{}) orelse return;
                     var scanner = @import("wayland").Scanner.create(b, .{
-                        .ffi_import = "ffi_sdl",
+                        .ffi_import = if (wayland_ffi_sdl_module_name.len > 0) wayland_ffi_sdl_module_name else null,
                         .wayland_protocols = wayland_protocols_dep.path(""),
                     });
                     const wayland_protocols_subset_dep = b.dependency("wayland_protocols_subset", .{});
@@ -265,12 +264,16 @@ pub fn build(b: *std.Build) !void {
                     });
                 }
             };
-            wayland_mod.addImport(wayland_ffi_sdl_module_name, b.createModule(.{
-                .root_source_file = b.path("src/wayland_custom/ffi_sdl.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
-            }));
+
+            if (wayland_ffi_sdl_module_name.len > 0) {
+                const wayland_sdl_ffi_mod = b.createModule(.{
+                    .root_source_file = b.path("src/wayland_custom/ffi_sdl.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
+                });
+                wayland_mod.addImport(wayland_ffi_sdl_module_name, wayland_sdl_ffi_mod);
+            }
 
             app.addImport("wayland", wayland_mod);
         }

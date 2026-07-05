@@ -5,6 +5,10 @@ const wayland = @import("wayland");
 
 pub const sdl = struct {
     pub const loadSymbols = sdl_client.SDL_WAYLAND_LoadSymbols();
+
+    pub const LoadError = error{WaylandLoadFailed};
+
+    pub fn load() LoadError!void {}
 };
 
 pub const client = struct {
