@@ -23,11 +23,10 @@ jobs:
       matrix:
         include:
           # note(jae): 2026-07-05
-          # Try target lowest Wayland supported Ubuntu to support lower glibc versions
-          - os: "ubuntu-18.04"
+          # Try target lowest Wayland supported Ubuntu to support lower glibc versions *AND* Github Runner
+          # Available Github Runners: https://github.com/actions/runner-images
+          - os: "ubuntu-22.04" # Prev: "ubuntu-24.04"
             suffix: "linux"
-          #- os: "ubuntu-24.04"
-          #  suffix: "linux"
 
     runs-on: ${{matrix.os}}
  
