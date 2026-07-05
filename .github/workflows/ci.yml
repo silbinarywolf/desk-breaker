@@ -22,11 +22,12 @@ jobs:
     strategy:
       matrix:
         include:
-          # note(jae): 2024-10-27
-          # Needed to bump to Ubuntu 24.04 otherwise WL_SURFACE_PREFERRED_BUFFER_SCALE_SINCE_VERSION in the
-          # installed Wayland version wasn't high enough
-          - os: "ubuntu-24.04"
+          # note(jae): 2026-07-05
+          # Try target lowest Wayland supported Ubuntu to support lower glibc versions
+          - os: "ubuntu-18.04"
             suffix: "linux"
+          #- os: "ubuntu-24.04"
+          #  suffix: "linux"
 
     runs-on: ${{matrix.os}}
  

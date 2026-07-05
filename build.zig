@@ -222,40 +222,57 @@ pub fn build(b: *std.Build) !void {
             // Cannot link wayland-client on Windows
             const is_build_os_linux = comptime builtin.os.tag == .linux and !builtin.abi.isAndroid();
             if (is_build_os_linux) {
-                // TODO(jae): Ideally do an SDL-like approach and dynamically try to load this
-                // for detecting if idle or not.
-                app.linkSystemLibrary("wayland-client", .{});
-            }
-
-            // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
-            const add_generated_wayland_module = false;
-            if (!add_generated_wayland_module) {
-                // NOTE(jae): 2026-01-03
-                // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
-                app.addImport("wayland", b.createModule(.{
-                    .root_source_file = b.path("src/wayland-gen-016.zig"),
-                    .target = target,
-                    .optimize = optimize,
-                }));
-            } else {
-                if (!is_build_os_linux) @panic("NOTE: Cannot build on Windows right now");
-
-                const wayland_protocols_dep = b.lazyDependency("wayland_protocols", .{}) orelse return;
-
-                var scanner = @import("wayland").Scanner.create(b, .{
-                    .wayland_protocols = wayland_protocols_dep.path(""),
+                // TODO(jae): 2026-07-05
+                // Ideally finish dynamic SDL approach where we use "WAYLAND_" prefix functions.
+                // ie. src/wayland_custom/ffi_sdl.zig
+                //
+                // The current issue is that "WAYLAND_wl_proxy_add_dispatcher" does not exist in SDLs
+                // variables so we can't simply leverage that.
+                app.linkSystemLibrary("wayland-client", .{
+                    .preferred_link_mode = .static,
                 });
-                const wayland_protocols_subset_dep = b.dependency("wayland_protocols_subset", .{});
-                scanner.addCustomProtocol(wayland_protocols_subset_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
-                scanner.generate("ext_idle_notifier_v1", 2);
-                scanner.generate("wl_seat", 5);
-
-                app.addImport("wayland", b.createModule(.{
-                    .root_source_file = scanner.result,
-                    .target = target,
-                    .optimize = optimize,
-                }));
             }
+
+            const wayland_ffi_sdl_module_name = "ffi_sdl";
+            const wayland_mod: *std.Build.Module = waylandblk: {
+                // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
+                const add_generated_wayland_module = false;
+                if (!add_generated_wayland_module) {
+                    // NOTE(jae): 2026-01-03
+                    // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
+                    break :waylandblk b.createModule(.{
+                        .root_source_file = b.path("src/wayland_custom/wayland-gen-016.zig"),
+                        .target = target,
+                        .optimize = optimize,
+                    });
+                } else {
+                    if (!is_build_os_linux) @panic("NOTE: Cannot build on Windows right now");
+
+                    const wayland_protocols_dep = b.lazyDependency("wayland_protocols", .{}) orelse return;
+                    var scanner = @import("wayland").Scanner.create(b, .{
+                        .ffi_import = "ffi_sdl",
+                        .wayland_protocols = wayland_protocols_dep.path(""),
+                    });
+                    const wayland_protocols_subset_dep = b.dependency("wayland_protocols_subset", .{});
+                    scanner.addCustomProtocol(wayland_protocols_subset_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
+                    scanner.generate("ext_idle_notifier_v1", 2);
+                    scanner.generate("wl_seat", 5);
+
+                    break :waylandblk b.createModule(.{
+                        .root_source_file = scanner.result,
+                        .target = target,
+                        .optimize = optimize,
+                    });
+                }
+            };
+            wayland_mod.addImport(wayland_ffi_sdl_module_name, b.createModule(.{
+                .root_source_file = b.path("src/wayland_custom/ffi_sdl.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
+            }));
+
+            app.addImport("wayland", wayland_mod);
         }
 
         const maybe_linkage: ?std.builtin.LinkMode = if (target.result.abi.isAndroid())
@@ -287,14 +304,20 @@ pub fn build(b: *std.Build) !void {
                 // .use_llvm = false,
             });
 
-        switch (target.result.os.tag) {
-            .macos => exe.stack_size = 1024 * 1024,
-            .windows => exe.stack_size = 2048 * 1024,
-            else => {}, // use default for untested OS
+        if (!target.result.abi.isAndroid()) {
+            const new_stack_size: ?u64 = switch (target.result.os.tag) {
+                .macos => 1024 * 1024,
+                .windows => 2048 * 1024,
+                // NOTE(jae): 2026-07-05: 3 * 1024 would not work, but 4 * 1024 would
+                // Did not seem to affect memory usage at all.
+                // .linux => 4 * 1024,
+                // NOTE(jae): 2026-07-05
+                // Old messing around value. No idea when I tried this.
+                // .psp => 256 * 1024,
+                else => null, // use default for untested OS
+            };
+            if (new_stack_size) |stack_size| exe.stack_size = stack_size;
         }
-        // if (platform == .psp) {
-        //     exe.stack_size = 256 * 1024;
-        // }
 
         if (target.result.os.tag == .windows) {
             if (optimize != .Debug and exe.subsystem == null) {
