@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const time = std.time;
 const Timer = @import("Timer.zig");
-const wayland = @import("wayland.zig");
+const WaylandState = @import("WaylandState.zig");
 const Allocator = std.mem.Allocator;
 const de = @import("de");
 
@@ -556,8 +556,8 @@ pub fn onInit(startup: de.Startup, app: *App) !void {
     }
 
     // Setup Wayland if available for checking input idle notifications
-    if (wayland.available) try wayland.init();
-    errdefer if (wayland.available) wayland.deinit();
+    try WaylandState.init();
+    errdefer WaylandState.deinit();
 
     if (!app.has_global_mouse_support) {
         // NOTE(jae): 2025-12-28
@@ -754,7 +754,7 @@ pub fn onIterate(app: *App) !void {
     }
 
     // process Wayland events
-    if (wayland.available) try wayland.processEvents();
+    try WaylandState.processEvents();
 
     // NOTE(jae): 2026-01-18
     // Used to test other platforms
@@ -1061,7 +1061,7 @@ pub fn onIterate(app: *App) !void {
 
     // Detect activity and handle timers to pop-up break window
     {
-        const idle_state = wayland.idleState();
+        const idle_state = WaylandState.idleState();
         switch (idle_state) {
             .unknown => {
                 if (app.has_global_mouse_support) {
