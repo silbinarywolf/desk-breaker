@@ -81,10 +81,25 @@ pub fn build(b: *std.Build) !void {
         }
 
         // If no platform defined, use Zig default targetting: -Dtarget
-        const root_target_query = b.standardTargetOptionsQueryOnly(.{});
+        var root_target_query = b.standardTargetOptionsQueryOnly(.{});
+        if (builtin.os.tag == .linux and root_target_query.isNative()) {
+            root_target_query.os_tag = .linux;
+        }
 
         // Change default os tag settings
         if (root_target_query.os_tag) |os_tag| switch (os_tag) {
+            .linux => {
+                if (root_target_query.abi) |abi| {
+                    if (abi.isAndroid()) break :target_blk b.resolveTargetQuery(root_target_query);
+                }
+
+                // NOTE(jae): 2026-07-05
+                // Set Glib Version to 2.29.X as its release date is "2019-01-31".
+                // This should make Desk Breaker highly backwards compatible.
+                var query = root_target_query;
+                query.glibc_version = .{ .major = 2, .minor = 29, .patch = 0 };
+                break :target_blk b.resolveTargetQuery(query);
+            },
             .wasi => {
                 // EXPERIMENT: See if I can target and build a WASM file of non-trivial application without Emscripten
                 var query = root_target_query;
@@ -194,7 +209,8 @@ pub fn build(b: *std.Build) !void {
             }
         }
         app.addImport("de", jt_dep.module("de"));
-        app.addImport("sdl", jt_dep.module("sdl"));
+        const sdl_mod = jt_dep.module("sdl");
+        app.addImport("sdl", sdl_mod);
         app.addImport("imgui", jt_dep.module("imgui"));
 
         // add wbemuuid.h for Windows
@@ -221,19 +237,10 @@ pub fn build(b: *std.Build) !void {
             // NOTE(jae): 2026-06-30
             // Cannot link wayland-client on Windows
             const is_build_os_linux = comptime builtin.os.tag == .linux and !builtin.abi.isAndroid();
-            if (is_build_os_linux) {
-                // TODO(jae): 2026-07-05
-                // Ideally finish dynamic SDL approach where we use "WAYLAND_" prefix functions.
-                // ie. src/wayland_custom/ffi_sdl.zig
-                //
-                // The current issue is that "WAYLAND_wl_proxy_add_dispatcher" does not exist in SDLs
-                // variables so we can't simply leverage that.
-                app.linkSystemLibrary("wayland-client", .{});
-            }
 
-            const wayland_ffi_sdl_module_name: [:0]const u8 = "";
-            // const wayland_ffi_sdl_module_name: [:0]const u8 = "ffi_sdl";
-            const wayland_mod: *std.Build.Module = waylandblk: {
+            // const wayland_sdl_ffi_module_name: [:0]const u8 = "";
+            const wayland_ffi_sdl_module_name: [:0]const u8 = "wayland_sdl_ffi";
+            const wayland_gen_mod: *std.Build.Module = waylandblk: {
                 // NOTE(jae): Disabled until I need to re-generate the existing "wayland-gen.zig" file
                 const add_generated_wayland_module = false;
                 if (!add_generated_wayland_module) {
@@ -249,7 +256,10 @@ pub fn build(b: *std.Build) !void {
 
                     const wayland_protocols_dep = b.lazyDependency("wayland_protocols", .{}) orelse return;
                     var scanner = @import("wayland").Scanner.create(b, .{
-                        .ffi_import = if (wayland_ffi_sdl_module_name.len > 0) wayland_ffi_sdl_module_name else null,
+                        .ffi_import = if (wayland_ffi_sdl_module_name.len > 0)
+                            wayland_ffi_sdl_module_name
+                        else
+                            null,
                         .wayland_protocols = wayland_protocols_dep.path(""),
                     });
                     const wayland_protocols_subset_dep = b.dependency("wayland_protocols_subset", .{});
@@ -265,16 +275,38 @@ pub fn build(b: *std.Build) !void {
                 }
             };
 
-            if (wayland_ffi_sdl_module_name.len > 0) {
-                const wayland_sdl_ffi_mod = b.createModule(.{
-                    .root_source_file = b.path("src/wayland_custom/ffi_sdl.zig"),
+            const wayland_ffi_sdl_mod: ?*std.Build.Module = ffiblk: {
+                if (wayland_ffi_sdl_module_name.len == 0) {
+                    break :ffiblk null;
+                }
+                break :ffiblk b.createModule(.{
+                    .root_source_file = b.path("src/wayland_custom/wayland_ffi_sdl.zig"),
                     .target = target,
                     .optimize = optimize,
-                    .imports = &.{.{ .name = "wayland", .module = wayland_mod }},
+                    .imports = &.{
+                        .{ .name = "wayland", .module = wayland_gen_mod },
+                        .{ .name = "sdl", .module = sdl_mod },
+                    },
                 });
-                wayland_mod.addImport(wayland_ffi_sdl_module_name, wayland_sdl_ffi_mod);
-            }
+            };
 
+            const wayland_mod = b.createModule(.{
+                .root_source_file = b.path("src/wayland_custom/wayland.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "wayland-gen", .module = wayland_gen_mod },
+                    // .{ .name = "wayland-ffi", .module = sdl_mod },
+                },
+            });
+            if (wayland_ffi_sdl_mod) |ffi_mod| {
+                wayland_mod.addImport("wayland-ffi", ffi_mod);
+                wayland_gen_mod.addImport(wayland_ffi_sdl_module_name, ffi_mod);
+            } else {
+                // NOTE(jae): 2026-07-05
+                // We used to just link in the "wayland-client" directly, but now we load it using sdl.LoadLibrary()
+                app.linkSystemLibrary("wayland-client", .{});
+            }
             app.addImport("wayland", wayland_mod);
         }
 
