@@ -584,7 +584,8 @@ pub fn deinit(app: *App) void {
     app.ui.ui_allocator.deinit();
     if (app.window) |app_window| {
         app_window.deinit();
-        allocator.destroy(app_window);
+        // NOTE(jae): 2026-07-08: Reuse the same memory for main app window
+        // invalid -> allocator.destroy(app_window);
     }
     for (app.popup_windows.items) |*window| {
         window.deinit();
@@ -739,7 +740,6 @@ pub fn onIterate(app: *App) !void {
     // Has processed quit from system tray
     if (app.has_tray_quit) try de.quit();
 
-    const allocator = app.allocator;
     _ = app.temp_allocator.reset(.retain_capacity);
 
     // Set new ImGui Frame *after* event polling, otherwise you get rare instances of sticky buttons / interactivity
@@ -783,7 +783,9 @@ pub fn onIterate(app: *App) !void {
                 app.minimize_to_tray = false;
                 if (app.window) |app_window| {
                     app_window.deinit();
-                    allocator.destroy(app_window);
+                    // NOTE(jae): 2026-07-08: Reuse the same memory for main app window
+                    // invalid -> allocator.destroy(app_window);
+                    // allocator.destroy(app_window);
                     app.window = null;
                 }
             }
