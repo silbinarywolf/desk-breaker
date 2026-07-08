@@ -12,6 +12,7 @@ const sdl = @import("sdl");
 const imgui = @import("imgui");
 
 const Image = @import("de").Image;
+const IdleDetection = @import("IdleDetection.zig");
 const UserConfig = @import("UserConfig.zig");
 const Duration = @import("Duration.zig");
 const ProcessList = @import("ProcessList.zig");
@@ -332,6 +333,7 @@ has_opened_from_tray: bool = false,
 /// set to true if the operating supports system tray
 has_tray_support: bool = false,
 
+idle_detection: IdleDetection,
 /// If using Windows or Mac, then assume we have global mouse position support, otherwise do not.
 has_global_mouse_support: bool = switch (builtin.os.tag) {
     .windows => true,
@@ -489,21 +491,22 @@ pub fn onInit(startup: de.Startup, app: *App) !void {
         .platform = startup.platform,
         .icon = icon,
         .icon_red = icon_red,
-        .icon_flash_timer = try Timer.start(),
+        .icon_flash_timer = Timer.start(),
         .window = null,
         .has_tray_support = has_tray_support,
         .tray = null,
         .user_settings = user_settings,
-        .activity_timer = try Timer.start(),
-        .process_list = undefined, // Init after
-        .process_check_timer = try Timer.start(),
+        .activity_timer = Timer.start(),
+        .process_check_timer = Timer.start(),
         .ui = .init(gpa),
+        // Initialize these just after
+        .idle_detection = undefined,
+        .process_list = undefined,
         // Initialized when needed and used by "window" field
         .backing_window_memory = undefined,
     };
-
-    // setup process list
-    try app.process_list.init();
+    app.idle_detection.init();
+    try app.process_list.init(); // setup process list
 
     // setup main application window
     try app.createOrFocusAppWindow();
@@ -719,7 +722,7 @@ pub fn onEvent(sdl_event: *sdl.SDL_Event, app: *App) !void {
                         if (!event.down) {
                             // If released reset the held down timer
                             if (app.break_mode.held_down_timer == null) {
-                                app.break_mode.held_down_timer = try Timer.start();
+                                app.break_mode.held_down_timer = Timer.start();
                             }
                         }
                     }
@@ -853,7 +856,7 @@ pub fn onIterate(app: *App) !void {
                         app.tray_icon = .default;
                     },
                 }
-                app.icon_flash_timer = try Timer.start();
+                app.icon_flash_timer = Timer.start();
             }
         }
 
@@ -862,7 +865,7 @@ pub fn onIterate(app: *App) !void {
             app.snooze_times_in_a_row == 0 and app.mode != .taking_break)
         {
             // If snoozed, then start flashing timer
-            app.icon_flash_timer = try Timer.start();
+            app.icon_flash_timer = Timer.start();
         }
     }
 
@@ -1059,37 +1062,11 @@ pub fn onIterate(app: *App) !void {
         }
     }
 
+    // Detect activity
+    app.idle_detection.run(app);
+
     // Detect activity and handle timers to pop-up break window
     {
-        const idle_state = WaylandState.idleState();
-        switch (idle_state) {
-            .unknown => {
-                if (app.has_global_mouse_support) {
-                    // Detect global mouse movement
-                    var curr_mouse_pos: de.Vector2f = undefined;
-                    _ = sdl.SDL_GetGlobalMouseState(&curr_mouse_pos.x, &curr_mouse_pos.y);
-                    const diff: de.Vector2f = .{
-                        .x = @abs(curr_mouse_pos.x - app.prev_mouse_pos.x),
-                        .y = @abs(curr_mouse_pos.y - app.prev_mouse_pos.y),
-                    };
-                    app.prev_mouse_pos = curr_mouse_pos;
-                    if (diff.x >= 5 and
-                        diff.y >= 5)
-                    {
-                        app.time_since_last_input = try Timer.start();
-                        app.is_user_active = true;
-                        // log.info("mouse moved: {}, {}", .{ curr_mouse_pos.x, curr_mouse_pos.y });
-                    }
-                }
-            },
-            .idle => {
-                // do nothing if idling
-            },
-            .resumed => {
-                app.time_since_last_input = try Timer.start();
-                app.is_user_active = true;
-            },
-        }
         if (app.mode == .regular) {
             if (app.time_since_last_input) |*time_since_last_input| {
                 // TODO: Make inactivity time a variable
@@ -1446,7 +1423,7 @@ pub fn snooze(app: *App) void {
 
     // reset activity timer
     app.activity_timer.reset();
-    app.snooze_activity_break_timer = Timer.start() catch unreachable;
+    app.snooze_activity_break_timer = Timer.start();
     app.snooze_times += 1;
     app.snooze_times_in_a_row += 1;
 }
@@ -1560,7 +1537,7 @@ pub fn change_mode(app: *App, new_mode: Mode) !void {
             app.activity_timer.reset();
             app.break_mode = .{
                 // setup these fields
-                .timer = Timer.start() catch unreachable,
+                .timer = Timer.start(),
                 .duration = break_time_duration,
                 // reset escape presses / etc
             };

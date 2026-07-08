@@ -55,7 +55,7 @@ pub fn render(app: *App) !void {
 
             if (imgui.igButton("Exit", .{})) {
                 if (app.break_mode.held_down_timer == null) {
-                    app.break_mode.held_down_timer = try Timer.start();
+                    app.break_mode.held_down_timer = Timer.start();
                 }
 
                 // increment exit presses

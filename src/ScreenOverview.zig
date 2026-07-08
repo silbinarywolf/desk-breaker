@@ -33,7 +33,7 @@ pub fn render(app: *App) !void {
                         if (!is_enabled) {
                             t.timer_started = null;
                         } else {
-                            t.timer_started = try Timer.start();
+                            t.timer_started = Timer.start();
                         }
                     }
                 },
