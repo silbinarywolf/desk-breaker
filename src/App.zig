@@ -775,13 +775,19 @@ pub fn onIterate(app: *App) !void {
         app.frames_without_app_input = 0;
         try app.createOrFocusAppWindow();
     }
-    if (app.minimize_to_tray) {
-        app.minimize_to_tray = false;
-        if (app.window) |app_window| {
-            app_window.deinit();
-            allocator.destroy(app_window);
-            app.window = null;
-        }
+    switch (builtin.os.tag) {
+        // NOTE(jae): 2026-07-08: Mac does not support window destruction and just a system tray existing
+        .macos => {},
+        else => {
+            if (app.minimize_to_tray) {
+                app.minimize_to_tray = false;
+                if (app.window) |app_window| {
+                    app_window.deinit();
+                    allocator.destroy(app_window);
+                    app.window = null;
+                }
+            }
+        },
     }
 
     // Threshold to have responsive event polling based on:
@@ -1186,9 +1192,12 @@ pub fn onIterate(app: *App) !void {
             if (uiHeadingButton("Take a break", false)) {
                 try app.change_mode(.taking_break);
             }
-            if (app.tray) |_| {
-                if (uiHeadingButton("Minimize to tray", false)) {
-                    app.minimize_to_tray = true;
+            // NOTE(jae): 2026-07-08: Mac does not support window destruction and just a system tray existing
+            if (builtin.os.tag != .macos) {
+                if (app.tray) |_| {
+                    if (uiHeadingButton("Minimize to tray", false)) {
+                        app.minimize_to_tray = true;
+                    }
                 }
             }
             imgui.igNewLine();
