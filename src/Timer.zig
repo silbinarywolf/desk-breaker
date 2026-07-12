@@ -10,7 +10,7 @@ pub const none: Timer = .{
     .previous = std.math.minInt(i64),
 };
 
-pub fn start() error{TimerUnsupported}!Timer {
+pub fn start() Timer {
     var ticks: i64 = undefined;
     if (!sdl.SDL_GetCurrentTime(&ticks)) return Timer.none;
     return Timer{ .started = ticks, .previous = ticks };

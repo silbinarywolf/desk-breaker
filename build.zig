@@ -216,11 +216,35 @@ pub fn build(b: *std.Build) !void {
         // add wbemuuid.h for Windows
         if (target.result.os.tag == .windows) {
             const wbemuuid_c = b.addTranslateC(.{
-                .root_source_file = b.path("src/windows_wbemuuid.h"),
+                .root_source_file = b.path("src/c_code/windows_wbemuuid.h"),
                 .target = target,
                 .optimize = optimize,
             });
             app.addImport("windows_wbemuuid", wbemuuid_c.createModule());
+        }
+
+        if (target.result.os.tag == .macos) {
+            // const macos_idle_time_mod = b.addTranslateC(.{
+            //     .root_source_file = b.path("src/c_code/macos_idle_time.c"),
+            //     .target = target,
+            //     .optimize = optimize,
+            // });
+            // app.addImport("macos_idletime", macos_idle_time_mod.createModule());
+            const macos_idle_time_mod = b.createModule(.{
+                .root_source_file = b.path("src/c_code/macos_idle_time.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            app.addImport("macos_idletime", macos_idle_time_mod);
+            if (!target.query.isNative()) {
+                switch (target.result.os.tag) {
+                    .macos, .ios => {
+                        const system_framework_path = jt_dep.namedLazyPath("system_framework_path");
+                        macos_idle_time_mod.addSystemFrameworkPath(system_framework_path);
+                    },
+                    else => {},
+                }
+            }
         }
 
         // add wuffs

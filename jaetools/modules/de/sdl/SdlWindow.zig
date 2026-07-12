@@ -206,13 +206,13 @@ fn computeDisplayBoundsFromSize(display_id: sdl.SDL_DisplayID, window_size_optio
 }
 
 fn computeSizeFromDisplay(display_id: sdl.SDL_DisplayID, window_size_option: Size) error{SdlFailed}!Vector2i {
-    // Mimick behaviour of SDL_GetWindowDisplayScale() before window creation
+    // NOTE(jae): 2026-07-08
+    // Used to add pixel density to this value as well for MacOS retina support
+    // but it makes the window larger than expected/wanted.
     const display_scale = blk: {
         const content_scale = sdl.SDL_GetDisplayContentScale(display_id);
         if (content_scale == 0.0) return error.SdlFailed;
-        const display_mode = @as(?*const sdl.SDL_DisplayMode, sdl.SDL_GetCurrentDisplayMode(display_id)) orelse
-            return error.SdlFailed;
-        break :blk content_scale * display_mode.pixel_density;
+        break :blk content_scale;
     };
 
     switch (window_size_option) {
@@ -232,8 +232,8 @@ fn computeSizeFromDisplay(display_id: sdl.SDL_DisplayID, window_size_option: Siz
         .windowed_divided_by => |divide_by_scale| {
             const display_pos_and_size = try computeDisplayBoundsFromSize(display_id, window_size_option);
             return .{
-                .x = @intFromFloat(@floor(@as(f32, @floatFromInt(display_pos_and_size.w)) * display_scale / divide_by_scale)),
-                .y = @intFromFloat(@floor(@as(f32, @floatFromInt(display_pos_and_size.h)) * display_scale / divide_by_scale)),
+                .x = @intFromFloat(@floor((@as(f32, @floatFromInt(display_pos_and_size.w)) * display_scale) / divide_by_scale)),
+                .y = @intFromFloat(@floor((@as(f32, @floatFromInt(display_pos_and_size.h)) * display_scale) / divide_by_scale)),
             };
         },
         // TODO: Scale a window
