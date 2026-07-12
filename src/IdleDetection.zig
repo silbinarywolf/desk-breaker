@@ -62,14 +62,14 @@ const MacState = struct {
 
     fn init(ms: *MacState) void {
         ms.* = .{
-            .idle_time_in_seconds = macos_c.getSystemIdleTimeInSeconds(),
+            .idle_time_in_seconds = macos_c.getSystemIdleTimeInNanoseconds(),
             .state = .unknown, // Update "state" immediately via "run" below
         };
         ms.run();
     }
 
     fn run(ms: *MacState) void {
-        const new_idle_time_in_seconds = macos_c.getSystemIdleTimeInSeconds();
+        const new_idle_time_in_seconds = macos_c.getSystemIdleTimeInNanoseconds();
         if (new_idle_time_in_seconds == -1) {
             // NOTE(jae): 2026-07-08
             // I didn't observe this happening in my testing but just incase.

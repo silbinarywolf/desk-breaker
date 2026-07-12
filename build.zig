@@ -224,17 +224,23 @@ pub fn build(b: *std.Build) !void {
         }
 
         if (target.result.os.tag == .macos) {
-            const macos_idle_time = b.addTranslateC(.{
-                .root_source_file = b.path("src/c_code/macos_idle_time.c"),
+            // const macos_idle_time_mod = b.addTranslateC(.{
+            //     .root_source_file = b.path("src/c_code/macos_idle_time.c"),
+            //     .target = target,
+            //     .optimize = optimize,
+            // });
+            // app.addImport("macos_idletime", macos_idle_time_mod.createModule());
+            const macos_idle_time_mod = b.createModule(.{
+                .root_source_file = b.path("src/c_code/macos_idle_time.zig"),
                 .target = target,
                 .optimize = optimize,
             });
-            app.addImport("macos_idletime", macos_idle_time.createModule());
+            app.addImport("macos_idletime", macos_idle_time_mod);
             if (!target.query.isNative()) {
                 switch (target.result.os.tag) {
                     .macos, .ios => {
                         const system_framework_path = jt_dep.namedLazyPath("system_framework_path");
-                        macos_idle_time.addSystemFrameworkPath(system_framework_path);
+                        macos_idle_time_mod.addSystemFrameworkPath(system_framework_path);
                     },
                     else => {},
                 }

@@ -5,7 +5,7 @@
 // The code is compatible with Tiger/10.4 and later (but not iOS).
 //
 // Borrowed from: https://stackoverflow.com/questions/3547601/convert-objective-c-code-to-c-for-detecting-user-idle-time-on-os-x
-int64_t getSystemIdleTimeInSeconds(void) {
+int64_t getSystemIdleTimeInNanoseconds(void) {
     int64_t idlesecs = -1;
     io_iterator_t iter = 0;
     if (IOServiceGetMatchingServices(kIOMasterPortDefault, IOServiceMatching("IOHIDSystem"), &iter) == KERN_SUCCESS) {
@@ -15,9 +15,10 @@ int64_t getSystemIdleTimeInSeconds(void) {
             if (IORegistryEntryCreateCFProperties(entry, &dict, kCFAllocatorDefault, 0) == KERN_SUCCESS) {
                 CFNumberRef obj = CFDictionaryGetValue(dict, CFSTR("HIDIdleTime"));
                 if (obj) {
-                    int64_t nanoseconds = 0;
-                    if (CFNumberGetValue(obj, kCFNumberSInt64Type, &nanoseconds)) {
-                        idlesecs = (nanoseconds >> 30); // Divide by 10^9 to convert from nanoseconds to seconds.
+                    int64_t syscall_nanoseconds = 0;
+                    if (CFNumberGetValue(obj, kCFNumberSInt64Type, &syscall_nanoseconds)) {
+                        idlesecs = syscall_nanoseconds;
+                        // idlesecs = (nanoseconds >> 30); // Divide by 10^9 to convert from nanoseconds to seconds.
                     }
                 }
                 CFRelease(dict);
