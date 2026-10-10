@@ -1,16 +1,41 @@
 .{
     .name = .imgui,
-    .version = "1.92.8",
+    .version = "1.92.9",
     .dependencies = .{
         .imgui = .{
             .path = "upstream/imgui",
-            // .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8-docking.tar.gz",
-            // .hash = "N-V-__8AAOTBgQC0wENsLs3rPmgvuyukHzDc04QgCYw-lCQp",
+            // .url = "https://github.com/ocornut/imgui/archive/refs/tags/v1.92.9b-docking.tar.gz",
+            // .hash = "N-V-__8AAAPHhAB86bkFSQlFlaioKXgArks51cXvTB1G5j7F",
         },
         .cimgui = .{
             .path = "upstream/cimgui",
-            // .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.92.8dock.tar.gz",
-            // .hash = "N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM",
+            // .url = "https://github.com/cimgui/cimgui/archive/refs/tags/1.92.9bdock.tar.gz",
+            // .hash = "N-V-__8AAAzDPgD0obKfELofA5lEpCT_gQZkaEtJdsCHadhm",
+        },
+        .cimnodes_editor = .{
+            .path = "upstream/cimnodes_editor",
+            // .url = "git+https://github.com/cimgui/cimnodes_editor#f6fe518957a88ad6cb5929e26f5c09e4e7e0cff3",
+            // .hash = "N-V-__8AAK2dAwC3Ld31OQB7sb5vstW_XSY8IwVdw19LeOMi",
+            // .lazy = true,
+        },
+        .imgui_node_editor = .{
+            // .path = "upstream/imgui-node-editor",
+            // Branch: https://github.com/sonoro1234/imgui-node-editor/commits/cimnodes_editor/
+            .url = "git+https://github.com/sonoro1234/imgui-node-editor#e0f80305c3523ad761441f79f938540688b36016",
+            .hash = "N-V-__8AAIcFRQBhgai4BeYCPwTifUAF2Wig9ghUt7GBJBiV",
+            .lazy = true,
+        },
+        .imgui_color_text_edit = .{
+            // .path = "upstream/ImGuiColorTextEdit",
+            .url = "git+https://github.com/goossens/ImGuiColorTextEdit#f28136480fa4091164e0b528dc9cca147c5a6ee9",
+            .hash = "N-V-__8AAL_AfQAG46rD5tFDu2fd7YbbU0PlCOgQJTLId-ON",
+            .lazy = true,
+        },
+        .cimgui_color_text_edit = .{
+            // .path = "upstream/cimCTE",
+            .url = "git+https://github.com/cimgui/cimCTE#3cdee0b5e1d8f0a59a40fda80c4a6b894d752240",
+            .hash = "N-V-__8AAMWjBwDZl99f7xgmbkEpRQo7TXbEErWleq7EzCd9",
+            .lazy = true,
         },
     },
     .paths = .{

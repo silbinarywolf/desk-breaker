@@ -3,6 +3,14 @@
 #define CIMGUI_DEFINE_ENUMS_AND_STRUCTS 1
 #include "cimgui.h"
 
+#ifdef ZIG_HAS_IMGUI_NODE_EDITOR
+    #include "cimnodes_editor.h"
+#endif
+
+#ifdef ZIG_HAS_IMGUI_COLOR_TEXT_EDIT
+    #include "cimCTE.h"
+#endif
+
 // IMGUI_IMPL_API: Make blank as it's not used here
 #define IMGUI_IMPL_API
 

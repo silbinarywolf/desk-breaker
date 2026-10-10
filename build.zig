@@ -36,11 +36,11 @@ pub fn build(b: *std.Build) !void {
         },
     }
 
-    var exe_name: []const u8 = "desk-breaker";
-    const maybe_exe_postfix = b.option([]const u8, "binSuffix", "update the binary built suffix, used by CI for '{app}-windows.exe'");
-    if (maybe_exe_postfix) |exe_postfix| {
-        exe_name = b.fmt("{s}-{s}", .{ exe_name, exe_postfix });
-    }
+    const exe_suffix = if (b.option([]const u8, "binSuffix", "update the binary built suffix, used by CI for '{app}-windows.exe'")) |suffix|
+        b.fmt("-{s}", .{suffix})
+    else
+        &[0]u8{};
+    const exe_name: []const u8 = b.fmt("desk-breaker{s}", .{exe_suffix});
 
     const platform = b.option(Platform, "platform", "The platform to build for. (ie. PSP)") orelse .none;
 
@@ -435,8 +435,48 @@ pub fn build(b: *std.Build) !void {
             const run_cmd = b.addRunArtifact(exe);
             run_step.dependOn(&run_cmd.step);
 
-            const installed_exe = b.addInstallArtifact(exe, .{});
-            b.getInstallStep().dependOn(&installed_exe.step);
+            if (exe_suffix.len > 0) {
+                switch (target.result.os.tag) {
+                    .macos => {
+                        var macos_app = b.addTempFiles();
+                        const macos_app_name = "desk-breaker.app";
+                        const macos_app_info_plist = "desk-breaker";
+                        _ = macos_app.addCopyFile(b.path("macos/Contents/Info.plist"), b.fmt("{s}/Contents/Info.plist", .{macos_app_name}));
+                        _ = macos_app.addCopyFile(exe.getEmittedBin(), b.fmt("{s}/MacOS/{s}", .{ macos_app_name, macos_app_info_plist }));
+                        _ = macos_app.addCopyFile(b.path("macos/Resources/.gitignore"), b.fmt("{s}/Resources/.gitignore", .{macos_app_name}));
+
+                        const zip_output_file = zipblk: {
+                            const zip_cmd = b.addSystemCommand(&.{"zip"});
+                            zip_cmd.setCwd(macos_app.getDirectory());
+                            zip_cmd.addArg("-r"); // -j = dont include parent directories, -r = everything in folder
+                            const zip_output_file = zip_cmd.addOutputFileArg("zip_output.zip");
+                            zip_cmd.addDirectoryArg(macos_app.getDirectory());
+                            zip_cmd.addArgs(&.{ "-x", "*.DS_Store" });
+                            break :zipblk zip_output_file;
+                        };
+
+                        const add_exec_permission = b.addSystemCommand(&.{ "chmod", "+x" });
+                        add_exec_permission.addFileArg(zip_output_file);
+
+                        const macos_app_install_dir = b.addInstallFileWithDir(
+                            zip_output_file,
+                            .{ .custom = "release" },
+                            b.fmt("{s}.app", .{exe.name}),
+                        );
+                        macos_app_install_dir.step.dependOn(&add_exec_permission.step);
+                        b.getInstallStep().dependOn(&macos_app_install_dir.step);
+                    },
+                    else => {
+                        const installed_exe = b.addInstallArtifact(exe, .{
+                            .dest_dir = .{ .override = .{ .custom = "release" } },
+                        });
+                        b.getInstallStep().dependOn(&installed_exe.step);
+                    },
+                }
+            } else {
+                const installed_exe = b.addInstallArtifact(exe, .{});
+                b.getInstallStep().dependOn(&installed_exe.step);
+            }
         }
     }
     if (enable_android_build) {
@@ -468,7 +508,7 @@ pub fn build(b: *std.Build) !void {
         suffix: []const u8,
     };
     const deploy_targets = [_]DeployTarget{
-        .{ .target_name = "x86_64-macos", .suffix = "mac-x86" },
+        .{ .target_name = "x86_64-macos", .suffix = "mac-x86_64" },
         .{ .target_name = "aarch64-macos", .suffix = "mac-arm" },
         .{ .target_name = "x86_64-windows", .suffix = "windows" },
         .{ .target_name = "", .suffix = "linux" },

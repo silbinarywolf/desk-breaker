@@ -8,6 +8,9 @@ pub fn build(b: *Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const enable_imgui_node_editor = b.option(bool, "enable_imgui_node_editor", "see 'imgui' package") orelse false;
+    const enable_imgui_color_text_edit = b.option(bool, "enable_imgui_color_text_edit", "see 'imgui' package") orelse false;
+
     // Add DE (D0gEngine)
     const de_mod = b.addModule("de", .{
         .root_source_file = b.path("modules/de/de.zig"),
@@ -114,6 +117,8 @@ pub fn build(b: *Build) !void {
             // NOTE(jae): 2026-06-14
             // Only need system_framework_path for ImGui+SDL support
             .system_framework_path = system_framework_path,
+            .enable_imgui_node_editor = enable_imgui_node_editor,
+            .enable_imgui_color_text_edit = enable_imgui_color_text_edit,
         });
         const imgui_lib = imgui_dep.artifact("imgui");
 
@@ -125,6 +130,8 @@ pub fn build(b: *Build) !void {
         const imgui_mod = exportAndGetModule(b, imgui_dep, "imgui");
         imgui_mod.linkLibrary(imgui_lib);
         de_mod.addImport("imgui", imgui_mod);
+
+        b.installArtifact(imgui_lib);
     }
 
     // Export system framework path and library path

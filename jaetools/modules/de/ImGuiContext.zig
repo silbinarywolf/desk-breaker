@@ -34,6 +34,10 @@ pub fn init(window: *Window, renderer: *Renderer) Error!ImGuiContext {
         imgui.igSetCurrentContext(prev_imgui_context);
     };
 
+    // NOTE(jae): 2026-09-28 - v1.92.9b-docking
+    // Fixed crash on creating window after destroying it by clearing context first
+    // Repro on Linux: Start app -> Minimize window -> Click open from taskbar
+    imgui.igSetCurrentContext(null);
     const imgui_context = imgui.igCreateContext(null) orelse
         return error.ImguiCreateContextFailed;
     errdefer imgui.igDestroyContext(imgui_context);
@@ -41,17 +45,6 @@ pub fn init(window: *Window, renderer: *Renderer) Error!ImGuiContext {
     // NOTE(jae): This call is needed for multiple windows, ie. creation of the second window
     if (previous_imgui_context != null) {
         imgui.igSetCurrentContext(imgui_context);
-    }
-
-    // DEPRECATED: If "ConfigDpiScaleFonts" looks good across Windows+Mac+Linux then we're all good to delete this block
-    {
-        // const main_scale = window.getDisplayScale() catch |err| switch (err) {
-        //     error.SdlFailed => return error.ImguiWindowGetScaleFailed,
-        // };
-        // const style = &imgui.igGetStyle()[0];
-        //
-        // imgui.ImGuiStyle_ScaleAllSizes(style, main_scale); // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
-        // style.FontScaleDpi = main_scale; // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
     }
 
     const imgui_io = @as(?*imgui.ImGuiIO, imgui.igGetIO_ContextPtr(imgui_context)) orelse
@@ -62,7 +55,22 @@ pub fn init(window: *Window, renderer: *Renderer) Error!ImGuiContext {
     imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_NavEnableGamepad; // Enable Gamepad Controls
     // imgui_io.ConfigFlags |= imgui.ImGuiConfigFlags_DockingEnable; // Enable Docking
     imgui_io.Fonts[0].FontLoader = imgui.ImGuiFreeType_GetFontLoader();
-    imgui_io.ConfigDpiScaleFonts = true; // Instead of manually calling " style.FontScaleDpi = " or ImGuiStyle_ScaleAllSizes()
+
+    // Set config scale
+    {
+        const main_scale = window.getDisplayScale() catch |err| switch (err) {
+            error.SdlFailed => return error.ImguiWindowGetScaleFailed,
+        };
+        const style = &imgui.igGetStyle()[0];
+
+        imgui.ImGuiStyle_ScaleAllSizes(style, main_scale); // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+        style.FontScaleDpi = main_scale; // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
+    }
+    // (Experimental) Docking branch only
+    {
+        imgui_io.ConfigDpiScaleFonts = true; // Instead of manually calling " style.FontScaleDpi = " or ImGuiStyle_ScaleAllSizes()
+        imgui_io.ConfigDpiScaleViewports = true;
+    }
 
     // NOTE(jae): 2024-11-07
     // Using embedded font data that isn't owned by the atlas

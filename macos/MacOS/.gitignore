@@ -1,0 +1,4 @@
+# Binary goes in this directory, should match name in Info.plist
+#
+# Must have chmod +x permissions
+# ie. chmod +x MyApp.app/Contents/MacOS/mybinary

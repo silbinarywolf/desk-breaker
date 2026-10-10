@@ -20,6 +20,18 @@
     #include "backends/imgui_impl_sdlrenderer3.cpp"
 #endif
 
+// NOTE(jae): 2026-08-02
+// Cannot do this as static function names clash in cimgui.cpp and cimnodes_editor.cpp
+// #ifdef ZIG_HAS_IMGUI_NODE_EDITOR
+//     #include "cimnodes_editor.cpp"
+// #endif
+
+// NOTE(jae): 2026-10-08
+// Haven't tested doing this unlike above 'cimnodes_editor'
+// #ifdef ZIG_HAS_IMGUI_COLOR_TEXT_EDIT
+//     #include "cimnodes_editor.cpp"
+// #endif
+
 #include "cimgui.cpp"
 
 #endif

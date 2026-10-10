@@ -42,6 +42,16 @@ pub fn build(b: *std.Build) !void {
         "system_framework_path",
         "System framework search path for cross-compiling",
     );
+    const enable_imgui_node_editor = b.option(
+        bool,
+        "enable_imgui_node_editor",
+        "Use the package: github.com/sonoro1234/imgui-node-editor",
+    ) orelse false;
+    const enable_imgui_color_text_edit = b.option(
+        bool,
+        "enable_imgui_color_text_edit",
+        "Use the package: github.com/goossens/ImGuiColorTextEdit",
+    ) orelse false;
 
     // NOTE(jae): 2026-05-21
     // Do a unity build (one c++ file to rebuild all of imgui) as it can lead to more effecient code generation.
@@ -60,7 +70,7 @@ pub fn build(b: *std.Build) !void {
     // - ./imgui/imgui_internal.h
     //
     // So we can just pull down cimgui as an external dependency, fake that structure here
-    const zig_cimgui_headers_path = b.path("cimgui_headers");
+    const zig_cimgui_headers_path = b.path("imgui_redirect_headers/cimgui_headers");
 
     const imgui_define_macros: []const []const u8 = blk: {
         const gpa = b.allocator;
@@ -100,6 +110,11 @@ pub fn build(b: *std.Build) !void {
         };
         if (zig_backend_include_macro.len > 0) {
             try list.append(gpa, zig_backend_include_macro);
+        }
+        if (enable_imgui_node_editor) {
+            // NOTE(jae): 2026-08-02
+            // Unity build not possible due to clashing function names in cimgui.cpp and cimnodes_editor.cpp
+            try list.append(gpa, "ZIG_HAS_IMGUI_NODE_EDITOR");
         }
         break :blk try list.toOwnedSlice(gpa);
     };
@@ -221,10 +236,16 @@ pub fn build(b: *std.Build) !void {
         },
     }
 
+    // Create lib
     const lib = b.addLibrary(.{
         .name = "imgui",
         .linkage = .static,
         .root_module = mod,
+    });
+    lib.installHeadersDirectory(imgui_include_path, "", .{
+        .exclude_extensions = &.{
+            ".cpp",
+        },
     });
     if (target.result.abi.isAndroid()) {
         mod.pic = true;
@@ -249,10 +270,107 @@ pub fn build(b: *std.Build) !void {
     c_translate.addIncludePath(zig_cimgui_headers_path);
     c_translate.addIncludePath(zig_imgui_backend_include_path);
 
+    // Add additional dependencies
+    if (enable_imgui_node_editor) {
+        const zig_cimnodes_editor_headers_path = b.path("imgui_redirect_headers/cimnodes_editor_headers");
+        const cimnodes_editor_path = if (b.lazyDependency("cimnodes_editor", .{})) |dep| dep.path("") else b.path("");
+        const imgui_node_editor_path = if (b.lazyDependency("imgui_node_editor", .{})) |dep| dep.path("") else b.path("");
+        const imgui_node_editor_blueprint_utilities = imgui_node_editor_path.path(b, "examples/blueprints-example/utilities");
+
+        // Add imgui_node_editor
+        mod.addCSourceFiles(.{
+            .root = imgui_node_editor_path,
+            .files = &.{
+                "crude_json.cpp",
+                "imgui_canvas.cpp",
+                "imgui_node_editor.cpp",
+                "imgui_node_editor_api.cpp",
+            },
+            .flags = &.{"-std=c++14"},
+        });
+
+        // Optional Blueprint widgets (icon drawing)
+        {
+            mod.addCSourceFiles(.{
+                .root = imgui_node_editor_blueprint_utilities,
+                .files = &.{
+                    "widgets.cpp",
+                    "drawing.cpp",
+                },
+                .flags = &.{"-std=c++14"},
+            });
+            mod.addIncludePath(imgui_node_editor_blueprint_utilities);
+        }
+
+        // Add cimnodes_editor
+        mod.addCSourceFiles(.{
+            .root = cimnodes_editor_path,
+            .files = &.{
+                "cimnodes_editor.cpp",
+            },
+            .flags = cpp_flags,
+        });
+
+        mod.addIncludePath(imgui_node_editor_path);
+        mod.addIncludePath(zig_cimnodes_editor_headers_path);
+
+        // Add to c-translate
+        c_translate.defineCMacro("ZIG_HAS_IMGUI_NODE_EDITOR", "1");
+        c_translate.addIncludePath(cimnodes_editor_path);
+    }
+    if (enable_imgui_color_text_edit) {
+        const imgui_color_text_edit_path = if (b.lazyDependency("imgui_color_text_edit", .{})) |dep| dep.path("") else b.path("");
+        const cimgui_color_text_edit_path = if (b.lazyDependency("cimgui_color_text_edit", .{})) |dep| dep.path("") else b.path("");
+        // const zig_cimgui_color_text_edit_path = b.path("imgui_redirect_headers/cimgui_color_text_edit_headers");
+
+        mod.addCSourceFiles(.{
+            .root = imgui_color_text_edit_path,
+            .files = &.{
+                "TextDiff.cpp",
+                "TextEditor.cpp",
+                "extras/TrieAutoComplete.cpp",
+                "example/dejavu.cpp",
+                "example/notosans.cpp",
+                // Requires dependency:
+                // - https://github.com/goossens/ImGuiColorTextEdit/blob/b01fe08a5ae08c104d31421e201b83d801157d98/example/deps/lsp/CMakeLists.txt
+                // - "https://github.com/leon-bckl/lsp-framework" GIT_TAG "f2c374d"
+                // "extras/LspBridge.cpp",
+            },
+            .flags = &.{
+                "-std=c++17",
+                // NOTE(jae): 2026-10-08
+                // Casting of float fails at runtime with santization on
+                //    size_t colNo = static_cast<size_t>(screenPos.x);
+                "-fno-sanitize=float-cast-overflow",
+            },
+        });
+
+        // Add cimCTE
+        {
+            mod.addCSourceFiles(.{
+                .root = cimgui_color_text_edit_path,
+                .files = &.{
+                    "cimCTE.cpp",
+                },
+                .flags = &.{"-std=c++17"},
+            });
+            mod.addIncludePath(cimgui_color_text_edit_path);
+            const cimgui_color_text_edit_code_and_headers = b.addWriteFiles();
+
+            // Copy headers to expected 'ImGuiColorTextEdit' folder so the include files for cimCTE can find it
+            _ = cimgui_color_text_edit_code_and_headers.addCopyDirectory(imgui_color_text_edit_path, "ImGuiColorTextEdit", .{});
+            mod.addIncludePath(cimgui_color_text_edit_code_and_headers.getDirectory());
+        }
+
+        // Add to c-translate
+        c_translate.defineCMacro("ZIG_HAS_IMGUI_COLOR_TEXT_EDIT", "1");
+        c_translate.addIncludePath(cimgui_color_text_edit_path);
+    }
+
     _ = b.addModule("imgui", .{
         .target = target,
         .optimize = optimize,
-        .root_source_file = b.path("src/imgui-gen.zig"),
+        .root_source_file = if (!enable_imgui_node_editor and !enable_imgui_color_text_edit) b.path("src/imgui-gen.zig") else b.path("src/imgui-gen-all.zig"),
         // .root_source_file = c_translate.getOutput(),
     });
 
