@@ -69,8 +69,11 @@ jobs:
 
     - name: Build Release
       if: startsWith(github.ref, 'refs/tags/')
+      # NOTE(jae): 2026-10-10
+      # ReleaseSafe breaks on Windows builds for Zig 0.16.0
+      # 'extern_local_wcscat_s' is unused in C-Translate
       run: |
-        zig build all-targets -Doptimize=ReleaseSafe --verbose
+        zig build all-targets -Doptimize=ReleaseFast --verbose
 
     - name: Release
       uses: softprops/action-gh-release@v2

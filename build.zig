@@ -516,6 +516,9 @@ pub fn build(b: *std.Build) !void {
     const all_targets_step = b.step("all-targets", "Build for all targets (must be run on Linux)");
     for (deploy_targets) |deploy_target| {
         const build_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
+        if (b.verbose) {
+            build_cmd.addArg("--verbose");
+        }
         if (deploy_target.target_name.len > 0) {
             build_cmd.addArg(b.fmt("-Dtarget={s}", .{deploy_target.target_name}));
         }
