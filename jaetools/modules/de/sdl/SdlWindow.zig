@@ -106,8 +106,8 @@ pub fn init(options: Options) InitWindowError!SdlWindow {
 
     const display_id = if (options.display) |display_id| display_id.toSdl() else sdl.SDL_GetPrimaryDisplay();
     if (display_id == 0) return error.SdlFailed;
-    const main_scale = sdl.SDL_GetDisplayContentScale(display_id);
-    if (main_scale == 0.0) return error.SdlFailed;
+    // const main_scale = sdl.SDL_GetDisplayContentScale(display_id);
+    // if (main_scale == 0.0) return error.SdlFailed;
     // const pixel_density = sdl.SDL_GetWindowPixelDensity(window_id); // ie. MacOS Retina screens
     // if (pixel_density == 0.0) return error.SdlFailed;
 
@@ -147,6 +147,18 @@ pub fn init(options: Options) InitWindowError!SdlWindow {
 
     const window = sdl.SDL_CreateWindowWithProperties(props) orelse
         return error.SdlFailed;
+
+    // NOTE(jae): 2026-10-10
+    // Was debugging Wayland being terrible. Requested a window with a specific size and got one that doesn't match.
+    {
+        var got_window_w: c_int = undefined;
+        var got_window_h: c_int = undefined;
+        if (sdl.SDL_GetWindowSize(window, &got_window_w, &got_window_h)) {
+            if (window_size.x != got_window_w and window_size.y != got_window_h) {
+                log.warn("requested window: {}x{} but got {}x{}", .{ window_size.x, window_size.y, got_window_w, got_window_h });
+            }
+        }
+    }
 
     if (!builtin.abi.isAndroid()) {
         switch (builtin.os.tag) {
@@ -209,7 +221,11 @@ fn computeSizeFromDisplay(display_id: sdl.SDL_DisplayID, window_size_option: Siz
     // NOTE(jae): 2026-07-08
     // Used to add pixel density to this value as well for MacOS retina support
     // but it makes the window larger than expected/wanted.
-    const display_scale = blk: {
+    const display_scale: f32 = blk: {
+        if (isWaylandAndScaleToDisplayIsOff()) {
+            const display_mode = @as(?*const sdl.SDL_DisplayMode, sdl.SDL_GetDesktopDisplayMode(display_id)) orelse return error.SdlFailed;
+            break :blk display_mode.pixel_density;
+        }
         const content_scale = sdl.SDL_GetDisplayContentScale(display_id);
         if (content_scale == 0.0) return error.SdlFailed;
         break :blk content_scale;
@@ -263,6 +279,37 @@ fn computeSizeFromDisplay(display_id: sdl.SDL_DisplayID, window_size_option: Siz
     }
 }
 
+/// If the current video driver is:
+/// - wayland
+/// - SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY=1
+///     - ...and that initialized as expected
+inline fn isWaylandAndScaleToDisplayIsOff() bool {
+    if (!isWayland()) {
+        return false;
+    }
+    const wayland_scale_to_display = sdl.SDL_GetHintBoolean(sdl.SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY, false);
+    // NOTE(jae): 2026-10-10
+    // SDL_GetDisplayContentScale() != 1 if wayland_scale_to_display is true and didn't fail when initializing.
+    // ie. Check if 'video->scale_to_display_enabled' stayed true 'sdl3/src/video/wayland/SDL_waylandvideo.c'
+    if (wayland_scale_to_display and sdl.SDL_GetDisplayContentScale(sdl.SDL_GetPrimaryDisplay()) != 1) {
+        // If enabled hinting *AND* it worked when initializing
+        return false;
+    }
+    // Default behaviour of Wayland if 'SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY' isn't set.
+    return true;
+}
+
+inline fn isWayland() bool {
+    return switch (builtin.os.tag) {
+        .linux => switch (de_options.window_constraint) {
+            .single_window => true,
+            // Use X11/XWayland
+            .multiple_window => false,
+        },
+        else => false,
+    };
+}
+
 /// This is a combination of the window pixel density and the display content scale, and is the expected scale for displaying content in this window.
 /// For example, if a 3840x2160 window had a display scale of 2.0, the user expects the content to take twice as many pixels and be the same physical size as if it
 /// were being displayed in a 1920x1080 window with a display scale of 1.0.
@@ -270,8 +317,13 @@ fn computeSizeFromDisplay(display_id: sdl.SDL_DisplayID, window_size_option: Siz
 /// Conceptually this value corresponds to the scale display setting, and is updated when that setting is changed,
 /// or the window moves to a display with a different scale setting.
 pub fn getDisplayScale(window: *SdlWindow) error{SdlFailed}!f32 {
+    if (isWaylandAndScaleToDisplayIsOff()) {
+        // This is default Wayland behaviour
+        return 1;
+    }
     // display_scale = pixel_density * content_scale;
-    const scale = sdl.SDL_GetWindowDisplayScale(window.internal);
+    // const scale = sdl.SDL_GetWindowDisplayScale(window.internal);
+    const scale = sdl.SDL_GetWindowPixelDensity(window.internal);
     if (scale == 0.0) return error.SdlFailed;
     return scale;
 }

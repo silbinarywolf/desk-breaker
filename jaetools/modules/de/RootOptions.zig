@@ -1,4 +1,5 @@
 //! These are root options configured in "root.de_options" of Zig main
+const builtin = @import("builtin");
 
 application_type: type,
 /// ie. "My Cool App 2: The Sqweequel"

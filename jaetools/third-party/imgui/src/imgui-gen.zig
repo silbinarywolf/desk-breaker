@@ -1,4 +1,4 @@
-//! NOTE(jae): 2026-05-19
+//! NOTE(jae): 2026-10-08
 //! Manually workaround issue with: Ctx: ?*ImGuiContext = null,
 
 const __root = @This();
@@ -311,6 +311,7 @@ pub const struct_ImTextureData = extern struct {
     UniqueID: c_int = 0,
     Status: ImTextureStatus = @import("std").mem.zeroes(ImTextureStatus),
     BackendUserData: ?*anyopaque = null,
+    QueueUserData: ?*anyopaque = null,
     TexID: ImTextureID = 0,
     Format: ImTextureFormat = @import("std").mem.zeroes(ImTextureFormat),
     Width: c_int = 0,
@@ -340,6 +341,7 @@ pub const struct_ImTextureData = extern struct {
     pub const igDebugNodeTexture = __root.igDebugNodeTexture;
     pub const igImFontAtlasTextureBlockFill = __root.igImFontAtlasTextureBlockFill;
     pub const igImFontAtlasTextureBlockCopy = __root.igImFontAtlasTextureBlockCopy;
+    pub const igImTextureDataUpdateNewFrame = __root.igImTextureDataUpdateNewFrame;
     pub const igImTextureDataQueueUpload = __root.igImTextureDataQueueUpload;
     pub const ImGui_ImplSDLRenderer3_UpdateTexture = __root.ImGui_ImplSDLRenderer3_UpdateTexture;
     pub const destroy = __root.ImTextureData_destroy;
@@ -473,7 +475,7 @@ pub const struct_ImVector_ImU16 = extern struct {
     Capacity: c_int = 0,
     Data: [*c]ImU16 = null,
 };
-pub const ImVector_ImU16 = struct_ImVector_ImU16; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:1579:18: warning: struct demoted to opaque type - has bitfield
+pub const ImVector_ImU16 = struct_ImVector_ImU16; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:1596:18: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImFontGlyph = opaque {
     pub const ImFontGlyph_destroy = __root.ImFontGlyph_destroy;
     pub const destroy = __root.ImFontGlyph_destroy;
@@ -484,7 +486,7 @@ pub const struct_ImVector_ImFontGlyph = extern struct {
     Capacity: c_int = 0,
     Data: ?*ImFontGlyph = null,
 };
-pub const ImVector_ImFontGlyph = struct_ImVector_ImFontGlyph; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:1662:18: warning: struct demoted to opaque type - has bitfield
+pub const ImVector_ImFontGlyph = struct_ImVector_ImFontGlyph; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:1679:18: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImFontBaked = opaque {
     pub const ImFontBaked_destroy = __root.ImFontBaked_destroy;
     pub const ImFontBaked_ClearOutputData = __root.ImFontBaked_ClearOutputData;
@@ -689,7 +691,7 @@ pub const struct_ImVector_stbrp_node_im = extern struct {
     Capacity: c_int = 0,
     Data: ?*stbrp_node_im = null,
 };
-pub const ImVector_stbrp_node_im = struct_ImVector_stbrp_node_im; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:3800:9: warning: struct demoted to opaque type - has bitfield
+pub const ImVector_stbrp_node_im = struct_ImVector_stbrp_node_im; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3875:9: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImFontAtlasRectEntry = opaque {};
 pub const ImFontAtlasRectEntry = struct_ImFontAtlasRectEntry;
 pub const struct_ImVector_ImFontAtlasRectEntry = extern struct {
@@ -751,6 +753,7 @@ pub const struct_ImFontAtlasBuilder = extern struct {
 pub const ImFontAtlasBuilder = struct_ImFontAtlasBuilder;
 pub const ImGuiConfigFlags = c_int;
 pub const ImGuiBackendFlags = c_int;
+pub const ImGuiColorEditFlags = c_int;
 pub const ImGuiKeyChord = c_int;
 pub const struct_ImGuiKeyData = extern struct {
     Down: bool = false,
@@ -803,19 +806,24 @@ pub const struct_ImGuiIO = extern struct {
     ConfigViewportsPlatformFocusSetsImGuiFocus: bool = false,
     ConfigDpiScaleFonts: bool = false,
     ConfigDpiScaleViewports: bool = false,
-    MouseDrawCursor: bool = false,
     ConfigMacOSXBehaviors: bool = false,
     ConfigInputTrickleEventQueue: bool = false,
     ConfigInputTextCursorBlink: bool = false,
     ConfigInputTextEnterKeepActive: bool = false,
+    ConfigColorEditFlags: ImGuiColorEditFlags = 0,
     ConfigDragClickToInputText: bool = false,
     ConfigWindowsResizeFromEdges: bool = false,
     ConfigWindowsMoveFromTitleBarOnly: bool = false,
     ConfigWindowsCopyContentsWithCtrlC: bool = false,
     ConfigScrollbarScrollByPage: bool = false,
+    ConfigIniSettingsSaveLastUsedDate: bool = false,
+    ConfigIniSettingsAutoDiscardMonths: c_int = 0,
+    ConfigDebugIniSettings: bool = false,
+    MouseDrawCursor: bool = false,
     ConfigMemoryCompactTimer: f32 = 0,
     MouseDoubleClickTime: f32 = 0,
     MouseDoubleClickMaxDist: f32 = 0,
+    MouseSingleClickDelay: f32 = 0,
     MouseDragThreshold: f32 = 0,
     KeyRepeatDelay: f32 = 0,
     KeyRepeatRate: f32 = 0,
@@ -829,7 +837,6 @@ pub const struct_ImGuiIO = extern struct {
     ConfigDebugBeginReturnValueOnce: bool = false,
     ConfigDebugBeginReturnValueLoop: bool = false,
     ConfigDebugIgnoreFocusLoss: bool = false,
-    ConfigDebugIniSettings: bool = false,
     BackendPlatformName: [*c]const u8 = null,
     BackendRendererName: [*c]const u8 = null,
     BackendPlatformUserData: ?*anyopaque = null,
@@ -929,7 +936,7 @@ pub const struct_ImVector_ImDrawListPtr = extern struct {
 pub const ImVector_ImDrawListPtr = struct_ImVector_ImDrawListPtr;
 pub const struct_ImDrawData = extern struct {
     Valid: bool = false,
-    CmdListsCount: c_int = 0,
+    FrameCount: c_int = 0,
     TotalIdxCount: c_int = 0,
     TotalVtxCount: c_int = 0,
     CmdLists: ImVector_ImDrawListPtr = @import("std").mem.zeroes(ImVector_ImDrawListPtr),
@@ -1032,6 +1039,7 @@ pub const struct_ImGuiPlatformIO = extern struct {
     Platform_SetImeDataFn: ?*const fn (ctx: [*c]ImGuiContext, viewport: [*c]ImGuiViewport, data: [*c]ImGuiPlatformImeData) callconv(.c) void = null,
     Platform_ImeUserData: ?*anyopaque = null,
     Platform_LocaleDecimalPoint: ImWchar = 0,
+    Platform_SessionDate: c_int = 0,
     Renderer_TextureMaxWidth: c_int = 0,
     Renderer_TextureMaxHeight: c_int = 0,
     Renderer_RenderState: ?*anyopaque = null,
@@ -1127,6 +1135,8 @@ pub const struct_ImGuiStyle = extern struct {
     TreeLinesFlags: ImGuiTreeNodeFlags = 0,
     TreeLinesSize: f32 = 0,
     TreeLinesRounding: f32 = 0,
+    MenuItemRounding: f32 = 0,
+    SelectableRounding: f32 = 0,
     DragDropTargetRounding: f32 = 0,
     DragDropTargetBorderSize: f32 = 0,
     DragDropTargetPadding: f32 = 0,
@@ -1134,6 +1144,7 @@ pub const struct_ImGuiStyle = extern struct {
     ColorButtonPosition: ImGuiDir = @import("std").mem.zeroes(ImGuiDir),
     ButtonTextAlign: ImVec2_c = @import("std").mem.zeroes(ImVec2_c),
     SelectableTextAlign: ImVec2_c = @import("std").mem.zeroes(ImVec2_c),
+    InputTextCursorSize: f32 = 0,
     SeparatorSize: f32 = 0,
     SeparatorTextBorderSize: f32 = 0,
     SeparatorTextAlign: ImVec2_c = @import("std").mem.zeroes(ImVec2_c),
@@ -1305,7 +1316,7 @@ pub const struct_ImGuiViewportP = extern struct {
     pub const GetWorkRect = __root.ImGuiViewportP_GetWorkRect;
     pub const GetBuildWorkRect = __root.ImGuiViewportP_GetBuildWorkRect;
 };
-pub const ImGuiViewportP = struct_ImGuiViewportP; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:3425:29: warning: struct demoted to opaque type - has bitfield
+pub const ImGuiViewportP = struct_ImGuiViewportP; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3473:29: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImGuiWindow = opaque {
     pub const ImGuiWindow_destroy = __root.ImGuiWindow_destroy;
     pub const ImGuiWindow_GetID_Str = __root.ImGuiWindow_GetID_Str;
@@ -1316,6 +1327,8 @@ pub const struct_ImGuiWindow = opaque {
     pub const ImGuiWindow_Rect = __root.ImGuiWindow_Rect;
     pub const ImGuiWindow_TitleBarRect = __root.ImGuiWindow_TitleBarRect;
     pub const ImGuiWindow_MenuBarRect = __root.ImGuiWindow_MenuBarRect;
+    pub const igSetWindowClipRectBeforeSetChannel = __root.igSetWindowClipRectBeforeSetChannel;
+    pub const igFindOrCreateColumns = __root.igFindOrCreateColumns;
     pub const igUpdateWindowParentAndRootLinks = __root.igUpdateWindowParentAndRootLinks;
     pub const igUpdateWindowSkipRefresh = __root.igUpdateWindowSkipRefresh;
     pub const igCalcWindowNextAutoFitSize = __root.igCalcWindowNextAutoFitSize;
@@ -1371,8 +1384,6 @@ pub const struct_ImGuiWindow = opaque {
     pub const igBeginDockableDragDropSource = __root.igBeginDockableDragDropSource;
     pub const igBeginDockableDragDropTarget = __root.igBeginDockableDragDropTarget;
     pub const igSetWindowDock = __root.igSetWindowDock;
-    pub const igSetWindowClipRectBeforeSetChannel = __root.igSetWindowClipRectBeforeSetChannel;
-    pub const igFindOrCreateColumns = __root.igFindOrCreateColumns;
     pub const igTabItemCalcSize_WindowPtr = __root.igTabItemCalcSize_WindowPtr;
     pub const igGetWindowScrollbarRect = __root.igGetWindowScrollbarRect;
     pub const igGetWindowScrollbarID = __root.igGetWindowScrollbarID;
@@ -1586,7 +1597,7 @@ pub const ImGuiSelectionUserData = ImS64;
 pub const ImGuiInputFlags = c_int;
 pub const struct_ImGuiNextItemData = extern struct {
     HasFlags: ImGuiNextItemDataFlags = 0,
-    ItemFlags: ImGuiItemFlags = 0,
+    ItemFlagsSet: ImGuiItemFlags = 0,
     FocusScopeId: ImGuiID = 0,
     SelectionUserData: ImGuiSelectionUserData = 0,
     Width: f32 = 0,
@@ -1719,7 +1730,7 @@ pub const struct_ImGuiGroupData = extern struct {
     BackupCurrLineSize: ImVec2_c = @import("std").mem.zeroes(ImVec2_c),
     BackupCurrLineTextBaseOffset: f32 = 0,
     BackupActiveIdIsAlive: ImGuiID = 0,
-    BackupActiveIdHasBeenEditedThisFrame: bool = false,
+    BackupAnyIdHasBeenEditedThisFrame: bool = false,
     BackupDeactivatedIdIsAlive: bool = false,
     BackupHoveredIdIsAlive: bool = false,
     BackupIsSameLine: bool = false,
@@ -1892,6 +1903,28 @@ pub const struct_ImVector_ImGuiTableHeaderData = extern struct {
     Data: [*c]ImGuiTableHeaderData = null,
 };
 pub const ImVector_ImGuiTableHeaderData = struct_ImVector_ImGuiTableHeaderData;
+pub const ImGuiTableColumnFlags = c_int;
+pub const ImGuiTableDrawChannelIdx = ImU16; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3635:10: warning: struct demoted to opaque type - has bitfield
+pub const struct_ImGuiTableColumn = opaque {
+    pub const ImGuiTableColumn_destroy = __root.ImGuiTableColumn_destroy;
+    pub const igTableGetColumnNextSortDirection = __root.igTableGetColumnNextSortDirection;
+    pub const igTableLoadSettingsForColumn = __root.igTableLoadSettingsForColumn;
+    pub const destroy = __root.ImGuiTableColumn_destroy;
+};
+pub const ImGuiTableColumn = struct_ImGuiTableColumn; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3658:22: warning: struct demoted to opaque type - has opaque field
+pub const struct_ImGuiTableReconcileColumnData = opaque {};
+pub const ImGuiTableReconcileColumnData = struct_ImGuiTableReconcileColumnData;
+pub const struct_ImVector_ImGuiTableReconcileColumnData = extern struct {
+    Size: c_int = 0,
+    Capacity: c_int = 0,
+    Data: ?*ImGuiTableReconcileColumnData = null,
+};
+pub const ImVector_ImGuiTableReconcileColumnData = struct_ImVector_ImGuiTableReconcileColumnData;
+pub const struct_ImSpan_ImGuiTableColumn = extern struct {
+    Data: ?*ImGuiTableColumn = null,
+    DataEnd: ?*ImGuiTableColumn = null,
+};
+pub const ImSpan_ImGuiTableColumn = struct_ImSpan_ImGuiTableColumn;
 pub const ImDrawChannel = struct_ImDrawChannel;
 pub const struct_ImVector_ImDrawChannel = extern struct {
     Size: c_int = 0,
@@ -1923,6 +1956,9 @@ pub const struct_ImGuiTableTempData = extern struct {
     LastTimeActive: f32 = 0,
     AngledHeadersExtraWidth: f32 = 0,
     AngledHeadersRequests: ImVector_ImGuiTableHeaderData = @import("std").mem.zeroes(ImVector_ImGuiTableHeaderData),
+    ReconcileColumnsRequests: ImVector_ImGuiTableReconcileColumnData = @import("std").mem.zeroes(ImVector_ImGuiTableReconcileColumnData),
+    OldColumnsRawData: ?*anyopaque = null,
+    OldColumnsData: ImSpan_ImGuiTableColumn = @import("std").mem.zeroes(ImSpan_ImGuiTableColumn),
     UserOuterSize: ImVec2_c = @import("std").mem.zeroes(ImVec2_c),
     DrawSplitter: ImDrawListSplitter = @import("std").mem.zeroes(ImDrawListSplitter),
     HostBackupWorkRect: ImRect_c = @import("std").mem.zeroes(ImRect_c),
@@ -1939,19 +1975,6 @@ pub const struct_ImGuiTableTempData = extern struct {
     pub const TableTempDataPtr = __root.igTableGcCompactTransientBuffers_TableTempDataPtr;
 };
 pub const ImGuiTableTempData = struct_ImGuiTableTempData;
-pub const ImGuiTableColumnFlags = c_int;
-pub const ImGuiTableDrawChannelIdx = ImU16; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:3590:10: warning: struct demoted to opaque type - has bitfield
-pub const struct_ImGuiTableColumn = opaque {
-    pub const ImGuiTableColumn_destroy = __root.ImGuiTableColumn_destroy;
-    pub const igTableGetColumnNextSortDirection = __root.igTableGetColumnNextSortDirection;
-    pub const destroy = __root.ImGuiTableColumn_destroy;
-};
-pub const ImGuiTableColumn = struct_ImGuiTableColumn;
-pub const struct_ImSpan_ImGuiTableColumn = extern struct {
-    Data: ?*ImGuiTableColumn = null,
-    DataEnd: ?*ImGuiTableColumn = null,
-};
-pub const ImSpan_ImGuiTableColumn = struct_ImSpan_ImGuiTableColumn;
 pub const struct_ImSpan_ImGuiTableColumnIdx = extern struct {
     Data: [*c]ImGuiTableColumnIdx = null,
     DataEnd: [*c]ImGuiTableColumnIdx = null,
@@ -1967,12 +1990,13 @@ pub const struct_ImSpan_ImGuiTableCellData = extern struct {
     DataEnd: [*c]ImGuiTableCellData = null,
 };
 pub const ImSpan_ImGuiTableCellData = struct_ImSpan_ImGuiTableCellData;
-pub const ImBitArrayPtr = [*c]ImU32; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:3653:24: warning: struct demoted to opaque type - has bitfield
+pub const ImBitArrayPtr = [*c]ImU32; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3718:24: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImGuiTable = opaque {
     pub const ImGuiTable_destroy = __root.ImGuiTable_destroy;
     pub const igTableBeginInitMemory = __root.igTableBeginInitMemory;
-    pub const igTableBeginApplyRequests = __root.igTableBeginApplyRequests;
+    pub const igTableApplyQueuedRequests = __root.igTableApplyQueuedRequests;
     pub const igTableSetupDrawChannels = __root.igTableSetupDrawChannels;
+    pub const igTableReconcileColumns = __root.igTableReconcileColumns;
     pub const igTableUpdateLayout = __root.igTableUpdateLayout;
     pub const igTableUpdateBorders = __root.igTableUpdateBorders;
     pub const igTableUpdateColumnsWeightFromWidth = __root.igTableUpdateColumnsWeightFromWidth;
@@ -1986,6 +2010,7 @@ pub const struct_ImGuiTable = opaque {
     pub const igTableFixDisplayOrder = __root.igTableFixDisplayOrder;
     pub const igTableSortSpecsSanitize = __root.igTableSortSpecsSanitize;
     pub const igTableSortSpecsBuild = __root.igTableSortSpecsBuild;
+    pub const igTableInitColumnDefaults = __root.igTableInitColumnDefaults;
     pub const igTableFixColumnSortDirection = __root.igTableFixColumnSortDirection;
     pub const igTableGetColumnWidthAuto = __root.igTableGetColumnWidthAuto;
     pub const igTableBeginRow = __root.igTableBeginRow;
@@ -2003,6 +2028,7 @@ pub const struct_ImGuiTable = opaque {
     pub const igTableRemove = __root.igTableRemove;
     pub const igTableGcCompactTransientBuffers_TablePtr = __root.igTableGcCompactTransientBuffers_TablePtr;
     pub const igTableLoadSettings = __root.igTableLoadSettings;
+    pub const igTableLoadSettingsForColumns = __root.igTableLoadSettingsForColumns;
     pub const igTableSaveSettings = __root.igTableSaveSettings;
     pub const igTableResetSettings = __root.igTableResetSettings;
     pub const igTableGetBoundSettings = __root.igTableGetBoundSettings;
@@ -2191,12 +2217,12 @@ pub const struct_ImVector_ImGuiShrinkWidthItem = extern struct {
     Capacity: c_int = 0,
     Data: [*c]ImGuiShrinkWidthItem = null,
 };
-pub const ImVector_ImGuiShrinkWidthItem = struct_ImVector_ImGuiShrinkWidthItem; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:2606:19: warning: struct demoted to opaque type - has bitfield
+pub const ImVector_ImGuiShrinkWidthItem = struct_ImVector_ImGuiShrinkWidthItem; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:2631:19: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImGuiBoxSelectState = opaque {
     pub const ImGuiBoxSelectState_destroy = __root.ImGuiBoxSelectState_destroy;
     pub const destroy = __root.ImGuiBoxSelectState_destroy;
 };
-pub const ImGuiBoxSelectState = struct_ImGuiBoxSelectState; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:3197:25: warning: struct demoted to opaque type - has opaque field
+pub const ImGuiBoxSelectState = struct_ImGuiBoxSelectState; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3245:25: warning: struct demoted to opaque type - has opaque field
 pub const struct_ImGuiContext = opaque {
     pub const igDestroyContext = __root.igDestroyContext;
     pub const igSetCurrentContext = __root.igSetCurrentContext;
@@ -2272,10 +2298,10 @@ pub const struct_ImFontAtlas = extern struct {
     pub const ImFontAtlas_AddFontFromMemoryCompressedTTF = __root.ImFontAtlas_AddFontFromMemoryCompressedTTF;
     pub const ImFontAtlas_AddFontFromMemoryCompressedBase85TTF = __root.ImFontAtlas_AddFontFromMemoryCompressedBase85TTF;
     pub const ImFontAtlas_RemoveFont = __root.ImFontAtlas_RemoveFont;
-    pub const ImFontAtlas_Clear = __root.ImFontAtlas_Clear;
-    pub const ImFontAtlas_ClearFonts = __root.ImFontAtlas_ClearFonts;
     pub const ImFontAtlas_CompactCache = __root.ImFontAtlas_CompactCache;
     pub const ImFontAtlas_SetFontLoader = __root.ImFontAtlas_SetFontLoader;
+    pub const ImFontAtlas_Clear = __root.ImFontAtlas_Clear;
+    pub const ImFontAtlas_ClearFonts = __root.ImFontAtlas_ClearFonts;
     pub const ImFontAtlas_ClearInputData = __root.ImFontAtlas_ClearInputData;
     pub const ImFontAtlas_ClearTexData = __root.ImFontAtlas_ClearTexData;
     pub const ImFontAtlas_GetGlyphRangesDefault = __root.ImFontAtlas_GetGlyphRangesDefault;
@@ -2341,10 +2367,10 @@ pub const struct_ImFontAtlas = extern struct {
     pub const AddFontFromMemoryCompressedTTF = __root.ImFontAtlas_AddFontFromMemoryCompressedTTF;
     pub const AddFontFromMemoryCompressedBase85TTF = __root.ImFontAtlas_AddFontFromMemoryCompressedBase85TTF;
     pub const RemoveFont = __root.ImFontAtlas_RemoveFont;
-    pub const Clear = __root.ImFontAtlas_Clear;
-    pub const ClearFonts = __root.ImFontAtlas_ClearFonts;
     pub const CompactCache = __root.ImFontAtlas_CompactCache;
     pub const SetFontLoader = __root.ImFontAtlas_SetFontLoader;
+    pub const Clear = __root.ImFontAtlas_Clear;
+    pub const ClearFonts = __root.ImFontAtlas_ClearFonts;
     pub const ClearInputData = __root.ImFontAtlas_ClearInputData;
     pub const ClearTexData = __root.ImFontAtlas_ClearTexData;
     pub const GetGlyphRangesDefault = __root.ImFontAtlas_GetGlyphRangesDefault;
@@ -2367,7 +2393,7 @@ pub const struct_ImDrawListSharedData = extern struct {
     FontSize: f32 = 0,
     FontScale: f32 = 0,
     CurveTessellationTol: f32 = 0,
-    CircleSegmentMaxError: f32 = 0,
+    CircleTessellationMaxError: f32 = 0,
     InitialFringeScale: f32 = 0,
     InitialFlags: ImDrawListFlags = 0,
     ClipRectFullscreen: ImVec4_c = @import("std").mem.zeroes(ImVec4_c),
@@ -2844,7 +2870,18 @@ pub const struct_ImGuiTextIndex = extern struct {
     pub const get_line_end = __root.ImGuiTextIndex_get_line_end;
     pub const append = __root.ImGuiTextIndex_append;
 };
-pub const ImGuiTextIndex = struct_ImGuiTextIndex;
+pub const ImGuiTextIndex = struct_ImGuiTextIndex; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:1938:11: warning: struct demoted to opaque type - has bitfield
+pub const struct_ImGuiPackedDate = opaque {
+    pub const ImGuiPackedDate_destroy = __root.ImGuiPackedDate_destroy;
+    pub const ImGuiPackedDate_IsValid = __root.ImGuiPackedDate_IsValid;
+    pub const ImGuiPackedDate_Unpack = __root.ImGuiPackedDate_Unpack;
+    pub const ImGuiPackedDate_SubtractMonths = __root.ImGuiPackedDate_SubtractMonths;
+    pub const destroy = __root.ImGuiPackedDate_destroy;
+    pub const IsValid = __root.ImGuiPackedDate_IsValid;
+    pub const Unpack = __root.ImGuiPackedDate_Unpack;
+    pub const SubtractMonths = __root.ImGuiPackedDate_SubtractMonths;
+};
+pub const ImGuiPackedDate = struct_ImGuiPackedDate;
 pub const struct_ImFontAtlasPostProcessData = extern struct {
     FontAtlas: [*c]ImFontAtlas = null,
     Font: [*c]ImFont = null,
@@ -2903,7 +2940,7 @@ pub const struct_ImGuiDockContext = extern struct {
     pub const destroy = __root.ImGuiDockContext_destroy;
 };
 pub const ImGuiDockContext = struct_ImGuiDockContext;
-pub const ImGuiDockNode = struct_ImGuiDockNode; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:2709:24: warning: struct demoted to opaque type - has bitfield
+pub const ImGuiDockNode = struct_ImGuiDockNode; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:2735:10: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImGuiDockNode = opaque {
     pub const ImGuiDockNode_destroy = __root.ImGuiDockNode_destroy;
     pub const ImGuiDockNode_IsRootNode = __root.ImGuiDockNode_IsRootNode;
@@ -2938,12 +2975,43 @@ pub const struct_ImGuiDockNode = opaque {
     pub const SetLocalFlags = __root.ImGuiDockNode_SetLocalFlags;
     pub const UpdateMergedFlags = __root.ImGuiDockNode_UpdateMergedFlags;
 };
-pub const struct_STB_TexteditState = opaque {};
+pub const struct_StbUndoRecord = extern struct {
+    where: c_int = 0,
+    insert_length: c_int = 0,
+    delete_length: c_int = 0,
+    char_storage: c_int = 0,
+};
+pub const StbUndoRecord = struct_StbUndoRecord;
+pub const struct_StbUndoState = extern struct {
+    undo_rec: [99]StbUndoRecord = @import("std").mem.zeroes([99]StbUndoRecord),
+    undo_char: [999]u8 = @import("std").mem.zeroes([999]u8),
+    undo_point: c_short = 0,
+    redo_point: c_short = 0,
+    undo_char_point: c_int = 0,
+    redo_char_point: c_int = 0,
+};
+pub const StbUndoState = struct_StbUndoState;
+pub const struct_STB_TexteditState = extern struct {
+    cursor: c_int = 0,
+    select_start: c_int = 0,
+    select_end: c_int = 0,
+    insert_mode: u8 = 0,
+    row_count_per_page: c_int = 0,
+    cursor_at_end_of_line: u8 = 0,
+    initialized: u8 = 0,
+    has_preferred_x: u8 = 0,
+    single_line: u8 = 0,
+    padding1: u8 = 0,
+    padding2: u8 = 0,
+    padding3: u8 = 0,
+    preferred_x: f32 = 0,
+    undostate: StbUndoState = @import("std").mem.zeroes(StbUndoState),
+};
 pub const STB_TexteditState = struct_STB_TexteditState;
 pub const ImStbTexteditState = STB_TexteditState;
 pub const struct_ImGuiInputTextState = extern struct {
     Ctx: ?*ImGuiContext = null,
-    Stb: ?*ImStbTexteditState = null,
+    Stb: [*c]ImStbTexteditState = null,
     Flags: ImGuiInputTextFlags = 0,
     ID: ImGuiID = 0,
     TextLen: c_int = 0,
@@ -3064,6 +3132,7 @@ pub const struct_ImGuiMultiSelectTempData = extern struct {
     NavIdPassedBy: bool = false,
     RangeSrcPassedBy: bool = false,
     RangeDstPassedBy: bool = false,
+    IsSoleOrUnknownSelectionSize: bool = false,
     pub const ImGuiMultiSelectTempData_destroy = __root.ImGuiMultiSelectTempData_destroy;
     pub const ImGuiMultiSelectTempData_Clear = __root.ImGuiMultiSelectTempData_Clear;
     pub const ImGuiMultiSelectTempData_ClearIO = __root.ImGuiMultiSelectTempData_ClearIO;
@@ -3089,6 +3158,8 @@ pub const struct_ImGuiMetricsConfig = extern struct {
     ShowTablesRectsType: c_int = 0,
     HighlightMonitorIdx: c_int = 0,
     HighlightViewportID: ImGuiID = 0,
+    SettingsDiscardMonths: c_int = 0,
+    SettingsHighlightOldEntries: bool = false,
     ShowFontPreview: bool = false,
 };
 pub const ImGuiMetricsConfig = struct_ImGuiMetricsConfig;
@@ -3147,7 +3218,7 @@ pub const struct_ImGuiSettingsHandler = extern struct {
     pub const ImGuiSettingsHandler_destroy = __root.ImGuiSettingsHandler_destroy;
     pub const igAddSettingsHandler = __root.igAddSettingsHandler;
     pub const destroy = __root.ImGuiSettingsHandler_destroy;
-}; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:1951:11: warning: struct demoted to opaque type - has bitfield
+}; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:1976:11: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImGuiStyleVarInfo = opaque {
     pub const ImGuiStyleVarInfo_GetVarPtr = __root.ImGuiStyleVarInfo_GetVarPtr;
     pub const GetVarPtr = __root.ImGuiStyleVarInfo_GetVarPtr;
@@ -3163,14 +3234,8 @@ pub const struct_ImGuiTableInstanceData = extern struct {
     pub const ImGuiTableInstanceData_destroy = __root.ImGuiTableInstanceData_destroy;
     pub const destroy = __root.ImGuiTableInstanceData_destroy;
 };
-pub const ImGuiTableInstanceData = struct_ImGuiTableInstanceData;
-pub const struct_ImGuiTableSettings = extern struct {
-    ID: ImGuiID = 0,
-    SaveFlags: ImGuiTableFlags = 0,
-    RefScale: f32 = 0,
-    ColumnsCount: ImGuiTableColumnIdx = 0,
-    ColumnsCountMax: ImGuiTableColumnIdx = 0,
-    WantApply: bool = false,
+pub const ImGuiTableInstanceData = struct_ImGuiTableInstanceData; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3857:21: warning: struct demoted to opaque type - has opaque field
+pub const struct_ImGuiTableSettings = opaque {
     pub const ImGuiTableSettings_destroy = __root.ImGuiTableSettings_destroy;
     pub const ImGuiTableSettings_GetColumnSettings = __root.ImGuiTableSettings_GetColumnSettings;
     pub const igDebugNodeTableSettings = __root.igDebugNodeTableSettings;
@@ -3264,20 +3329,8 @@ pub const struct_ImVec2ih = extern struct {
     pub const ImVec2ih_destroy = __root.ImVec2ih_destroy;
     pub const destroy = __root.ImVec2ih_destroy;
 };
-pub const ImVec2ih = struct_ImVec2ih;
-pub const struct_ImGuiWindowSettings = extern struct {
-    ID: ImGuiID = 0,
-    Pos: ImVec2ih = @import("std").mem.zeroes(ImVec2ih),
-    Size: ImVec2ih = @import("std").mem.zeroes(ImVec2ih),
-    ViewportPos: ImVec2ih = @import("std").mem.zeroes(ImVec2ih),
-    ViewportId: ImGuiID = 0,
-    DockId: ImGuiID = 0,
-    ClassId: ImGuiID = 0,
-    DockOrder: c_short = 0,
-    Collapsed: bool = false,
-    IsChild: bool = false,
-    WantApply: bool = false,
-    WantDelete: bool = false,
+pub const ImVec2ih = struct_ImVec2ih; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:2814:21: warning: struct demoted to opaque type - has opaque field
+pub const struct_ImGuiWindowSettings = opaque {
     pub const ImGuiWindowSettings_destroy = __root.ImGuiWindowSettings_destroy;
     pub const ImGuiWindowSettings_GetName = __root.ImGuiWindowSettings_GetName;
     pub const igDebugNodeWindowSettings = __root.igDebugNodeWindowSettings;
@@ -3298,7 +3351,6 @@ pub const ImGuiTableBgTarget = c_int;
 pub const ImDrawFlags = c_int;
 pub const ImDrawTextFlags = c_int;
 pub const ImGuiButtonFlags = c_int;
-pub const ImGuiColorEditFlags = c_int;
 pub const ImGuiComboFlags = c_int;
 pub const ImGuiFocusedFlags = c_int;
 pub const ImGuiPopupFlags = c_int;
@@ -3359,6 +3411,9 @@ pub const ImGuiItemFlags_ButtonRepeat: c_int = 8;
 pub const ImGuiItemFlags_AutoClosePopups: c_int = 16;
 pub const ImGuiItemFlags_AllowDuplicateId: c_int = 32;
 pub const ImGuiItemFlags_Disabled: c_int = 64;
+pub const ImGuiItemFlags_LiveEditOnInputText: c_int = 128;
+pub const ImGuiItemFlags_LiveEditOnInputScalar: c_int = 256;
+pub const ImGuiItemFlags_LiveEditOnInput: c_int = 384;
 pub const ImGuiItemFlags_ = c_uint;
 pub const ImGuiInputTextFlags_None: c_int = 0;
 pub const ImGuiInputTextFlags_CharsDecimal: c_int = 1;
@@ -3848,15 +3903,17 @@ pub const ImGuiStyleVar_TableAngledHeadersAngle: c_int = 31;
 pub const ImGuiStyleVar_TableAngledHeadersTextAlign: c_int = 32;
 pub const ImGuiStyleVar_TreeLinesSize: c_int = 33;
 pub const ImGuiStyleVar_TreeLinesRounding: c_int = 34;
-pub const ImGuiStyleVar_DragDropTargetRounding: c_int = 35;
-pub const ImGuiStyleVar_ButtonTextAlign: c_int = 36;
-pub const ImGuiStyleVar_SelectableTextAlign: c_int = 37;
-pub const ImGuiStyleVar_SeparatorSize: c_int = 38;
-pub const ImGuiStyleVar_SeparatorTextBorderSize: c_int = 39;
-pub const ImGuiStyleVar_SeparatorTextAlign: c_int = 40;
-pub const ImGuiStyleVar_SeparatorTextPadding: c_int = 41;
-pub const ImGuiStyleVar_DockingSeparatorSize: c_int = 42;
-pub const ImGuiStyleVar_COUNT: c_int = 43;
+pub const ImGuiStyleVar_MenuItemRounding: c_int = 35;
+pub const ImGuiStyleVar_SelectableRounding: c_int = 36;
+pub const ImGuiStyleVar_DragDropTargetRounding: c_int = 37;
+pub const ImGuiStyleVar_ButtonTextAlign: c_int = 38;
+pub const ImGuiStyleVar_SelectableTextAlign: c_int = 39;
+pub const ImGuiStyleVar_SeparatorSize: c_int = 40;
+pub const ImGuiStyleVar_SeparatorTextBorderSize: c_int = 41;
+pub const ImGuiStyleVar_SeparatorTextAlign: c_int = 42;
+pub const ImGuiStyleVar_SeparatorTextPadding: c_int = 43;
+pub const ImGuiStyleVar_DockingSeparatorSize: c_int = 44;
+pub const ImGuiStyleVar_COUNT: c_int = 45;
 pub const ImGuiStyleVar_ = c_uint;
 pub const ImGuiButtonFlags_None: c_int = 0;
 pub const ImGuiButtonFlags_MouseButtonLeft: c_int = 1;
@@ -3890,14 +3947,15 @@ pub const ImGuiColorEditFlags_Uint8: c_int = 8388608;
 pub const ImGuiColorEditFlags_Float: c_int = 16777216;
 pub const ImGuiColorEditFlags_PickerHueBar: c_int = 33554432;
 pub const ImGuiColorEditFlags_PickerHueWheel: c_int = 67108864;
-pub const ImGuiColorEditFlags_InputRGB: c_int = 134217728;
-pub const ImGuiColorEditFlags_InputHSV: c_int = 268435456;
-pub const ImGuiColorEditFlags_DefaultOptions_: c_int = 177209344;
+pub const ImGuiColorEditFlags_PickerNoRotate: c_int = 134217728;
+pub const ImGuiColorEditFlags_InputRGB: c_int = 268435456;
+pub const ImGuiColorEditFlags_InputHSV: c_int = 536870912;
+pub const ImGuiColorEditFlags_DefaultOptions_: c_int = 311427072;
 pub const ImGuiColorEditFlags_AlphaMask_: c_int = 28674;
 pub const ImGuiColorEditFlags_DisplayMask_: c_int = 7340032;
 pub const ImGuiColorEditFlags_DataTypeMask_: c_int = 25165824;
 pub const ImGuiColorEditFlags_PickerMask_: c_int = 100663296;
-pub const ImGuiColorEditFlags_InputMask_: c_int = 402653184;
+pub const ImGuiColorEditFlags_InputMask_: c_int = 805306368;
 pub const ImGuiColorEditFlags_ = c_uint;
 pub const ImGuiSliderFlags_None: c_int = 0;
 pub const ImGuiSliderFlags_Logarithmic: c_int = 32;
@@ -4039,6 +4097,7 @@ pub const ImGuiMultiSelectFlags_SelectOnClickRelease: c_int = 32768;
 pub const ImGuiMultiSelectFlags_NavWrapX: c_int = 65536;
 pub const ImGuiMultiSelectFlags_NoSelectOnRightClick: c_int = 131072;
 pub const ImGuiMultiSelectFlags_SelectOnMask_: c_int = 57344;
+pub const ImGuiMultiSelectFlags_CheckboxMode_: c_int = 1048576;
 pub const ImGuiMultiSelectFlags_ = c_uint;
 pub const ImGuiSelectionRequestType_None: c_int = 0;
 pub const ImGuiSelectionRequestType_SetAll: c_int = 1;
@@ -4050,21 +4109,22 @@ pub const ImDrawFlags_RoundCornersTopRight: c_int = 32;
 pub const ImDrawFlags_RoundCornersBottomLeft: c_int = 64;
 pub const ImDrawFlags_RoundCornersBottomRight: c_int = 128;
 pub const ImDrawFlags_RoundCornersNone: c_int = 256;
-pub const ImDrawFlags_Closed: c_int = 512;
+pub const ImDrawFlags_RoundCornersAll: c_int = 240;
+pub const ImDrawFlags_RoundCornersDefault_: c_int = 240;
 pub const ImDrawFlags_RoundCornersTop: c_int = 48;
 pub const ImDrawFlags_RoundCornersBottom: c_int = 192;
 pub const ImDrawFlags_RoundCornersLeft: c_int = 80;
 pub const ImDrawFlags_RoundCornersRight: c_int = 160;
-pub const ImDrawFlags_RoundCornersAll: c_int = 240;
-pub const ImDrawFlags_RoundCornersDefault_: c_int = 240;
 pub const ImDrawFlags_RoundCornersMask_: c_int = 496;
-pub const ImDrawFlags_InvalidMask_: ImDrawFlags = -2147483633;
+pub const ImDrawFlags_Closed: c_int = 512;
+pub const ImDrawFlags_InvalidMask_: c_int = -2147483633;
 pub const ImDrawFlags_ = c_int;
 pub const ImDrawListFlags_None: c_int = 0;
 pub const ImDrawListFlags_AntiAliasedLines: c_int = 1;
 pub const ImDrawListFlags_AntiAliasedLinesUseTex: c_int = 2;
 pub const ImDrawListFlags_AntiAliasedFill: c_int = 4;
 pub const ImDrawListFlags_AllowVtxOffset: c_int = 8;
+pub const ImDrawListFlags_TextNoPixelSnap: c_int = 16;
 pub const ImDrawListFlags_ = c_uint;
 pub const ImTextureFormat_RGBA32: c_int = 0;
 pub const ImTextureFormat_Alpha8: c_int = 1;
@@ -4102,7 +4162,7 @@ pub const ImGuiViewportFlags_CanHostOtherWindows: c_int = 2048;
 pub const ImGuiViewportFlags_IsMinimized: c_int = 4096;
 pub const ImGuiViewportFlags_IsFocused: c_int = 8192;
 pub const ImGuiViewportFlags_ = c_uint;
-pub const ImGuiDataAuthority = c_int;
+pub const ImGuiDataAuthority = c_uint;
 pub const ImGuiDebugLogFlags = c_int;
 pub const ImGuiFocusRequestFlags = c_int;
 pub const ImGuiLogFlags = c_int;
@@ -4134,7 +4194,7 @@ pub const ImGuiItemFlags_NoFocus: c_int = 131072;
 pub const ImGuiItemFlags_Inputable: c_int = 1048576;
 pub const ImGuiItemFlags_HasSelectionUserData: c_int = 2097152;
 pub const ImGuiItemFlags_IsMultiSelect: c_int = 4194304;
-pub const ImGuiItemFlags_Default_: c_int = 16;
+pub const ImGuiItemFlags_Default_: c_int = 144;
 pub const ImGuiItemFlagsPrivate_ = c_uint;
 pub const ImGuiItemStatusFlags_None: c_int = 0;
 pub const ImGuiItemStatusFlags_HoveredRect: c_int = 1;
@@ -4240,6 +4300,7 @@ pub const struct_ImGuiComboPreviewData = extern struct {
 pub const ImGuiComboPreviewData = struct_ImGuiComboPreviewData;
 pub const struct_ImGuiInputTextDeactivatedState = extern struct {
     ID: ImGuiID = 0,
+    ElapseFrame: c_int = 0,
     TextA: ImVector_char = @import("std").mem.zeroes(ImVector_char),
     pub const ImGuiInputTextDeactivatedState_destroy = __root.ImGuiInputTextDeactivatedState_destroy;
     pub const ImGuiInputTextDeactivatedState_ClearFreeMemory = __root.ImGuiInputTextDeactivatedState_ClearFreeMemory;
@@ -4346,7 +4407,6 @@ pub const ImGuiScrollFlags_ = c_uint;
 pub const ImGuiNavRenderCursorFlags_None: c_int = 0;
 pub const ImGuiNavRenderCursorFlags_Compact: c_int = 2;
 pub const ImGuiNavRenderCursorFlags_AlwaysDraw: c_int = 4;
-pub const ImGuiNavRenderCursorFlags_NoRounding: c_int = 8;
 pub const ImGuiNavRenderCursorFlags_ = c_uint;
 pub const ImGuiNavMoveFlags_None: c_int = 0;
 pub const ImGuiNavMoveFlags_LoopX: c_int = 1;
@@ -4421,20 +4481,33 @@ pub const ImGuiWindowDockStyleCol_TabDimmedSelectedOverline: c_int = 7;
 pub const ImGuiWindowDockStyleCol_UnsavedMarker: c_int = 8;
 pub const ImGuiWindowDockStyleCol_COUNT: c_int = 9;
 pub const ImGuiWindowDockStyleCol = c_uint;
+pub const struct_ImGuiSettingsCleanupArgs = extern struct {
+    TypeHashFilter: ImGuiID = 0,
+    DiscardOlderThanMonths: c_int = 0,
+    DiscardWhenMissingDate: bool = false,
+    DiscardAll: bool = false,
+    SetCurrentSessionDateToAll: bool = false,
+    SetCurrentSessionDateWhenMissingDate: bool = false,
+    _DiscardOlderThanDate: c_int = 0,
+    pub const igCleanupIniSettings = __root.igCleanupIniSettings;
+};
+pub const ImGuiSettingsCleanupArgs = struct_ImGuiSettingsCleanupArgs;
 pub const ImGuiLocKey_VersionStr: c_int = 0;
 pub const ImGuiLocKey_TableSizeOne: c_int = 1;
 pub const ImGuiLocKey_TableSizeAllFit: c_int = 2;
 pub const ImGuiLocKey_TableSizeAllDefault: c_int = 3;
-pub const ImGuiLocKey_TableResetOrder: c_int = 4;
-pub const ImGuiLocKey_WindowingMainMenuBar: c_int = 5;
-pub const ImGuiLocKey_WindowingPopup: c_int = 6;
-pub const ImGuiLocKey_WindowingUntitled: c_int = 7;
-pub const ImGuiLocKey_OpenLink_s: c_int = 8;
-pub const ImGuiLocKey_CopyLink: c_int = 9;
-pub const ImGuiLocKey_DockingHideTabBar: c_int = 10;
-pub const ImGuiLocKey_DockingHoldShiftToDock: c_int = 11;
-pub const ImGuiLocKey_DockingDragToUndockOrMoveNode: c_int = 12;
-pub const ImGuiLocKey_COUNT: c_int = 13;
+pub const ImGuiLocKey_TableReset: c_int = 4;
+pub const ImGuiLocKey_TableResetOrder: c_int = 5;
+pub const ImGuiLocKey_TableResetVisibility: c_int = 6;
+pub const ImGuiLocKey_WindowingMainMenuBar: c_int = 7;
+pub const ImGuiLocKey_WindowingPopup: c_int = 8;
+pub const ImGuiLocKey_WindowingUntitled: c_int = 9;
+pub const ImGuiLocKey_OpenLink_s: c_int = 10;
+pub const ImGuiLocKey_CopyLink: c_int = 11;
+pub const ImGuiLocKey_DockingHideTabBar: c_int = 12;
+pub const ImGuiLocKey_DockingHoldShiftToDock: c_int = 13;
+pub const ImGuiLocKey_DockingDragToUndockOrMoveNode: c_int = 14;
+pub const ImGuiLocKey_COUNT: c_int = 15;
 pub const ImGuiLocKey = c_uint;
 pub const ImGuiErrorCallback = ?*const fn (ctx: ?*ImGuiContext, user_data: ?*anyopaque, msg: [*c]const u8) callconv(.c) void;
 pub const ImGuiDebugLogFlags_None: c_int = 0;
@@ -4450,7 +4523,8 @@ pub const ImGuiDebugLogFlags_EventFont: c_int = 256;
 pub const ImGuiDebugLogFlags_EventInputRouting: c_int = 512;
 pub const ImGuiDebugLogFlags_EventDocking: c_int = 1024;
 pub const ImGuiDebugLogFlags_EventViewport: c_int = 2048;
-pub const ImGuiDebugLogFlags_EventMask_: c_int = 4095;
+pub const ImGuiDebugLogFlags_EventTable: c_int = 4096;
+pub const ImGuiDebugLogFlags_EventMask_: c_int = 8191;
 pub const ImGuiDebugLogFlags_OutputToTTY: c_int = 1048576;
 pub const ImGuiDebugLogFlags_OutputToDebugger: c_int = 2097152;
 pub const ImGuiDebugLogFlags_OutputToTestEngine: c_int = 4194304;
@@ -4590,12 +4664,21 @@ pub const struct_ImVector_ImGuiTableColumnSortSpecs = extern struct {
     Capacity: c_int = 0,
     Data: [*c]ImGuiTableColumnSortSpecs = null,
 };
-pub const ImVector_ImGuiTableColumnSortSpecs = struct_ImVector_ImGuiTableColumnSortSpecs; // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:3772:10: warning: struct demoted to opaque type - has bitfield
+pub const ImVector_ImGuiTableColumnSortSpecs = struct_ImVector_ImGuiTableColumnSortSpecs; // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:3845:10: warning: struct demoted to opaque type - has bitfield
 pub const struct_ImGuiTableColumnSettings = opaque {
     pub const ImGuiTableColumnSettings_destroy = __root.ImGuiTableColumnSettings_destroy;
     pub const destroy = __root.ImGuiTableColumnSettings_destroy;
 };
 pub const ImGuiTableColumnSettings = struct_ImGuiTableColumnSettings;
+pub const struct_StbTexteditRow = extern struct {
+    x0: f32 = 0,
+    x1: f32 = 0,
+    baseline_y_delta: f32 = 0,
+    ymin: f32 = 0,
+    ymax: f32 = 0,
+    num_chars: c_int = 0,
+};
+pub const StbTexteditRow = struct_StbTexteditRow;
 pub const ImGuiFreeTypeLoaderFlags = c_uint;
 pub const ImGuiFreeTypeLoaderFlags_NoHinting: c_int = 1;
 pub const ImGuiFreeTypeLoaderFlags_NoAutoHint: c_int = 2;
@@ -4830,7 +4913,6 @@ pub extern fn igColorEdit4(label: [*c]const u8, col: [*c]f32, flags: ImGuiColorE
 pub extern fn igColorPicker3(label: [*c]const u8, col: [*c]f32, flags: ImGuiColorEditFlags) bool;
 pub extern fn igColorPicker4(label: [*c]const u8, col: [*c]f32, flags: ImGuiColorEditFlags, ref_col: [*c]const f32) bool;
 pub extern fn igColorButton(desc_id: [*c]const u8, col: ImVec4_c, flags: ImGuiColorEditFlags, size: ImVec2_c) bool;
-pub extern fn igSetColorEditOptions(flags: ImGuiColorEditFlags) void;
 pub extern fn igTreeNode_Str(label: [*c]const u8) bool;
 pub extern fn igTreeNode_StrStr(str_id: [*c]const u8, fmt: [*c]const u8, ...) bool;
 pub extern fn igTreeNode_Ptr(ptr_id: ?*const anyopaque, fmt: [*c]const u8, ...) bool;
@@ -4886,9 +4968,9 @@ pub extern fn igSetItemTooltipV(fmt: [*c]const u8, args: [*c]struct___va_list_ta
 pub extern fn igBeginPopup(str_id: [*c]const u8, flags: ImGuiWindowFlags) bool;
 pub extern fn igBeginPopupModal(name: [*c]const u8, p_open: [*c]bool, flags: ImGuiWindowFlags) bool;
 pub extern fn igEndPopup() void;
-pub extern fn igOpenPopup_Str(str_id: [*c]const u8, popup_flags: ImGuiPopupFlags) void;
-pub extern fn igOpenPopup_ID(id: ImGuiID, popup_flags: ImGuiPopupFlags) void;
-pub extern fn igOpenPopupOnItemClick(str_id: [*c]const u8, popup_flags: ImGuiPopupFlags) void;
+pub extern fn igOpenPopup_Str(str_id: [*c]const u8, popup_flags: ImGuiPopupFlags) bool;
+pub extern fn igOpenPopup_ID(id: ImGuiID, popup_flags: ImGuiPopupFlags) bool;
+pub extern fn igOpenPopupOnItemClick(str_id: [*c]const u8, popup_flags: ImGuiPopupFlags) bool;
 pub extern fn igCloseCurrentPopup() void;
 pub extern fn igBeginPopupContextItem(str_id: [*c]const u8, popup_flags: ImGuiPopupFlags) bool;
 pub extern fn igBeginPopupContextWindow(str_id: [*c]const u8, popup_flags: ImGuiPopupFlags) bool;
@@ -4899,7 +4981,7 @@ pub extern fn igEndTable() void;
 pub extern fn igTableNextRow(row_flags: ImGuiTableRowFlags, min_row_height: f32) void;
 pub extern fn igTableNextColumn() bool;
 pub extern fn igTableSetColumnIndex(column_n: c_int) bool;
-pub extern fn igTableSetupColumn(label: [*c]const u8, flags: ImGuiTableColumnFlags, init_width_or_weight: f32, user_id: ImGuiID) void;
+pub extern fn igTableSetupColumn(label: [*c]const u8, flags: ImGuiTableColumnFlags, init_width_or_weight: f32, user_data: ImGuiID) void;
 pub extern fn igTableSetupScrollFreeze(cols: c_int, rows: c_int) void;
 pub extern fn igTableHeader(label: [*c]const u8) void;
 pub extern fn igTableHeadersRow() void;
@@ -4973,6 +5055,7 @@ pub extern fn igGetItemRectMin() ImVec2_c;
 pub extern fn igGetItemRectMax() ImVec2_c;
 pub extern fn igGetItemRectSize() ImVec2_c;
 pub extern fn igGetItemFlags() ImGuiItemFlags;
+pub extern fn igGetItemClickedCountWithSingleClickDelay(mouse_button: ImGuiMouseButton, delay: f32) c_int;
 pub extern fn igGetMainViewport() [*c]ImGuiViewport;
 pub extern fn igGetBackgroundDrawList(viewport: [*c]ImGuiViewport) [*c]ImDrawList;
 pub extern fn igGetForegroundDrawList_ViewportPtr(viewport: [*c]ImGuiViewport) [*c]ImDrawList;
@@ -5278,10 +5361,10 @@ pub extern fn ImFontAtlas_AddFontFromMemoryTTF(self: [*c]ImFontAtlas, font_data:
 pub extern fn ImFontAtlas_AddFontFromMemoryCompressedTTF(self: [*c]ImFontAtlas, compressed_font_data: ?*const anyopaque, compressed_font_data_size: c_int, size_pixels: f32, font_cfg: [*c]const ImFontConfig, glyph_ranges: [*c]const ImWchar) [*c]ImFont;
 pub extern fn ImFontAtlas_AddFontFromMemoryCompressedBase85TTF(self: [*c]ImFontAtlas, compressed_font_data_base85: [*c]const u8, size_pixels: f32, font_cfg: [*c]const ImFontConfig, glyph_ranges: [*c]const ImWchar) [*c]ImFont;
 pub extern fn ImFontAtlas_RemoveFont(self: [*c]ImFontAtlas, font: [*c]ImFont) void;
-pub extern fn ImFontAtlas_Clear(self: [*c]ImFontAtlas) void;
-pub extern fn ImFontAtlas_ClearFonts(self: [*c]ImFontAtlas) void;
 pub extern fn ImFontAtlas_CompactCache(self: [*c]ImFontAtlas) void;
 pub extern fn ImFontAtlas_SetFontLoader(self: [*c]ImFontAtlas, font_loader: [*c]const ImFontLoader) void;
+pub extern fn ImFontAtlas_Clear(self: [*c]ImFontAtlas) void;
+pub extern fn ImFontAtlas_ClearFonts(self: [*c]ImFontAtlas) void;
 pub extern fn ImFontAtlas_ClearInputData(self: [*c]ImFontAtlas) void;
 pub extern fn ImFontAtlas_ClearTexData(self: [*c]ImFontAtlas) void;
 pub extern fn ImFontAtlas_GetGlyphRangesDefault(self: [*c]ImFontAtlas) [*c]const ImWchar;
@@ -5407,6 +5490,7 @@ pub extern fn igImFloor_Float(f: f32) f32;
 pub extern fn igImFloor_Vec2(v: ImVec2_c) ImVec2_c;
 pub extern fn igImTrunc64(f: f32) f32;
 pub extern fn igImRound64(f: f32) f32;
+pub extern fn igImCeilFast(f: f32) f32;
 pub extern fn igImModPositive(a: c_int, b: c_int) c_int;
 pub extern fn igImDot(a: ImVec2_c, b: ImVec2_c) f32;
 pub extern fn igImRotate(v: ImVec2_c, cos_a: f32, sin_a: f32) ImVec2_c;
@@ -5483,6 +5567,12 @@ pub extern fn ImGuiTextIndex_size(self: [*c]ImGuiTextIndex) c_int;
 pub extern fn ImGuiTextIndex_get_line_begin(self: [*c]ImGuiTextIndex, base: [*c]const u8, n: c_int) [*c]const u8;
 pub extern fn ImGuiTextIndex_get_line_end(self: [*c]ImGuiTextIndex, base: [*c]const u8, n: c_int) [*c]const u8;
 pub extern fn ImGuiTextIndex_append(self: [*c]ImGuiTextIndex, base: [*c]const u8, old_size: c_int, new_size: c_int) void;
+pub extern fn ImGuiPackedDate_ImGuiPackedDate_Nil() ?*ImGuiPackedDate;
+pub extern fn ImGuiPackedDate_destroy(self: ?*ImGuiPackedDate) void;
+pub extern fn ImGuiPackedDate_ImGuiPackedDate_Int(yyyymmdd: c_int) ?*ImGuiPackedDate;
+pub extern fn ImGuiPackedDate_IsValid(self: ?*ImGuiPackedDate) bool;
+pub extern fn ImGuiPackedDate_Unpack(self: ?*ImGuiPackedDate) c_int;
+pub extern fn ImGuiPackedDate_SubtractMonths(self: ?*ImGuiPackedDate, m: c_int) void;
 pub extern fn igImLowerBound(in_begin: [*c]ImGuiStoragePair, in_end: [*c]ImGuiStoragePair, key: ImGuiID) [*c]ImGuiStoragePair;
 pub extern fn ImDrawListSharedData_ImDrawListSharedData() [*c]ImDrawListSharedData;
 pub extern fn ImDrawListSharedData_destroy(self: [*c]ImDrawListSharedData) void;
@@ -5596,9 +5686,9 @@ pub extern fn ImGuiViewportP_UpdateWorkRect(self: [*c]ImGuiViewportP) void;
 pub extern fn ImGuiViewportP_GetMainRect(self: [*c]ImGuiViewportP) ImRect_c;
 pub extern fn ImGuiViewportP_GetWorkRect(self: [*c]ImGuiViewportP) ImRect_c;
 pub extern fn ImGuiViewportP_GetBuildWorkRect(self: [*c]ImGuiViewportP) ImRect_c;
-pub extern fn ImGuiWindowSettings_ImGuiWindowSettings() [*c]ImGuiWindowSettings;
-pub extern fn ImGuiWindowSettings_destroy(self: [*c]ImGuiWindowSettings) void;
-pub extern fn ImGuiWindowSettings_GetName(self: [*c]ImGuiWindowSettings) [*c]u8;
+pub extern fn ImGuiWindowSettings_ImGuiWindowSettings() ?*ImGuiWindowSettings;
+pub extern fn ImGuiWindowSettings_destroy(self: ?*ImGuiWindowSettings) void;
+pub extern fn ImGuiWindowSettings_GetName(self: ?*ImGuiWindowSettings) [*c]u8;
 pub extern fn ImGuiSettingsHandler_ImGuiSettingsHandler() [*c]ImGuiSettingsHandler;
 pub extern fn ImGuiSettingsHandler_destroy(self: [*c]ImGuiSettingsHandler) void;
 pub extern fn ImGuiDebugAllocInfo_ImGuiDebugAllocInfo() [*c]ImGuiDebugAllocInfo;
@@ -5637,9 +5727,79 @@ pub extern fn ImGuiTableTempData_ImGuiTableTempData() [*c]ImGuiTableTempData;
 pub extern fn ImGuiTableTempData_destroy(self: [*c]ImGuiTableTempData) void;
 pub extern fn ImGuiTableColumnSettings_ImGuiTableColumnSettings() ?*ImGuiTableColumnSettings;
 pub extern fn ImGuiTableColumnSettings_destroy(self: ?*ImGuiTableColumnSettings) void;
-pub extern fn ImGuiTableSettings_ImGuiTableSettings() [*c]ImGuiTableSettings;
-pub extern fn ImGuiTableSettings_destroy(self: [*c]ImGuiTableSettings) void;
-pub extern fn ImGuiTableSettings_GetColumnSettings(self: [*c]ImGuiTableSettings) ?*ImGuiTableColumnSettings;
+pub extern fn ImGuiTableSettings_ImGuiTableSettings() ?*ImGuiTableSettings;
+pub extern fn ImGuiTableSettings_destroy(self: ?*ImGuiTableSettings) void;
+pub extern fn ImGuiTableSettings_GetColumnSettings(self: ?*ImGuiTableSettings) ?*ImGuiTableColumnSettings;
+pub extern fn igTableOpenContextMenu(column_n: c_int) void;
+pub extern fn igTableSetColumnWidth(column_n: c_int, width: f32) void;
+pub extern fn igTableSetColumnSortDirection(column_n: c_int, sort_direction: ImGuiSortDirection, append_to_sort_specs: bool) void;
+pub extern fn igTableGetHoveredRow() c_int;
+pub extern fn igTableGetHeaderRowHeight() f32;
+pub extern fn igTableGetHeaderAngledMaxLabelWidth() f32;
+pub extern fn igTablePushBackgroundChannel() void;
+pub extern fn igTablePopBackgroundChannel() void;
+pub extern fn igTablePushColumnChannel(column_n: c_int) void;
+pub extern fn igTablePopColumnChannel() void;
+pub extern fn igTableAngledHeadersRowEx(row_id: ImGuiID, angle: f32, max_label_width: f32, data: [*c]const ImGuiTableHeaderData, data_count: c_int) void;
+pub extern fn igGetCurrentTable() ?*ImGuiTable;
+pub extern fn igTableFindByID(id: ImGuiID) ?*ImGuiTable;
+pub extern fn igBeginTableEx(name: [*c]const u8, id: ImGuiID, columns_count: c_int, flags: ImGuiTableFlags, outer_size: ImVec2_c, inner_width: f32) bool;
+pub extern fn igTableBeginInitMemory(table: ?*ImGuiTable, columns_count: c_int) void;
+pub extern fn igTableApplyQueuedRequests(table: ?*ImGuiTable) void;
+pub extern fn igTableSetupDrawChannels(table: ?*ImGuiTable) void;
+pub extern fn igTableReconcileColumns(table: ?*ImGuiTable) void;
+pub extern fn igTableUpdateLayout(table: ?*ImGuiTable) void;
+pub extern fn igTableUpdateBorders(table: ?*ImGuiTable) void;
+pub extern fn igTableUpdateColumnsWeightFromWidth(table: ?*ImGuiTable) void;
+pub extern fn igTableApplyExternalUnclipRect(table: ?*ImGuiTable, rect: [*c]ImRect) void;
+pub extern fn igTableDrawBorders(table: ?*ImGuiTable) void;
+pub extern fn igTableDrawDefaultContextMenu(table: ?*ImGuiTable, flags_for_section_to_display: ImGuiTableFlags) void;
+pub extern fn igTableBeginContextMenuPopup(table: ?*ImGuiTable) bool;
+pub extern fn igTableMergeDrawChannels(table: ?*ImGuiTable) void;
+pub extern fn igTableGetInstanceData(table: ?*ImGuiTable, instance_no: c_int) [*c]ImGuiTableInstanceData;
+pub extern fn igTableGetInstanceID(table: ?*ImGuiTable, instance_no: c_int) ImGuiID;
+pub extern fn igTableFixDisplayOrder(table: ?*ImGuiTable) void;
+pub extern fn igTableSortSpecsSanitize(table: ?*ImGuiTable) void;
+pub extern fn igTableSortSpecsBuild(table: ?*ImGuiTable) void;
+pub extern fn igTableInitColumnDefaults(table: ?*ImGuiTable, column: ?*ImGuiTableColumn, init_mask: ImGuiTableColumnFlags) void;
+pub extern fn igTableGetColumnNextSortDirection(column: ?*ImGuiTableColumn) ImGuiSortDirection;
+pub extern fn igTableFixColumnSortDirection(table: ?*ImGuiTable, column: ?*ImGuiTableColumn) void;
+pub extern fn igTableGetColumnWidthAuto(table: ?*ImGuiTable, column: ?*ImGuiTableColumn) f32;
+pub extern fn igTableBeginRow(table: ?*ImGuiTable) void;
+pub extern fn igTableEndRow(table: ?*ImGuiTable) void;
+pub extern fn igTableBeginCell(table: ?*ImGuiTable, column_n: c_int) void;
+pub extern fn igTableEndCell(table: ?*ImGuiTable) void;
+pub extern fn igTableGetCellBgRect(table: ?*const ImGuiTable, column_n: c_int) ImRect_c;
+pub extern fn igTableGetColumnName_TablePtr(table: ?*const ImGuiTable, column_n: c_int) [*c]const u8;
+pub extern fn igTableGetColumnResizeID(table: ?*ImGuiTable, column_n: c_int, instance_no: c_int) ImGuiID;
+pub extern fn igTableCalcMaxColumnWidth(table: ?*const ImGuiTable, column_n: c_int) f32;
+pub extern fn igTableSetColumnWidthAutoSingle(table: ?*ImGuiTable, column_n: c_int) void;
+pub extern fn igTableSetColumnWidthAutoAll(table: ?*ImGuiTable) void;
+pub extern fn igTableSetColumnDisplayOrder(table: ?*ImGuiTable, column_n: c_int, dst_order: c_int) void;
+pub extern fn igTableQueueSetColumnDisplayOrder(table: ?*ImGuiTable, column_n: c_int, dst_order: c_int) void;
+pub extern fn igTableRemove(table: ?*ImGuiTable) void;
+pub extern fn igTableGcCompactTransientBuffers_TablePtr(table: ?*ImGuiTable) void;
+pub extern fn igTableGcCompactTransientBuffers_TableTempDataPtr(table: [*c]ImGuiTableTempData) void;
+pub extern fn igTableGcCompactSettings() void;
+pub extern fn igTableLoadSettings(table: ?*ImGuiTable) void;
+pub extern fn igTableLoadSettingsForColumns(table: ?*ImGuiTable) void;
+pub extern fn igTableLoadSettingsForColumn(column: ?*ImGuiTableColumn, column_settings: ?*ImGuiTableColumnSettings, load_flags: ImGuiTableFlags) void;
+pub extern fn igTableSaveSettings(table: ?*ImGuiTable) void;
+pub extern fn igTableResetSettings(table: ?*ImGuiTable) void;
+pub extern fn igTableGetBoundSettings(table: ?*ImGuiTable) ?*ImGuiTableSettings;
+pub extern fn igTableSettingsAddSettingsHandler() void;
+pub extern fn igTableSettingsCreate(id: ImGuiID, columns_count: c_int) ?*ImGuiTableSettings;
+pub extern fn igTableSettingsFindByID(id: ImGuiID) ?*ImGuiTableSettings;
+pub extern fn igSetWindowClipRectBeforeSetChannel(window: ?*ImGuiWindow, clip_rect: ImRect_c) void;
+pub extern fn igBeginColumns(str_id: [*c]const u8, count: c_int, flags: ImGuiOldColumnFlags) void;
+pub extern fn igEndColumns() void;
+pub extern fn igPushColumnClipRect(column_index: c_int) void;
+pub extern fn igPushColumnsBackground() void;
+pub extern fn igPopColumnsBackground() void;
+pub extern fn igGetColumnsID(str_id: [*c]const u8, count: c_int) ImGuiID;
+pub extern fn igFindOrCreateColumns(window: ?*ImGuiWindow, id: ImGuiID) [*c]ImGuiOldColumns;
+pub extern fn igGetColumnOffsetFromNorm(columns: [*c]const ImGuiOldColumns, offset_norm: f32) f32;
+pub extern fn igGetColumnNormFromOffset(columns: [*c]const ImGuiOldColumns, offset: f32) f32;
 pub extern fn igGetIO_ContextPtr(ctx: ?*ImGuiContext) [*c]ImGuiIO;
 pub extern fn igGetPlatformIO_ContextPtr(ctx: ?*ImGuiContext) [*c]ImGuiPlatformIO;
 pub extern fn igGetScale() f32;
@@ -5712,12 +5872,13 @@ pub extern fn igFindHoveredViewportFromPlatformWindowStack(mouse_platform_pos: I
 pub extern fn igMarkIniSettingsDirty_Nil() void;
 pub extern fn igMarkIniSettingsDirty_WindowPtr(window: ?*ImGuiWindow) void;
 pub extern fn igClearIniSettings() void;
+pub extern fn igCleanupIniSettings(args: [*c]ImGuiSettingsCleanupArgs) void;
 pub extern fn igAddSettingsHandler(handler: [*c]const ImGuiSettingsHandler) void;
 pub extern fn igRemoveSettingsHandler(type_name: [*c]const u8) void;
 pub extern fn igFindSettingsHandler(type_name: [*c]const u8) [*c]ImGuiSettingsHandler;
-pub extern fn igCreateNewWindowSettings(name: [*c]const u8) [*c]ImGuiWindowSettings;
-pub extern fn igFindWindowSettingsByID(id: ImGuiID) [*c]ImGuiWindowSettings;
-pub extern fn igFindWindowSettingsByWindow(window: ?*ImGuiWindow) [*c]ImGuiWindowSettings;
+pub extern fn igCreateNewWindowSettings(name: [*c]const u8) ?*ImGuiWindowSettings;
+pub extern fn igFindWindowSettingsByID(id: ImGuiID) ?*ImGuiWindowSettings;
+pub extern fn igFindWindowSettingsByWindow(window: ?*ImGuiWindow) ?*ImGuiWindowSettings;
 pub extern fn igClearWindowSettings(name: [*c]const u8) void;
 pub extern fn igLocalizeRegisterEntries(entries: [*c]const ImGuiLocEntry, count: c_int) void;
 pub extern fn igLocalizeGetMsg(key: ImGuiLocKey) [*c]const u8;
@@ -5765,7 +5926,7 @@ pub extern fn igBeginChildEx(name: [*c]const u8, id: ImGuiID, size_arg: ImVec2_c
 pub extern fn igFindFrontMostVisibleChildWindow(window: ?*ImGuiWindow) ?*ImGuiWindow;
 pub extern fn igBeginPopupEx(id: ImGuiID, extra_window_flags: ImGuiWindowFlags) bool;
 pub extern fn igBeginPopupMenuEx(id: ImGuiID, label: [*c]const u8, extra_window_flags: ImGuiWindowFlags) bool;
-pub extern fn igOpenPopupEx(id: ImGuiID, popup_flags: ImGuiPopupFlags) void;
+pub extern fn igOpenPopupEx(id: ImGuiID, popup_flags: ImGuiPopupFlags) bool;
 pub extern fn igClosePopupToLevel(remaining: c_int, restore_focus_to_window_under_popup: bool) void;
 pub extern fn igClosePopupsOverWindow(ref_window: ?*ImGuiWindow, restore_focus_to_window_under_popup: bool) void;
 pub extern fn igClosePopupsExceptModals() void;
@@ -5906,77 +6067,11 @@ pub extern fn igTypingSelectFindBestLeadingMatch(req: [*c]ImGuiTypingSelectReque
 pub extern fn igBeginBoxSelect(scope_rect: ImRect_c, window: ?*ImGuiWindow, box_select_id: ImGuiID, ms_flags: ImGuiMultiSelectFlags) bool;
 pub extern fn igEndBoxSelect(scope_rect: ImRect_c, ms_flags: ImGuiMultiSelectFlags) void;
 pub extern fn igMultiSelectItemHeader(id: ImGuiID, p_selected: [*c]bool, p_button_flags: [*c]ImGuiButtonFlags) void;
-pub extern fn igMultiSelectItemFooter(id: ImGuiID, p_selected: [*c]bool, p_pressed: [*c]bool) void;
+pub extern fn igMultiSelectItemFooter(id: ImGuiID, p_selected: [*c]bool, p_pressed: [*c]bool, extra_flags: ImGuiMultiSelectFlags) void;
 pub extern fn igMultiSelectAddSetAll(ms: [*c]ImGuiMultiSelectTempData, selected: bool) void;
 pub extern fn igMultiSelectAddSetRange(ms: [*c]ImGuiMultiSelectTempData, selected: bool, range_dir: c_int, first_item: ImGuiSelectionUserData, last_item: ImGuiSelectionUserData) void;
 pub extern fn igGetBoxSelectState(id: ImGuiID) ?*ImGuiBoxSelectState;
 pub extern fn igGetMultiSelectState(id: ImGuiID) [*c]ImGuiMultiSelectState;
-pub extern fn igSetWindowClipRectBeforeSetChannel(window: ?*ImGuiWindow, clip_rect: ImRect_c) void;
-pub extern fn igBeginColumns(str_id: [*c]const u8, count: c_int, flags: ImGuiOldColumnFlags) void;
-pub extern fn igEndColumns() void;
-pub extern fn igPushColumnClipRect(column_index: c_int) void;
-pub extern fn igPushColumnsBackground() void;
-pub extern fn igPopColumnsBackground() void;
-pub extern fn igGetColumnsID(str_id: [*c]const u8, count: c_int) ImGuiID;
-pub extern fn igFindOrCreateColumns(window: ?*ImGuiWindow, id: ImGuiID) [*c]ImGuiOldColumns;
-pub extern fn igGetColumnOffsetFromNorm(columns: [*c]const ImGuiOldColumns, offset_norm: f32) f32;
-pub extern fn igGetColumnNormFromOffset(columns: [*c]const ImGuiOldColumns, offset: f32) f32;
-pub extern fn igTableOpenContextMenu(column_n: c_int) void;
-pub extern fn igTableSetColumnWidth(column_n: c_int, width: f32) void;
-pub extern fn igTableSetColumnSortDirection(column_n: c_int, sort_direction: ImGuiSortDirection, append_to_sort_specs: bool) void;
-pub extern fn igTableGetHoveredRow() c_int;
-pub extern fn igTableGetHeaderRowHeight() f32;
-pub extern fn igTableGetHeaderAngledMaxLabelWidth() f32;
-pub extern fn igTablePushBackgroundChannel() void;
-pub extern fn igTablePopBackgroundChannel() void;
-pub extern fn igTablePushColumnChannel(column_n: c_int) void;
-pub extern fn igTablePopColumnChannel() void;
-pub extern fn igTableAngledHeadersRowEx(row_id: ImGuiID, angle: f32, max_label_width: f32, data: [*c]const ImGuiTableHeaderData, data_count: c_int) void;
-pub extern fn igGetCurrentTable() ?*ImGuiTable;
-pub extern fn igTableFindByID(id: ImGuiID) ?*ImGuiTable;
-pub extern fn igBeginTableEx(name: [*c]const u8, id: ImGuiID, columns_count: c_int, flags: ImGuiTableFlags, outer_size: ImVec2_c, inner_width: f32) bool;
-pub extern fn igTableBeginInitMemory(table: ?*ImGuiTable, columns_count: c_int) void;
-pub extern fn igTableBeginApplyRequests(table: ?*ImGuiTable) void;
-pub extern fn igTableSetupDrawChannels(table: ?*ImGuiTable) void;
-pub extern fn igTableUpdateLayout(table: ?*ImGuiTable) void;
-pub extern fn igTableUpdateBorders(table: ?*ImGuiTable) void;
-pub extern fn igTableUpdateColumnsWeightFromWidth(table: ?*ImGuiTable) void;
-pub extern fn igTableApplyExternalUnclipRect(table: ?*ImGuiTable, rect: [*c]ImRect) void;
-pub extern fn igTableDrawBorders(table: ?*ImGuiTable) void;
-pub extern fn igTableDrawDefaultContextMenu(table: ?*ImGuiTable, flags_for_section_to_display: ImGuiTableFlags) void;
-pub extern fn igTableBeginContextMenuPopup(table: ?*ImGuiTable) bool;
-pub extern fn igTableMergeDrawChannels(table: ?*ImGuiTable) void;
-pub extern fn igTableGetInstanceData(table: ?*ImGuiTable, instance_no: c_int) [*c]ImGuiTableInstanceData;
-pub extern fn igTableGetInstanceID(table: ?*ImGuiTable, instance_no: c_int) ImGuiID;
-pub extern fn igTableFixDisplayOrder(table: ?*ImGuiTable) void;
-pub extern fn igTableSortSpecsSanitize(table: ?*ImGuiTable) void;
-pub extern fn igTableSortSpecsBuild(table: ?*ImGuiTable) void;
-pub extern fn igTableGetColumnNextSortDirection(column: ?*ImGuiTableColumn) ImGuiSortDirection;
-pub extern fn igTableFixColumnSortDirection(table: ?*ImGuiTable, column: ?*ImGuiTableColumn) void;
-pub extern fn igTableGetColumnWidthAuto(table: ?*ImGuiTable, column: ?*ImGuiTableColumn) f32;
-pub extern fn igTableBeginRow(table: ?*ImGuiTable) void;
-pub extern fn igTableEndRow(table: ?*ImGuiTable) void;
-pub extern fn igTableBeginCell(table: ?*ImGuiTable, column_n: c_int) void;
-pub extern fn igTableEndCell(table: ?*ImGuiTable) void;
-pub extern fn igTableGetCellBgRect(table: ?*const ImGuiTable, column_n: c_int) ImRect_c;
-pub extern fn igTableGetColumnName_TablePtr(table: ?*const ImGuiTable, column_n: c_int) [*c]const u8;
-pub extern fn igTableGetColumnResizeID(table: ?*ImGuiTable, column_n: c_int, instance_no: c_int) ImGuiID;
-pub extern fn igTableCalcMaxColumnWidth(table: ?*const ImGuiTable, column_n: c_int) f32;
-pub extern fn igTableSetColumnWidthAutoSingle(table: ?*ImGuiTable, column_n: c_int) void;
-pub extern fn igTableSetColumnWidthAutoAll(table: ?*ImGuiTable) void;
-pub extern fn igTableSetColumnDisplayOrder(table: ?*ImGuiTable, column_n: c_int, dst_order: c_int) void;
-pub extern fn igTableQueueSetColumnDisplayOrder(table: ?*ImGuiTable, column_n: c_int, dst_order: c_int) void;
-pub extern fn igTableRemove(table: ?*ImGuiTable) void;
-pub extern fn igTableGcCompactTransientBuffers_TablePtr(table: ?*ImGuiTable) void;
-pub extern fn igTableGcCompactTransientBuffers_TableTempDataPtr(table: [*c]ImGuiTableTempData) void;
-pub extern fn igTableGcCompactSettings() void;
-pub extern fn igTableLoadSettings(table: ?*ImGuiTable) void;
-pub extern fn igTableSaveSettings(table: ?*ImGuiTable) void;
-pub extern fn igTableResetSettings(table: ?*ImGuiTable) void;
-pub extern fn igTableGetBoundSettings(table: ?*ImGuiTable) [*c]ImGuiTableSettings;
-pub extern fn igTableSettingsAddSettingsHandler() void;
-pub extern fn igTableSettingsCreate(id: ImGuiID, columns_count: c_int) [*c]ImGuiTableSettings;
-pub extern fn igTableSettingsFindByID(id: ImGuiID) [*c]ImGuiTableSettings;
 pub extern fn igGetCurrentTabBar() [*c]ImGuiTabBar;
 pub extern fn igTabBarFindByID(id: ImGuiID) [*c]ImGuiTabBar;
 pub extern fn igTabBarRemove(tab_bar: [*c]ImGuiTabBar) void;
@@ -6010,7 +6105,7 @@ pub extern fn igRenderFrame(p_min: ImVec2_c, p_max: ImVec2_c, fill_col: ImU32, b
 pub extern fn igRenderFrameBorder(p_min: ImVec2_c, p_max: ImVec2_c, rounding: f32) void;
 pub extern fn igRenderColorComponentMarker(bb: ImRect_c, col: ImU32, rounding: f32) void;
 pub extern fn igRenderColorRectWithAlphaCheckerboard(draw_list: [*c]ImDrawList, p_min: ImVec2_c, p_max: ImVec2_c, fill_col: ImU32, grid_step: f32, grid_off: ImVec2_c, rounding: f32, flags: ImDrawFlags) void;
-pub extern fn igRenderNavCursor(bb: ImRect_c, id: ImGuiID, flags: ImGuiNavRenderCursorFlags) void;
+pub extern fn igRenderNavCursor(bb: ImRect_c, id: ImGuiID, flags: ImGuiNavRenderCursorFlags, rounding: f32) void;
 pub extern fn igFindRenderedTextEnd(text: [*c]const u8, text_end: [*c]const u8) [*c]const u8;
 pub extern fn igRenderMouseCursor(pos: ImVec2_c, scale: f32, mouse_cursor: ImGuiMouseCursor, col_fill: ImU32, col_border: ImU32, col_shadow: ImU32) void;
 pub extern fn igRenderArrow(draw_list: [*c]ImDrawList, pos: ImVec2_c, col: ImU32, dir: ImGuiDir, scale: f32) void;
@@ -6110,12 +6205,12 @@ pub extern fn igDebugNodeTexture(tex: [*c]ImTextureData, int_id: c_int, highligh
 pub extern fn igDebugNodeStorage(storage: [*c]ImGuiStorage, label: [*c]const u8) void;
 pub extern fn igDebugNodeTabBar(tab_bar: [*c]ImGuiTabBar, label: [*c]const u8) void;
 pub extern fn igDebugNodeTable(table: ?*ImGuiTable) void;
-pub extern fn igDebugNodeTableSettings(settings: [*c]ImGuiTableSettings) void;
+pub extern fn igDebugNodeTableSettings(settings: ?*ImGuiTableSettings, table: ?*ImGuiTable) void;
 pub extern fn igDebugNodeInputTextState(state: [*c]ImGuiInputTextState) void;
 pub extern fn igDebugNodeTypingSelectState(state: [*c]ImGuiTypingSelectState) void;
 pub extern fn igDebugNodeMultiSelectState(state: [*c]ImGuiMultiSelectState) void;
 pub extern fn igDebugNodeWindow(window: ?*ImGuiWindow, label: [*c]const u8) void;
-pub extern fn igDebugNodeWindowSettings(settings: [*c]ImGuiWindowSettings) void;
+pub extern fn igDebugNodeWindowSettings(settings: ?*ImGuiWindowSettings) void;
 pub extern fn igDebugNodeWindowsList(windows: [*c]ImVector_ImGuiWindowPtr, label: [*c]const u8) void;
 pub extern fn igDebugNodeWindowsListByBeginStackParent(windows: [*c]?*ImGuiWindow, windows_size: c_int, parent_in_begin_stack: ?*ImGuiWindow) void;
 pub extern fn igDebugNodeViewport(viewport: [*c]ImGuiViewportP) void;
@@ -6180,6 +6275,7 @@ pub extern fn igImFontAtlasTextureBlockPostProcessMultiply(data: [*c]ImFontAtlas
 pub extern fn igImFontAtlasTextureBlockFill(dst_tex: [*c]ImTextureData, dst_x: c_int, dst_y: c_int, w: c_int, h: c_int, col: ImU32) void;
 pub extern fn igImFontAtlasTextureBlockCopy(src_tex: [*c]ImTextureData, src_x: c_int, src_y: c_int, dst_tex: [*c]ImTextureData, dst_x: c_int, dst_y: c_int, w: c_int, h: c_int) void;
 pub extern fn igImFontAtlasTextureBlockQueueUpload(atlas: [*c]ImFontAtlas, tex: [*c]ImTextureData, x: c_int, y: c_int, w: c_int, h: c_int) void;
+pub extern fn igImTextureDataUpdateNewFrame(tex: [*c]ImTextureData) bool;
 pub extern fn igImTextureDataQueueUpload(tex: [*c]ImTextureData, x: c_int, y: c_int, w: c_int, h: c_int) void;
 pub extern fn igImTextureDataGetFormatBytesPerPixel(format: ImTextureFormat) c_int;
 pub extern fn igImTextureDataGetStatusName(status: ImTextureStatus) [*c]const u8;
@@ -6650,7 +6746,7 @@ pub const __FLT_RADIX__ = @as(c_int, 2);
 pub const __DECIMAL_DIG__ = __LDBL_DECIMAL_DIG__;
 pub const __pic__ = @as(c_int, 2);
 pub const __PIC__ = @as(c_int, 2);
-pub const __GLIBC_MINOR__ = @as(c_int, 43);
+pub const __GLIBC_MINOR__ = @as(c_int, 44);
 pub const IMGUI_DISABLE_DEFAULT_SHELL_FUNCTIONS = @as(c_int, 1);
 pub const IMGUI_DISABLE_FILE_FUNCTIONS = @as(c_int, 1);
 pub const IMGUI_ENABLE_FREETYPE = @as(c_int, 1);
@@ -6894,14 +6990,14 @@ pub const __need_size_t = "";
 pub const __need_NULL = "";
 pub const __STDC_VERSION_STDDEF_H__ = @as(c_long, 202311);
 pub const NULL = __helpers.cast(?*anyopaque, @as(c_int, 0));
-pub const offsetof = @compileError("unable to translate macro: undefined identifier `__builtin_offsetof`"); // /home/jae/Tools/zig/current/lib/compiler/aro/include/stddef.h:18:9
+pub const offsetof = @compileError("unable to translate macro: undefined identifier `__builtin_offsetof`"); // /usr/lib/zig/compiler/aro/include/stddef.h:18:9
 pub const __need___va_list = "";
 pub const __STDC_VERSION_STDARG_H__ = @as(c_int, 0);
-pub const va_start = @compileError("unable to translate macro: undefined identifier `__builtin_va_start`"); // /home/jae/Tools/zig/current/lib/compiler/aro/include/stdarg.h:12:9
-pub const va_end = @compileError("unable to translate macro: undefined identifier `__builtin_va_end`"); // /home/jae/Tools/zig/current/lib/compiler/aro/include/stdarg.h:14:9
-pub const va_arg = @compileError("unable to translate macro: undefined identifier `__builtin_va_arg`"); // /home/jae/Tools/zig/current/lib/compiler/aro/include/stdarg.h:15:9
-pub const __va_copy = @compileError("unable to translate macro: undefined identifier `__builtin_va_copy`"); // /home/jae/Tools/zig/current/lib/compiler/aro/include/stdarg.h:18:9
-pub const va_copy = @compileError("unable to translate macro: undefined identifier `__builtin_va_copy`"); // /home/jae/Tools/zig/current/lib/compiler/aro/include/stdarg.h:22:9
+pub const va_start = @compileError("unable to translate macro: undefined identifier `__builtin_va_start`"); // /usr/lib/zig/compiler/aro/include/stdarg.h:12:9
+pub const va_end = @compileError("unable to translate macro: undefined identifier `__builtin_va_end`"); // /usr/lib/zig/compiler/aro/include/stdarg.h:14:9
+pub const va_arg = @compileError("unable to translate macro: undefined identifier `__builtin_va_arg`"); // /usr/lib/zig/compiler/aro/include/stdarg.h:15:9
+pub const __va_copy = @compileError("unable to translate macro: undefined identifier `__builtin_va_copy`"); // /usr/lib/zig/compiler/aro/include/stdarg.h:18:9
+pub const va_copy = @compileError("unable to translate macro: undefined identifier `__builtin_va_copy`"); // /usr/lib/zig/compiler/aro/include/stdarg.h:22:9
 pub const __GNUC_VA_LIST = @as(c_int, 1);
 pub const _BITS_TYPES_H = @as(c_int, 1);
 pub const __S16_TYPE = c_short;
@@ -7124,14 +7220,14 @@ pub const UINT32_C = __helpers.U_SUFFIX;
 pub const UINT64_C = __helpers.UL_SUFFIX;
 pub const INTMAX_C = __helpers.L_SUFFIX;
 pub const UINTMAX_C = __helpers.UL_SUFFIX;
-pub const API = @compileError("unable to translate macro: undefined identifier `__visibility__`"); // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:18:17
+pub const API = @compileError("unable to translate macro: undefined identifier `__visibility__`"); // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:18:17
 pub const @"bool" = bool;
 pub const @"true" = @as(c_int, 1);
 pub const @"false" = @as(c_int, 0);
 pub const __bool_true_false_are_defined = @as(c_int, 1);
-pub const EXTERN = @compileError("unable to translate C expr: unexpected token 'extern'"); // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:29:13
+pub const EXTERN = @compileError("unable to translate C expr: unexpected token 'extern'"); // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:29:13
 pub const CIMGUI_API = EXTERN ++ API;
-pub const CONST = @compileError("unable to translate C expr: unexpected token 'const'"); // /home/jae/Documents/ZigProjects/de-game/zig-pkg/N-V-__8AABfuPQAvt_0oVwOfybZZXaUnyHbGXLa0gcrAkRfM/cimgui.h:33:9
+pub const CONST = @compileError("unable to translate C expr: unexpected token 'const'"); // /home/jae/Documents/ZigProjects/zig-node-editor/jaetools/third-party/imgui/upstream/cimgui/cimgui.h:33:9
 pub const IM_UNICODE_CODEPOINT_MAX = __helpers.promoteIntLiteral(c_int, 0xFFFF, .hex);
 pub const IMGUI_HAS_DOCK = @as(c_int, 1);
 pub const ImTextureID_Invalid = __helpers.cast(ImTextureID, @as(c_int, 0));

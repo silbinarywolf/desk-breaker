@@ -584,6 +584,7 @@ pub fn deinit(app: *App) void {
     app.ui.ui_allocator.deinit();
     if (app.window) |app_window| {
         app_window.deinit();
+        app.window = null;
         // NOTE(jae): 2026-07-08: Reuse the same memory for main app window
         // invalid -> allocator.destroy(app_window);
     }

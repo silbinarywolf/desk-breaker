@@ -25,3 +25,52 @@
 !/cimgui/*.cpp
 !/cimgui/*.h
 !/cimgui/LICENSE
+
+# ImGui Node Editor
+/imgui-node-editor/*
+!/imgui-node-editor/*.c
+!/imgui-node-editor/*.cpp
+!/imgui-node-editor/*.h
+!/imgui-node-editor/*.inl
+!/imgui-node-editor/LICENSE
+!/imgui-node-editor/misc
+/imgui-node-editor/misc/*
+!/imgui-node-editor/misc/*.natvis
+!/imgui-node-editor/misc/cmake-modules
+/imgui-node-editor/misc/cmake-modules/*
+!/imgui-node-editor/misc/cmake-modules/Findimgui_node_editor.cmake
+!/imgui-node-editor/examples
+/imgui-node-editor/examples/*
+!/imgui-node-editor/examples/blueprints-example
+
+# CImNodes Editor
+/cimnodes_editor/*
+!/cimnodes_editor/README.md
+!/cimnodes_editor/*.c
+!/cimnodes_editor/*.cpp
+!/cimnodes_editor/*.h
+
+# ImGui Color Text Editor - https://github.com/goossens/ImGuiColorTextEdit
+/ImGuiColorTextEdit/*
+!/ImGuiColorTextEdit/README.md
+!/ImGuiColorTextEdit/LICENSE
+!/ImGuiColorTextEdit/*.cpp
+!/ImGuiColorTextEdit/*.h
+!/ImGuiColorTextEdit/extras
+/ImGuiColorTextEdit/extras/*
+!/ImGuiColorTextEdit/extras/*.h
+!/ImGuiColorTextEdit/extras/*.cpp
+!/ImGuiColorTextEdit/example
+/ImGuiColorTextEdit/example/*
+!/ImGuiColorTextEdit/example/notosans.h
+!/ImGuiColorTextEdit/example/notosans.cpp
+!/ImGuiColorTextEdit/example/dejavu.h
+!/ImGuiColorTextEdit/example/dejavu.cpp
+
+
+# CImCTE- https://github.com/cimgui/cimCTE
+/cimCTE/*
+!/cimCTE/README.md
+!/cimCTE/CMakeLists.t
+!/cimCTE/*.cpp
+!/cimCTE/*.h

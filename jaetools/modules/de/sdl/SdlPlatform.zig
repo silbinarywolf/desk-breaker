@@ -32,25 +32,37 @@ pub fn init(platform: *Platform, gpa: Allocator, io: Io, _: Options) !void {
     // NOTE(jae): 2026-06-30
     // If we're on Linux and have X11 or XWayland, prefer it over Wayland to have
     // more control of creation of multiple windows.
-    switch (de_options.window_constraint) {
-        .single_window => {},
-        .multiple_window => {
-            // NOTE(jae): 2026-07-01
-            // Only force fallback to X11/Xwayland if there is no existing hint
-            const video_driver_hint = sdl.SDL_GetHint(sdl.SDL_HINT_VIDEO_DRIVER);
-            if (video_driver_hint == null) {
-                const video_driver_count: u32 = @intCast(sdl.SDL_GetNumVideoDrivers());
-                for (0..video_driver_count) |video_driver_index| {
-                    const video_driver_name_cstr = sdl.SDL_GetVideoDriver(@intCast(video_driver_index));
-                    if (video_driver_name_cstr == null) continue;
-                    const video_driver_name = mem.span(video_driver_name_cstr);
-                    if (mem.eql(u8, video_driver_name, "x11")) {
-                        if (!sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_DRIVER, "x11")) return error.SdlFailed;
-                        break;
-                    }
+    if (!builtin.abi.isAndroid()) {
+        switch (builtin.os.tag) {
+            .linux => {
+                switch (de_options.window_constraint) {
+                    .single_window => {
+                        const wayland_scale_hint = sdl.SDL_GetHint(sdl.SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY);
+                        if (wayland_scale_hint == null) {
+                            if (!sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_WAYLAND_SCALE_TO_DISPLAY, "1")) return error.SdlFailed;
+                        }
+                    },
+                    .multiple_window => {
+                        // NOTE(jae): 2026-07-01
+                        // Only force fallback to X11/Xwayland if there is no existing hint
+                        const video_driver_hint = sdl.SDL_GetHint(sdl.SDL_HINT_VIDEO_DRIVER);
+                        if (video_driver_hint == null) {
+                            const video_driver_count: u32 = @intCast(sdl.SDL_GetNumVideoDrivers());
+                            for (0..video_driver_count) |video_driver_index| {
+                                const video_driver_name_cstr = sdl.SDL_GetVideoDriver(@intCast(video_driver_index));
+                                if (video_driver_name_cstr == null) continue;
+                                const video_driver_name = mem.span(video_driver_name_cstr);
+                                if (mem.eql(u8, video_driver_name, "x11")) {
+                                    if (!sdl.SDL_SetHint(sdl.SDL_HINT_VIDEO_DRIVER, "x11")) return error.SdlFailed;
+                                    break;
+                                }
+                            }
+                        }
+                    },
                 }
-            }
-        },
+            },
+            else => {},
+        }
     }
 
     if (!sdl.SDL_SetAppMetadata(de_options.application_name, de_options.application_version, de_options.application_identifier)) {
