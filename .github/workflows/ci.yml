@@ -39,7 +39,7 @@ jobs:
       # see: https://ziglang.org/news/migrate-to-self-hosting/
       uses: mlugg/setup-zig@v2
       with:
-        version: "0.16.0"
+        version: "0.17.1"
 
     # note(jae): 2026-06-14
     # The tests for this app aren't useful enough to run in CI
