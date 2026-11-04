@@ -2,14 +2,14 @@
 
 const std = @import("std");
 const Gcc = @import("Gcc.zig");
-const MountRun = @import("MountRun.zig");
+const Run = std.Build.Step.Run;
 const Module = std.Build.Module;
 const Compile = std.Build.Step.Compile;
 const LazyPath = std.Build.LazyPath;
 const log = std.log.scoped(.GccArtifact);
 
 kind: Kind,
-run: *MountRun,
+run: *Run,
 artifact: *Compile,
 
 /// (kind == .lib only) The name to use when linking, ie: '{name}_zig'
@@ -73,18 +73,31 @@ fn createAndLinkCompilerRt(g: *Gcc, artifact: *Compile) void {
         .root_module = compiler_rt_mod,
     });
     // Disable LTO for compiler_rt (NOTE: has no effect unless LTO is enabled for root artifact/binary)
-    // We do this to avoid undefined reference errors
+    // We do this to avoid undefined reference errors in Zig 0.15.X
     compiler_rt_lib.lto = .none;
     mod.linkLibrary(compiler_rt_lib);
 }
 
-fn addGccCommand(g: *Gcc, build_with_cpp: bool, context: []const u8) *MountRun {
+fn addGccCommand(g: *Gcc, build_with_cpp: bool, context: []const u8) *std.Build.Step.Run {
     const b = g.b;
-    const cmd = MountRun.createFromPath(
-        b,
-        if (!build_with_cpp) g.gcc() else g.@"g++"(),
-        context,
-    );
+    const gcc_or_gpp = if (!build_with_cpp) g.gcc() else g.@"g++"();
+    const gcc_or_gpp_name = if (!build_with_cpp) "gcc" else "g++";
+    const cmd = b.addRunFile(gcc_or_gpp);
+    cmd.setName(if (context.len != 0) b.fmt("{s} {s}", .{ gcc_or_gpp_name, context }) else gcc_or_gpp_name);
+    // cmd.setCwd(gcc_or_gpp.dirname());
+    // cmd.setEnvironmentVariable("GCC_EXEC_PREFIX", "psp-");
+    cmd.setEnvironmentVariable("CC", "psp-gcc");
+    cmd.setEnvironmentVariable("CXX", "psp-g++");
+    cmd.setEnvironmentVariable("AS", "psp-as");
+    cmd.setEnvironmentVariable("LD", "psp-ld");
+
+    // Remove
+    cmd.setEnvironmentVariable("PSPDEV", "");
+    cmd.setEnvironmentVariable("PATH", "");
+    // cmd.setEnvironmentVariable("PATH", "/home/jae/Documents/ZigProjects/desk-breaker/third-party/psp/upstream/pspdev/bin/");
+
+    cmd.addPrefixedDirectoryArg("-B", gcc_or_gpp.dirname());
+
     // NOTE(jae): 2026-01-31
     // Experimenting with running psp-gcc via Docker on Windows
     //
@@ -121,18 +134,27 @@ fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
         }
     }
 
+    const libraries = getCompileDependencies(b, artifact, false);
+
     // Determine if we want to link binary with C++
-    var should_link_cpp = false;
-    if (mod.link_libcpp == null) {
-        checkIfLinkingCppRecursively(&should_link_cpp, artifact.root_module);
-        if (should_link_cpp) {
-            mod.link_libcpp = true;
+    const should_link_cpp = blk: {
+        if (mod.link_libcpp == true) {
+            break :blk true;
         }
+        for (libraries) |library| {
+            if (library.root_module.link_libcpp == true) {
+                break :blk true;
+            }
+        }
+        break :blk false;
+    };
+    if (should_link_cpp and mod.link_libcpp == null) {
+        mod.link_libcpp = should_link_cpp;
     }
 
     const cmd = addGccCommand(g, should_link_cpp, artifact.name);
 
-    // TODO: How do we know if the file extension should be .elf/etc?
+    // Add output binary
     cmd.addArg("-o");
     const emitted_bin = cmd.addOutputFileArg(b.fmt("{s}.elf", .{artifact.name}));
 
@@ -216,14 +238,12 @@ fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
 
         // Add libraries *and* this artifact (exe) to collected libraries
         //
-        // As of Zig 0.15.2 the order looks like
-        // - your_app_name
-        // - SDL3
+        // As of Zig 0.17.1 the order looks like
         // - freetype
         // - imgui
+        // - SDL3
         // - compiler_rt
-        // - rmlui_core
-        const libraries = artifact.getCompileDependencies(false);
+        // - your_app_name
 
         // Iterate over collected libraries backwards so that the final linked library
         // is *your application*
@@ -268,6 +288,15 @@ fn compileExe(g: *Gcc, artifact: *Compile) *GccArtifact {
         }
     }
 
+    // If linking C++ then we need to make sure we link it to resolve undefined references.
+    //
+    // If compiling ImGui, then these can occur if we don't link stdc++
+    // - undefined reference to `__gxx_personality_v0' -- '-fno-exceptions' for *.cpp files can workaround this too.
+    // - undefined reference to __cxa_guard_acquire' -- '-fno-threadsafe-statics' for *.cpp files can workaround this too.
+    if (should_link_cpp) {
+        cmd.addArg("-lstdc++");
+    }
+
     const output_artifact = b.allocator.create(GccArtifact) catch @panic("OOM");
     output_artifact.* = .{
         .kind = .exe,
@@ -297,7 +326,12 @@ fn compileCFile(g: *Gcc, root_artifact: *Compile, artifact: *Compile, options: C
     const should_compile_with_gpp = mod.link_libcpp == true and
         options.file != null;
 
-    const cmd = addGccCommand(g, should_compile_with_gpp, artifact.name);
+    const cmd = addGccCommand(g, should_compile_with_gpp, "");
+    cmd.setName(if (options.file) |c_file| switch (c_file) {
+        .src_path => |lp| b.fmt("{s} {s}", .{ cmd.step.name, std.fs.path.basename(lp.sub_path) }),
+        .dependency => |lp| b.fmt("{s} {s}", .{ cmd.step.name, std.fs.path.basename(lp.sub_path) }),
+        else => |lp| b.fmt("{s} {f}", .{ cmd.step.name, lp }),
+    } else b.fmt("{s} {s}", .{ cmd.step.name, artifact.name }));
     cmd.addArg("-c");
 
     // To use the link-time optimizer, -flto and optimization options should be specified at compile time and during the final link.
@@ -444,7 +478,10 @@ fn compileCFile(g: *Gcc, root_artifact: *Compile, artifact: *Compile, options: C
         c_file
     else if (artifact.root_module.root_source_file != null)
         // Zig code compiled into a ".c" file
-        artifact.getEmittedBin()
+        if (artifact.root_module.resolved_target.?.result.ofmt == .c)
+            artifact.getEmittedBin()
+        else
+            @panic(b.fmt("invalid artifact, expected targeting *.c output: {s}", .{artifact.name}))
     else
         @panic("missing C file and artifact has no root source file");
     cmd.addFileArg(c_file);
@@ -474,7 +511,8 @@ fn compileStaticLibrary(g: *Gcc, root_artifact: *Compile, artifact: *Compile) *G
     const b = g.b;
     const mod = artifact.root_module;
 
-    const cmd = MountRun.createFromPath(b, g.ar(), artifact.name);
+    const cmd = b.addRunFile(g.ar());
+    cmd.setName(b.fmt("{s} {s}", .{ g.arName(), artifact.name }));
 
     // NOTE(jae): 2026-01-15
     // Avoid clashing with SDK provided libraries by appending *_zig. For example, the PSP SDK provides
@@ -534,29 +572,8 @@ fn compileStaticLibrary(g: *Gcc, root_artifact: *Compile, artifact: *Compile) *G
     return gcc_lib;
 }
 
-/// Recursively check if any libraries require C++
-fn checkIfLinkingCppRecursively(linking_cpp: *bool, mod: *Module) void {
-    for (mod.link_objects.items) |link_object| {
-        switch (link_object) {
-            .other_step => |other_compile| switch (other_compile.kind) {
-                .lib => {
-                    const other_mod = other_compile.root_module;
-                    linking_cpp.* = (other_mod.link_libcpp == true);
-
-                    // exit if true
-                    if (linking_cpp.*) return;
-
-                    checkIfLinkingCppRecursively(linking_cpp, other_mod);
-                },
-                else => continue,
-            },
-            else => continue,
-        }
-    }
-}
-
 /// Collects all the system libraries recursively and add thems to the args
-fn collectSystemLibrariesRecursive(g: *Gcc, system_libraries: *std.StringArrayHashMapUnmanaged(void), mod: *Module, cmd: *MountRun) void {
+fn collectSystemLibrariesRecursive(g: *Gcc, system_libraries: *std.StringArrayHashMapUnmanaged(void), mod: *Module, cmd: *std.Build.Step.Run) void {
     const b = g.b;
     const allocator = b.allocator;
 
@@ -630,8 +647,9 @@ fn updateTranslateC(g: *Gcc, artifact: *Compile) void {
         const root_source_file = module.root_source_file orelse continue;
         switch (root_source_file) {
             .generated => |gen| {
-                const step = gen.file.step;
-                if (step.id != .translate_c) continue;
+                const step = b.graph.generated_files.items[@backingInt(gen.index)];
+                const tag = step.tag;
+                if (tag != .translate_c) continue;
 
                 const translate_c: *std.Build.Step.TranslateC = @fieldParentPtr("step", step);
                 const target = translate_c.target;
@@ -707,6 +725,76 @@ fn removeLinkedLibraryRecursively(mod: *Module) void {
             removeLinkedLibraryRecursively(sub_mod);
         }
     }
+}
+
+/// Copy-paste of "lib/std/Build/Module.zig" but it doesn't cache via GetGraph and won't potentially break the
+/// Zig build system.
+///
+/// Return the full set of `Step.Compile` which `start` depends on, recursively. `start` itself is
+/// always returned as the first element. If `chase_dynamic` is `false`, then dynamic libraries are
+/// not included, and their dependencies are not considered; if `chase_dynamic` is `true`, dynamic
+/// libraries are treated the same as other linked `Compile`s.
+fn getCompileDependencies(b: *std.Build, start: *std.Build.Step.Compile, chase_dynamic: bool) []const *std.Build.Step.Compile {
+    const arena = start.step.owner.graph.arena;
+
+    var compiles: std.AutoArrayHashMapUnmanaged(*std.Build.Step.Compile, void) = .empty;
+    var next_idx: usize = 0;
+
+    compiles.putNoClobber(arena, start, {}) catch @panic("OOM");
+
+    while (next_idx < compiles.count()) {
+        const compile = compiles.keys()[next_idx];
+        next_idx += 1;
+
+        for (getGraph(b, compile.root_module).modules) |mod| {
+            for (mod.link_objects.items) |lo| {
+                switch (lo) {
+                    .other_step => |other_compile| {
+                        if (!chase_dynamic and other_compile.isDynamicLibrary()) continue;
+                        compiles.put(arena, other_compile, {}) catch @panic("OOM");
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    return compiles.keys();
+}
+
+const Graph = struct {
+    modules: []const *std.Build.Module,
+    names: []const []const u8,
+};
+
+/// Copy-paste of "lib/std/Build/Module.zig" but it doesn't cache and won't potentially break the
+/// Zig build system.
+///
+/// Given that `root` is the root `Module` of a compilation, return all `Module`s
+/// in the module graph, including `root` itself. `root` is guaranteed to be the
+/// first module in the returned slice.
+fn getGraph(b: *std.Build, root: *std.Build.Module) Graph {
+    const arena = b.graph.arena;
+
+    var modules: std.AutoArrayHashMapUnmanaged(*std.Build.Module, []const u8) = .empty;
+    var next_idx: usize = 0;
+
+    modules.putNoClobber(arena, root, "root") catch @panic("OOM");
+
+    while (next_idx < modules.count()) {
+        const mod = modules.keys()[next_idx];
+        next_idx += 1;
+        modules.ensureUnusedCapacity(arena, mod.import_table.count()) catch @panic("OOM");
+        for (mod.import_table.keys(), mod.import_table.values()) |import_name, other_mod| {
+            modules.putAssumeCapacity(other_mod, import_name);
+        }
+    }
+
+    const result: Graph = .{
+        .modules = modules.keys(),
+        .names = modules.values(),
+    };
+    return result;
 }
 
 const GccArtifact = @This();

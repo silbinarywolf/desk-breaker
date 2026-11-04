@@ -1,10 +1,13 @@
-// Last tested with Zig 0.15.2
+// Last tested with Zig 0.17.1
 // - include $ZIG_PATH/lib/zig.h
 
 #include "lib/zig.h"
 
-#undef zig_noreturn
-#define zig_noreturn _Noreturn
+// note(jae): 2026-11-04
+// This hack no longer needed in Zig 0.17.X
+//
+// #undef zig_noreturn
+// #define zig_noreturn _Noreturn
 
 // note(jae): 2026-01-30
 // Silence error like warning: '__builtin_strlen' argument 1 declared attribute 'nonstring' [-Wstringop-overread]

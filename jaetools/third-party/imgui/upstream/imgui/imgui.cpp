@@ -10156,6 +10156,10 @@ static ImGuiKeyChord GetModForLRModKey(ImGuiKey key)
 
 ImGuiKeyChord ImGui::FixupKeyChord(ImGuiKeyChord key_chord)
 {
+#ifdef __PSP__
+    // Ignore logic as it causes an internal MIPS compilation error for the PSP compiler
+    return key_chord;
+#endif
     // Add ImGuiMod_XXXX when a corresponding ImGuiKey_LeftXXX/ImGuiKey_RightXXX is specified.
     ImGuiKey key = (ImGuiKey)(key_chord & ~ImGuiMod_Mask_);
     if (IsLRModKey(key))

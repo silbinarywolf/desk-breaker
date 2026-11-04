@@ -243,9 +243,9 @@ pub fn get_data_dir_path(allocator: mem.Allocator, io: std.Io) DataDirPathError!
     {
         const out_buf = try allocator.alloc(u8, std.fs.max_path_bytes);
         defer allocator.free(out_buf);
-        const path_size = try std.process.executableDirPath(io, out_buf);
-        const path = out_buf[0..path_size];
 
+        const base_path = sdl.SDL_GetBasePath();
+        const path: [:0]const u8 = if (base_path) |bp| std.mem.span(bp) else &[0:0]u8{};
         var dir = try Dir.openDirAbsolute(io, path, .{});
         defer dir.close(io);
 

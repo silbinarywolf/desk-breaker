@@ -5,7 +5,6 @@ const Gcc = @import("../gccbuild/Gcc.zig");
 const Build = std.Build;
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;
-const GeneratedFile = std.Build.GeneratedFile;
 
 const log = std.log.scoped(.psp);
 const name = "Playstation Portable";
@@ -119,26 +118,27 @@ pub fn buildPBP(tools: *Tools, artifact: *Step.Compile) void {
     };
 
     // Fixup Imports
-    const psp_fixup_imports = pspdev_path.path(b, "bin/psp-fixup-imports").getPath(b);
-    const fixup_imports_cmd = b.addSystemCommand(&.{psp_fixup_imports});
+    const fixup_imports_cmd = b.addRunFile(pspdev_path.path(b, "bin/psp-fixup-imports"));
+    fixup_imports_cmd.setName("psp-fixup-imports");
     fixup_imports_cmd.addFileArg(psp_elf);
     fixup_imports_cmd.addArg("-o");
     const psp_outfile = fixup_imports_cmd.addOutputFileArg("psp-fixed-imports.elf");
 
     // PRX from ELF
-    const psp_prxgen_path = pspdev_path.path(b, "bin/psp-prxgen").getPath(b);
-    const mk_prx = b.addSystemCommand(&.{psp_prxgen_path});
+    const mk_prx = b.addRunFile(pspdev_path.path(b, "bin/psp-prxgen"));
+    mk_prx.setName("psp-prxgen");
     mk_prx.addFileArg(psp_outfile);
     const prx_file = mk_prx.addOutputFileArg("app.prx");
 
     // SFO file for PBP
-    const mk_sfo = b.addSystemCommand(&.{pspdev_path.path(b, "bin/mksfo").getPath(b)});
+    const mk_sfo = b.addRunFile(pspdev_path.path(b, "bin/mksfo"));
+    mk_sfo.setName("mksfo");
     mk_sfo.addArg(artifact.name);
     const sfo_file = mk_sfo.addOutputFileArg("PARAM.SFO");
 
     // Pack PBP
-    const pack_pbp_path = pspdev_path.path(b, "bin/pack-pbp").getPath(b);
-    const pack_pbp = b.addSystemCommand(&.{pack_pbp_path});
+    const pack_pbp = b.addRunFile(pspdev_path.path(b, "bin/pack-pbp"));
+    pack_pbp.setName("pack-pbp");
     const eboot_file = pack_pbp.addOutputFileArg(b.fmt("{s}.pbp", .{artifact.name}));
     pack_pbp.addFileArg(sfo_file);
     pack_pbp.addArg("NULL"); // icon0

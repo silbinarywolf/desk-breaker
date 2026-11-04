@@ -111,23 +111,26 @@ pub fn render(app: *App) !void {
         }
 
         // DEBUG: Add debug info
-        if (builtin.mode == .Debug) {
-            {
-                const time_in_seconds = @divFloor(app.activity_timer.read(), std.time.ns_per_s);
-                imgui.igText("DEBUG: Time using computer: %d", time_in_seconds);
-            }
-            if (app.time_since_last_input) |*time_since_last_input| {
-                const time_in_seconds = @divFloor(time_since_last_input.read(), std.time.ns_per_s);
-                imgui.igText("DEBUG: Time since last activity: %d", time_in_seconds);
-            } else {
-                imgui.igText("DEBUG: Time since last activity: (none detected)");
-            }
-            if (!app.has_global_mouse_support) {
-                imgui.igText("DEBUG: No global mouse support");
-            }
-            if (app.time_till_next_timer_complete()) |next_timer| {
-                imgui.igText(try app.tprint("DEBUG: Time till popout: {f}", .{next_timer.time_till_next_break.formatLong()}));
-            }
+        switch (builtin.mode) {
+            .Debug => {
+                {
+                    const time_in_seconds = @divFloor(app.activity_timer.read(), std.time.ns_per_s);
+                    imgui.igText("DEBUG: Time using computer: %d", time_in_seconds);
+                }
+                if (app.time_since_last_input) |*time_since_last_input| {
+                    const time_in_seconds = @divFloor(time_since_last_input.read(), std.time.ns_per_s);
+                    imgui.igText("DEBUG: Time since last activity: %d", time_in_seconds);
+                } else {
+                    imgui.igText("DEBUG: Time since last activity: (none detected)");
+                }
+                if (!app.has_global_mouse_support) {
+                    imgui.igText("DEBUG: No global mouse support");
+                }
+                if (app.time_till_next_timer_complete()) |next_timer| {
+                    imgui.igText(try app.tprint("DEBUG: Time till popout: {f}", .{next_timer.time_till_next_break.formatLong()}));
+                }
+            },
+            else => {},
         }
     }
 }

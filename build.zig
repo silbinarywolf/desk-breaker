@@ -10,76 +10,15 @@ const psp = @import("psp");
 const enable_android_build = false;
 
 const app_name = "Desk Breaker";
-const recommended_zig_version = "0.16.0";
 
 pub fn build(b: *std.Build) !void {
-    switch (comptime builtin.zig_version.order(std.SemanticVersion.parse(recommended_zig_version) catch unreachable)) {
-        .eq => {},
-        .lt => {
-            @compileError("The minimum version of Zig required to compile " ++ app_name ++ " is " ++ recommended_zig_version ++ ", found " ++ @import("builtin").zig_version_string ++ ".");
-        },
-        .gt => {
-            const colors = if (builtin.zig_version.major == 0 and builtin.zig_version.major == 15)
-                std.fs.File.stderr().supportsAnsiEscapeCodes()
-            else
-                try std.Io.File.stderr().supportsAnsiEscapeCodes(b.graph.io);
-
-            std.debug.print(
-                "{s}WARNING:\n" ++ app_name ++ " recommends Zig version '{s}', but found '{s}', build may fail...{s}\n\n\n",
-                .{
-                    if (colors) "\x1b[1;33m" else "",
-                    recommended_zig_version,
-                    builtin.zig_version_string,
-                    if (colors) "\x1b[0m" else "",
-                },
-            );
-        },
-    }
-
     const exe_suffix = if (b.option([]const u8, "binSuffix", "update the binary built suffix, used by CI for '{app}-windows.exe'")) |suffix|
         b.fmt("-{s}", .{suffix})
     else
         &[0]u8{};
     const exe_name: []const u8 = b.fmt("desk-breaker{s}", .{exe_suffix});
 
-    const platform = b.option(Platform, "platform", "The platform to build for. (ie. PSP)") orelse .none;
-
     const root_target = target_blk: {
-        switch (platform) {
-            .none => {}, // do nothing
-            .psp => {
-                // EXPERIMENTAL: Get it working with Zig via ofmt=.c
-                // zig build -Doptimize=ReleaseFast -Dplatform=psp
-
-                var feature_set = std.Target.Cpu.Feature.Set.empty;
-                feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.single_float));
-                // feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
-                feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.noabicalls));
-
-                // var remove_feature_set = std.Target.Cpu.Feature.Set.empty;
-                // remove_feature_set.addFeature(std.Target.mips.Feature.);
-                // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.soft_float));
-                // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fp64));
-                // remove_feature_set.addFeature(@intFromEnum(std.Target.mips.Feature.fpxx));
-
-                const query: std.Target.Query = .{
-                    .cpu_arch = .mipsel,
-                    .os_tag = .freestanding,
-                    // .abi = .musleabi, // .eabi
-                    // .abi = .default(.mipsel, .freestanding), // NOTE(jae): using this only because Zig has a "mipsel" C library for it
-                    .abi = .eabi, // PSP SDK expects this abi
-                    // Sony Allegrex is an extended Mips2 + VFPU
-                    .cpu_model = .{ .explicit = &std.Target.mips.cpu.mips2 },
-                    .cpu_features_add = feature_set,
-                    // NOTE(jae): 2026-01-17
-                    // Using ofmt=.c as Zig doesn't build the .elf/.o files with -msingle-float and ABI doesn't match either
-                    .ofmt = .c,
-                };
-                const target = b.resolveTargetQuery(query);
-                break :target_blk target;
-            },
-        }
-
         // If no platform defined, use Zig default targetting: -Dtarget
         var root_target_query = b.standardTargetOptionsQueryOnly(.{});
         if (builtin.os.tag == .linux and root_target_query.isNative()) {
@@ -98,7 +37,47 @@ pub fn build(b: *std.Build) !void {
                 // This should make Desk Breaker highly backwards compatible.
                 var query = root_target_query;
                 query.glibc_version = .{ .major = 2, .minor = 29, .patch = 0 };
+                query.abi = .gnu;
                 break :target_blk b.resolveTargetQuery(query);
+            },
+            .psp => {
+                // EXPERIMENTAL: Get it working with Zig via ofmt=.c
+                // zig build -Dtarget=mipsel-psp
+                //
+                // var feature_set = std.Target.Cpu.Feature.Set.empty;
+                // feature_set.addFeature(@backingInt(std.Target.mips.Feature.single_float));
+                // feature_set.addFeature(@backingInt(std.Target.mips.Feature.noabicalls));
+                //
+                // const query: std.Target.Query = .{
+                //     .cpu_arch = .mipsel,
+                //     .os_tag = .freestanding,
+                //     // .abi = .musleabi, // .eabi
+                //     // .abi = .default(.mipsel, .freestanding), // NOTE(jae): using this only because Zig has a "mipsel" C library for it
+                //     .abi = .eabi, // PSP SDK expects this abi
+                //     // Sony Allegrex is an extended Mips2 + VFPU
+                //     .cpu_model = .{ .explicit = &std.Target.mips.cpu.mips2 },
+                //     .cpu_features_add = feature_set,
+                //     // NOTE(jae): 2026-01-17
+                //     // Using ofmt=.c as Zig doesn't build the .elf/.o files with -msingle-float and ABI doesn't match either
+                //     .ofmt = .c,
+                // };
+
+                // NOTE(jae): 2026-01-17
+                // Using ofmt=.c as Zig doesn't build the .elf/.o files with -msingle-float and ABI doesn't match either
+                //
+                // NOTE(jae): 2026-10-19
+                // No idea if this is still true.
+                // if (query.cpu_model.explicit != &std.Target.mips.cpu.allegrex) {
+                //     @panic("expected cpu_model to be allegrex");
+                // }
+                var query = root_target_query;
+                query.ofmt = .c;
+                // query.abi = .eabihf;
+                // query.cpu_model = .{ .explicit = &std.Target.mips.cpu.allegrex };
+                // query.cpu_arch = .mipsel;
+                query.os_tag = .psp;
+                const r = b.resolveTargetQuery(query);
+                break :target_blk r;
             },
             .wasi => {
                 // EXPERIMENT: See if I can target and build a WASM file of non-trivial application without Emscripten
@@ -176,7 +155,7 @@ pub fn build(b: *std.Build) !void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
-            .single_threaded = if (platform == .psp)
+            .single_threaded = if (target.result.os.tag == .psp)
                 true
             else
                 null,
@@ -184,14 +163,16 @@ pub fn build(b: *std.Build) !void {
             //.link_libcpp = false,
         });
 
-        const library_optimize = if (!target.result.abi.isAndroid() and target.result.os.tag != .emscripten)
-            // Debug builds of libraries make Debug binaries about +33mb
-            optimize
-        else
-            // In Zig 0.14.0, for Android/Emscripten builds, make sure we build libraries with ReleaseSafe
-            // otherwise we get errors relating to libubsan_rt.a either missing symbols or getting RELOCATION errors
-            // https://github.com/silbinarywolf/zig-android-sdk/issues/18
-            if (optimize == .Debug) .ReleaseFast else optimize;
+        const library_optimize: std.builtin.OptimizeMode = switch (optimize) {
+            .Debug => if (target.result.abi.isAndroid() or target.result.os.tag == .emscripten)
+                // In Zig 0.14.0, for Android/Emscripten builds, make sure we build libraries with ReleaseSafe
+                // otherwise we get errors relating to libubsan_rt.a either missing symbols or getting RELOCATION errors
+                // https://github.com/silbinarywolf/zig-android-sdk/issues/18
+                .ReleaseSafe
+            else
+                optimize,
+            else => optimize,
+        };
 
         const jt_dep = b.dependency("jaetools", .{
             .target = target,
@@ -271,7 +252,10 @@ pub fn build(b: *std.Build) !void {
                     // NOTE(jae): 2026-01-03
                     // Inlined the generated Zig file as "wayland-gen.zig" but it's cut-down to the exact deps that I need
                     break :waylandblk b.createModule(.{
-                        .root_source_file = b.path("src/wayland_custom/wayland-gen-016.zig"),
+                        .root_source_file = if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 16)
+                            b.path("src/wayland_custom/wayland-gen-016.zig")
+                        else
+                            b.path("src/wayland_custom/wayland-gen-017.zig"),
                         .target = target,
                         .optimize = optimize,
                     });
@@ -286,8 +270,7 @@ pub fn build(b: *std.Build) !void {
                             null,
                         .wayland_protocols = wayland_protocols_dep.path(""),
                     });
-                    const wayland_protocols_subset_dep = b.dependency("wayland_protocols_subset", .{});
-                    scanner.addCustomProtocol(wayland_protocols_subset_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
+                    scanner.addCustomProtocol(wayland_protocols_dep.path("staging/ext-idle-notify/ext-idle-notify-v1.xml"));
                     scanner.generate("ext_idle_notifier_v1", 2);
                     scanner.generate("wl_seat", 5);
 
@@ -336,10 +319,10 @@ pub fn build(b: *std.Build) !void {
 
         const maybe_linkage: ?std.builtin.LinkMode = if (target.result.abi.isAndroid())
             .dynamic
-        else if (target.result.os.tag == .emscripten or target.result.os.tag == .freestanding or platform == .psp)
-            .static
-        else
-            null;
+        else switch (target.result.os.tag) {
+            .emscripten, .freestanding, .psp => .static,
+            else => null,
+        };
 
         var exe: *std.Build.Step.Compile = if (maybe_linkage) |linkage|
             // Android:    zig build -Dtarget=x86_64-linux-android && adb install ./zig-out/bin/desk-breaker.apk
@@ -379,9 +362,12 @@ pub fn build(b: *std.Build) !void {
         }
 
         if (target.result.os.tag == .windows) {
-            if (optimize != .Debug and exe.subsystem == null) {
-                exe.subsystem = .Windows;
-            }
+            // switch (optimize) {
+            //     .Debug => {},
+            //     else => if (exe.subsystem == null) {
+            //         exe.subsystem = .Windows;
+            //     },
+            // }
             app.addWin32ResourceFile(.{
                 // NOTE(jae): 2025-01-27
                 // RC file references "icon.ico" for the EXE icon
@@ -404,79 +390,85 @@ pub fn build(b: *std.Build) !void {
             app.addImport("android", android_dep.module("android"));
 
             apk.addArtifact(exe);
-        } else if (target.result.os.tag == .emscripten) {
-            @panic("TODO: Fix Emscripten compilation code");
-            // const em = emscripten.Tools.create(b, .{
-            //     .version = "3.1.53",
-            // }) orelse return;
+        } else switch (target.result.os.tag) {
+            // zig build -Dtarget=wasm32-emscripten
+            .emscripten => {
+                const em = emscripten.Tools.create(b, .{
+                    .version = "3.1.53",
+                }) orelse return;
 
-            // const run_step = b.step("run", "Run the application in browser");
-            // const emcc_cmd = em.addRunArtifact(exe, .{
-            //     .browser = .none,
-            //     .hostname = "192.168.0.165",
-            // });
-            // run_step.dependOn(&emcc_cmd.step);
+                const run_step = b.step("run", "Run the application in browser");
+                const emcc_cmd = em.addRunArtifact(exe, .{
+                    .browser = .none,
+                    .hostname = "192.168.0.165",
+                });
+                run_step.dependOn(&emcc_cmd.step);
 
-            // const installed_web_html = em.addInstallArtifact(exe);
-            // b.getInstallStep().dependOn(&installed_web_html.step);
-        } else if (platform == .psp) {
-            @panic("TODO: Fix PSP compilation code");
-            // const psp_dep = b.lazyDependency("psp", .{
-            //     .target = target,
-            //     .optimize = optimize,
-            // }) orelse return;
+                const installed_web_html = em.addInstallArtifact(exe);
+                b.getInstallStep().dependOn(&installed_web_html.step);
+            },
+            // zig build -Dtarget=mipsel-psp
+            .psp => {
+                // if (true)
+                //     @panic("TODO(jae): 2026-10-25: Zig 0.17.X broke PSP compilation process. Fix PSP compilation code");
+                const psp_dep = b.lazyDependency("psp", .{
+                    .target = target,
+                    .optimize = optimize,
+                }) orelse return;
 
-            // app.addImport("psp", psp_dep.module("psp"));
+                app.addImport("psp", psp_dep.module("psp"));
 
-            // const psptool = psp.Tools.create(b, .{}) orelse return;
-            // psptool.buildPBP(exe);
-        } else {
-            const run_step = b.step("run", "Run the application");
-            const run_cmd = b.addRunArtifact(exe);
-            run_step.dependOn(&run_cmd.step);
+                const psptool = psp.Tools.create(b, .{}) orelse return;
+                psptool.buildPBP(exe);
+            },
+            else => {
+                const run_step = b.step("run", "Run the application");
+                const run_cmd = b.addRunArtifact(exe);
+                run_step.dependOn(&run_cmd.step);
 
-            if (exe_suffix.len > 0) {
-                switch (target.result.os.tag) {
-                    .macos => {
-                        var macos_app = b.addTempFiles();
-                        const macos_app_name = "desk-breaker.app";
-                        const macos_app_info_plist = "desk-breaker";
-                        _ = macos_app.addCopyFile(b.path("macos/Contents/Info.plist"), b.fmt("{s}/Contents/Info.plist", .{macos_app_name}));
-                        _ = macos_app.addCopyFile(exe.getEmittedBin(), b.fmt("{s}/MacOS/{s}", .{ macos_app_name, macos_app_info_plist }));
-                        _ = macos_app.addCopyFile(b.path("macos/Resources/.gitignore"), b.fmt("{s}/Resources/.gitignore", .{macos_app_name}));
+                if (exe_suffix.len > 0) {
+                    switch (target.result.os.tag) {
+                        .macos => {
+                            var macos_app = b.addTempFiles();
+                            const macos_app_name = "DeskBreaker.app";
+                            const macos_app_info_plist = "desk-breaker";
+                            _ = macos_app.addCopyFile(b.path("macos/Contents/Info.plist"), b.fmt("{s}/Contents/Info.plist", .{macos_app_name}));
+                            _ = macos_app.addCopyFile(exe.getEmittedBin(), b.fmt("{s}/Contents/MacOS/{s}", .{ macos_app_name, macos_app_info_plist }));
+                            _ = macos_app.addCopyFile(b.path("macos/Contents/Resources/.gitignore"), b.fmt("{s}/Contents/Resources/.gitignore", .{macos_app_name}));
 
-                        const zip_output_file = zipblk: {
-                            const zip_cmd = b.addSystemCommand(&.{"zip"});
-                            zip_cmd.setCwd(macos_app.getDirectory());
-                            zip_cmd.addArg("-r"); // -j = dont include parent directories, -r = everything in folder
-                            const zip_output_file = zip_cmd.addOutputFileArg("zip_output.zip");
-                            zip_cmd.addDirectoryArg(macos_app.getDirectory());
-                            zip_cmd.addArgs(&.{ "-x", "*.DS_Store" });
-                            break :zipblk zip_output_file;
-                        };
+                            const zip_output_file = zipblk: {
+                                const zip_cmd = b.addSystemCommand(&.{"zip"});
+                                zip_cmd.setCwd(macos_app.getDirectory());
+                                zip_cmd.addArg("-r"); // -j = dont include parent directories, -r = everything in folder
+                                const output_file = zip_cmd.addOutputFileArg("mac_app_output.app");
+                                zip_cmd.addDirectoryArg(macos_app.getDirectory());
+                                zip_cmd.addArgs(&.{ "-x", "*.DS_Store" });
+                                break :zipblk output_file;
+                            };
 
-                        const add_exec_permission = b.addSystemCommand(&.{ "chmod", "+x" });
-                        add_exec_permission.addFileArg(zip_output_file);
+                            const add_exec_permission = b.addSystemCommand(&.{ "chmod", "+x" });
+                            add_exec_permission.addFileArg(zip_output_file);
 
-                        const macos_app_install_dir = b.addInstallFileWithDir(
-                            zip_output_file,
-                            .{ .custom = "release" },
-                            b.fmt("{s}.app", .{exe.name}),
-                        );
-                        macos_app_install_dir.step.dependOn(&add_exec_permission.step);
-                        b.getInstallStep().dependOn(&macos_app_install_dir.step);
-                    },
-                    else => {
-                        const installed_exe = b.addInstallArtifact(exe, .{
-                            .dest_dir = .{ .override = .{ .custom = "release" } },
-                        });
-                        b.getInstallStep().dependOn(&installed_exe.step);
-                    },
+                            const macos_app_install_dir = b.addInstallFileWithDir(
+                                zip_output_file,
+                                .{ .custom = "release" },
+                                b.fmt("{s}.zip", .{exe.name}),
+                            );
+                            macos_app_install_dir.step.dependOn(&add_exec_permission.step);
+                            b.getInstallStep().dependOn(&macos_app_install_dir.step);
+                        },
+                        else => {
+                            const installed_exe = b.addInstallArtifact(exe, .{
+                                .dest_dir = .{ .override = .{ .custom = "release" } },
+                            });
+                            b.getInstallStep().dependOn(&installed_exe.step);
+                        },
+                    }
+                } else {
+                    const installed_exe = b.addInstallArtifact(exe, .{});
+                    b.getInstallStep().dependOn(&installed_exe.step);
                 }
-            } else {
-                const installed_exe = b.addInstallArtifact(exe, .{});
-                b.getInstallStep().dependOn(&installed_exe.step);
-            }
+            },
         }
     }
     if (enable_android_build) {
@@ -516,14 +508,15 @@ pub fn build(b: *std.Build) !void {
     const all_targets_step = b.step("all-targets", "Build for all targets (must be run on Linux)");
     for (deploy_targets) |deploy_target| {
         const build_cmd = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
-        if (b.verbose) {
-            build_cmd.addArg("--verbose");
-        }
+        // if (b.verbose) {
+        //     build_cmd.addArg("--verbose");
+        // }
         if (deploy_target.target_name.len > 0) {
             build_cmd.addArg(b.fmt("-Dtarget={s}", .{deploy_target.target_name}));
         }
-        if (optimize != .Debug) {
-            build_cmd.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
+        switch (optimize) {
+            .Debug => {},
+            else => build_cmd.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)})),
         }
         if (deploy_target.suffix.len > 0) {
             build_cmd.addArg(b.fmt("-DbinSuffix={s}", .{deploy_target.suffix}));

@@ -225,7 +225,7 @@ fn imguiFree(ptr: ?*anyopaque, user_context: ?*anyopaque) callconv(.c) void {
 const SdlMutex = struct {
     impl: *sdl.SDL_Mutex,
 
-    pub const init = .{
+    pub const init: SdlMutex = .{
         .impl = undefined,
     };
 

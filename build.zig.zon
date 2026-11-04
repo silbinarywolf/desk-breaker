@@ -3,6 +3,7 @@
     .name = .desk_breaker,
     .version = "0.0.0",
     .minimum_zig_version = "0.16.0",
+    .zig_version = "0.17.0",
     .dependencies = .{
         .jaetools = .{
             .path = "jaetools",
@@ -10,25 +11,17 @@
         .wuffs = .{
             .path = "third-party/wuffs",
         },
+        // NOTE(jae): 2026-10-16
+        // Temporarily use Wayland/Wayland-Protocols to generate 'wayland_custom/wayland-gen-*.zig' files
         .wayland = .{
-            .path = "third-party/wayland",
-            // .url = "git+https://codeberg.org/ifreund/zig-wayland.git#a8e10e87e5ebb49ce518ac3d2198909c87ee615a",
-            // .hash = "wayland-0.7.0-dev-lQa1kjT8AQDBstL61Gy3WCMtGwVaMN1p6w5wGfdDvP15",
+            .url = "git+https://codeberg.org/ifreund/zig-wayland.git#94db7ba4e0a6b4780a16dbc74c7a2c88f1ebf502",
+            .hash = "wayland-0.8.0-dev-lQa1kuf8AQCeoam8G-XPyaIYvIOk3_wgsspwi4nT_L5q",
         },
         .wayland_protocols = .{
-            .url = "git+https://gitlab.freedesktop.org/wayland/wayland-protocols.git#afb614d5fcbd02d261a6ae91920aa91cf3915a8a",
-            .hash = "N-V-__8AAOPQEAB31bZvcUcZFTncb4Gq5yHzGLF1W3ud-t3N",
+            .url = "git+https://gitlab.freedesktop.org/wayland/wayland-protocols.git#35d9638cf0c3f0bbf0c42996580a284f3d8ce564",
+            .hash = "N-V-__8AADU4EQCgw58dBpFde-8kTfx4ssoZsNNd97_Ba63j",
             .lazy = true,
         },
-        .wayland_protocols_subset = .{
-            .path = "third-party/wayland-protocols",
-        },
-        // Wayland Handling
-        // .shimizu = .{
-        //     .url = "git+https://git.klaji.dev/klaji/shimizu?ref=0.1.1#ded824ed136179ef5fd0d49a0138d02ef7fbd755",
-        //     .hash = "shimizu-0.1.1-irfMUUAwBAD8QD5BxR2ojneUIYRA5-LbOgGRcuXQzZXj",
-        //     .lazy = true,
-        // },
         // NOTE(jae): 2025-04-13
         // Used as an experiment to run Desk Breaker on Android and validate the Zig Android SDK against a more complicated
         // project.

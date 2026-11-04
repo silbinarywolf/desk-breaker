@@ -5,6 +5,8 @@
 
 #ifdef ZIG_HAS_IMGUI_NODE_EDITOR
     #include "cimnodes_editor.h"
+    // For drawing icons: src/imgui_node_editor_extension/imgui_node_editor_extension.h
+    #include "cimnodes_editor_extension.h"
 #endif
 
 #ifdef ZIG_HAS_IMGUI_COLOR_TEXT_EDIT

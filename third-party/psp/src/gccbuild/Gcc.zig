@@ -2,7 +2,6 @@
 
 const std = @import("std");
 const GccArtifact = @import("GccArtifact.zig");
-const MountRun = @import("MountRun.zig");
 
 const assert = std.debug.assert;
 
@@ -90,7 +89,11 @@ pub fn @"g++"(g: *const Gcc) LazyPath {
 
 pub fn ar(g: *const Gcc) LazyPath {
     const b = g.b;
-    return g.gcc_bin_path.path(b, b.fmt("{s}gcc-ar", .{g.prefix}));
+    return g.gcc_bin_path.path(b, g.arName());
+}
+
+pub fn arName(g: *const Gcc) []const u8 {
+    return g.b.fmt("{s}gcc-ar", .{g.prefix});
 }
 
 /// This function takes your Zig artifact and creates a binary built with GCC that can be retrieved

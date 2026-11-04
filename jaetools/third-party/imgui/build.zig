@@ -92,11 +92,14 @@ pub fn build(b: *std.Build) !void {
         // if (optimize == .Debug or optimize == .ReleaseSafe) {
         //     try list.append(gpa, "IMGUI_DEBUG_HIGHLIGHT_ALL_ID_CONFLICTS");
         // }
-        if (optimize != .Debug) {
-            try list.appendSlice(gpa, &[_][]const u8{
-                "IMGUI_DISABLE_DEMO_WINDOWS",
-                // "IMGUI_DISABLE_DEBUG_TOOLS", // NOTE(jae): Disabling this breaks cimgui in ReleaseSafe/Fast builds
-            });
+        switch (optimize) {
+            .Debug => {},
+            else => {
+                try list.appendSlice(gpa, &[_][]const u8{
+                    "IMGUI_DISABLE_DEMO_WINDOWS",
+                    // "IMGUI_DISABLE_DEBUG_TOOLS", // NOTE(jae): Disabling this breaks cimgui in ReleaseSafe/Fast builds
+                });
+            },
         }
         if (font_backend == .freetype) {
             try list.appendSlice(gpa, &.{
@@ -120,10 +123,15 @@ pub fn build(b: *std.Build) !void {
     };
 
     const default_cpp_flags = [_][]const u8{ "-std=c++11", "-nostdinc++" };
-    const psp_cpp_flags = default_cpp_flags ++ [_][]const u8{ "-fno-exceptions", "-fno-rtti" };
+    const psp_cpp_flags = default_cpp_flags ++ [_][]const u8{
+        // Workaround: undefined reference to `__gxx_personality_v0'
+        // "-fno-exceptions",
+        // Workaround: undefined reference to __cxa_guard_acquire'
+        // "-fno-threadsafe-statics",
+    };
 
     const cpp_flags: []const []const u8 = switch (target.result.os.tag) {
-        .freestanding => &psp_cpp_flags,
+        .psp => &psp_cpp_flags,
         else => &default_cpp_flags,
     };
 
