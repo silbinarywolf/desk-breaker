@@ -398,10 +398,10 @@ pub fn onInit(startup: de.Startup, app: *App) !void {
         // - Debug mode has its own unique ID so I can be running the release build and my own testing build simultaneously
         //
         // https://stackoverflow.com/a/14176581
-        const unique_application_name = if (builtin.mode == .Debug)
-            "da5cd5eb-0d82-476a-9280-af68ae22a64d"
-        else
-            "b15383a6-be9d-418b-9aa9-c1c462d93431";
+        const unique_application_name = switch (builtin.mode) {
+            .Debug => "da5cd5eb-0d82-476a-9280-af68ae22a64d",
+            else => "b15383a6-be9d-418b-9aa9-c1c462d93431",
+        };
         _ = windows.createMutex(null, false, unique_application_name) catch |err| switch (err) {
             error.AlreadyExists => {
                 log.debug("application already running, closing", .{});

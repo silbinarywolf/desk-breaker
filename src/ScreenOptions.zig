@@ -279,9 +279,18 @@ pub fn render(app: *App) !void {
 
         // Check each field in errors (currently just assume '[]const u8' type)
         var has_error = false;
-        inline for (@typeInfo(@TypeOf(ui_options.errors)).@"struct".fields) |field| {
-            const errorField = @field(ui_options.errors, field.name);
-            has_error = has_error or errorField.len > 0;
+        if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 16) {
+            // Deprecated: Old Zig version 16
+            inline for (@typeInfo(@TypeOf(ui_options.errors)).@"struct".fields) |field| {
+                const errorField = @field(ui_options.errors, field.name);
+                has_error = has_error or errorField.len > 0;
+            }
+        } else {
+            const info = @typeInfo(@TypeOf(ui_options.errors)).@"struct";
+            inline for (info.field_names) |field_name| {
+                const errorField = @field(ui_options.errors, field_name);
+                has_error = has_error or errorField.len > 0;
+            }
         }
         if (!has_error) {
             // free allocated data that changed (strings)

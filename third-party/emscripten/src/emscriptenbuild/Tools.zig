@@ -4,7 +4,6 @@ const builtin = @import("builtin");
 const Build = std.Build;
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;
-const GeneratedFile = std.Build.GeneratedFile;
 
 const log = std.log.scoped(.emscripten);
 
@@ -13,8 +12,8 @@ b: *Build,
 /// version is the Emscripten version passed to "emsdk install" and "emsdk activate"
 /// ie. "latest", "3.1.54"
 version: []const u8,
-
-emsdk_path: LazyPath,
+sysroot_include_path: LazyPath,
+no_activation_step_emsdk_path: LazyPath,
 python_path: []const u8,
 
 pub const Options = struct {
@@ -29,11 +28,43 @@ pub fn create(b: *Build, options: Options) ?*Tools {
         b.graph.env_map.get("EMSDK_PYTHON") orelse "python"
     else
         b.graph.environ_map.get("EMSDK_PYTHON") orelse "python";
+    const emsdk_version = options.version;
+    const emsysroot_path = blk: {
+        const emsdk_bin = emsdk_path.path(b, "emsdk.py");
+
+        // NOTE(jae): 2025-04-05
+        // We run emsdk.py directly as it will actually return error codes on Windows whereas "emsdk.bat" will not,
+        // at least under Zig 0.14.0.
+        const emsdk_install = b.addSystemCommand(&.{ python_path, "-E" });
+        emsdk_install.addFileArg(emsdk_bin);
+        emsdk_install.addArgs(&.{ "install", emsdk_version });
+        emsdk_install.setName("emsdk install");
+
+        // Activate version
+        const emsdk_activate = b.addSystemCommand(&.{ python_path, "-E" });
+        emsdk_activate.setName("emsdk activate");
+        emsdk_activate.addFileArg(emsdk_bin);
+        emsdk_activate.addArgs(&.{ "activate", emsdk_version });
+        emsdk_activate.step.dependOn(&emsdk_install.step);
+
+        // Copy sysroot 'include' files
+        const emsysroot = b.addNamedWriteFiles("emscriptenbuild_upstream");
+        _ = emsysroot.addCopyFile(emsdk_path.path(b, ".emscripten"), ".emscripten");
+        _ = emsysroot.addCopyDirectory(emsdk_path.path(b, "upstream/emscripten/cache/sysroot"), "upstream/emscripten/cache/sysroot", .{});
+        emsysroot.step.dependOn(&emsdk_activate.step);
+        const emsysroot_path = emsysroot.getDirectory();
+        break :blk emsysroot_path;
+    };
     const tools = b.allocator.create(Tools) catch @panic("OOM");
     tools.* = .{
         .b = b,
-        .version = options.version,
-        .emsdk_path = emsdk_path,
+        .version = emsdk_version,
+        .no_activation_step_emsdk_path = emsdk_path.path(b, "upstream"),
+        // NOTE(jae): 2026-10-27
+        // Copied so it has to wait for the installer / has steps attached.
+        // A hack instead of just making an external Zig app that runs 'emsdk install' / etc for us and outputs it
+        // to a folder we expect.
+        .sysroot_include_path = emsysroot_path.path(b, "upstream/emscripten/cache/sysroot/include"),
         .python_path = python_path,
     };
     return tools;
@@ -47,39 +78,38 @@ const Emcc = struct {
 
 pub fn addEmccCommand(tools: *Tools, artifact: *Step.Compile) *Emcc {
     const b = tools.b;
-    const emsdk_path = tools.emsdk_path;
 
-    const emcc_path = b.pathJoin(&.{ emsdk_path.getPath(b), "upstream", "emscripten", "emcc" }); // emcc
-
-    const emcc = b.addSystemCommand(&[_][]const u8{emcc_path});
-    emcc.setName("emcc");
-    const emsdk_upstream_path = tools.emSdkUpstreamPath(emsdk_path);
+    const emcc = b.addRunFile(tools.no_activation_step_emsdk_path.path(b, "emscripten/emcc"));
     // Must setup emscripten SDK before we can run "emcc" as "upstream/**/*" folders won't exist
-    emsdk_upstream_path.addStepDependencies(&emcc.step);
-    if (b.verbose) {
+    tools.addStepDependencies(&emcc.step);
+
+    if (b.graph.verbose) {
         emcc.addArg("-v");
     }
     if (artifact.root_module.optimize) |optimize| {
-        if (artifact.root_module.optimize == .Debug) {
-            emcc.addArgs(&[_][]const u8{
-                "-Og",
-                "-sASSERTIONS=1",
-                // NOTE(jae): 2024-03-03
-                // Can't find docs but SAFE_HEAP=2 is for Wasm only, SAFE_HEAP=1 is for asm.js/wasm.
-                // I made this change because I got an alignment error with wasm3.
-                // - https://github.com/emscripten-core/emscripten/issues/16685#issuecomment-1129524178
-                "-sSAFE_HEAP=2",
-                "-sSTACK_OVERFLOW_CHECK=1",
-                // note(jae): debug sourcemaps in browser, so you can see the stack of crashes
-                "-gsource-map",
-            });
-        } else {
-            emcc.addArg("-sASSERTIONS=0");
-            if (optimize == .ReleaseSmall) {
+        switch (optimize) {
+            .Debug => {
+                emcc.addArgs(&[_][]const u8{
+                    "-Og",
+                    "-sASSERTIONS=1",
+                    // NOTE(jae): 2024-03-03
+                    // Can't find docs but SAFE_HEAP=2 is for Wasm only, SAFE_HEAP=1 is for asm.js/wasm.
+                    // I made this change because I got an alignment error with wasm3.
+                    // - https://github.com/emscripten-core/emscripten/issues/16685#issuecomment-1129524178
+                    "-sSAFE_HEAP=2",
+                    "-sSTACK_OVERFLOW_CHECK=1",
+                    // note(jae): debug sourcemaps in browser, so you can see the stack of crashes
+                    "-gsource-map",
+                });
+            },
+            .ReleaseSmall => {
+                emcc.addArg("-sASSERTIONS=0");
                 emcc.addArg("-Oz");
-            } else {
+            },
+            else => {
+                emcc.addArg("-sASSERTIONS=0");
                 emcc.addArg("-O3");
-            }
+            },
         }
     }
 
@@ -162,13 +192,6 @@ pub fn addEmccCommand(tools: *Tools, artifact: *Step.Compile) *Emcc {
         // emcc.addArg("-Wl,-u,_emscripten_run_callback_on_thread");
     }
 
-    // NOTE(jae): 2025-02-02
-    // Trying to enable correct things so we can just build our own version of freetype
-    // emcc.append("-fwasm-exceptions");
-    // emcc.append("-sSUPPORT_LONGJMP=wasm");
-    // emcc.append("-sSUPPORT_LONGJMP='wasm'");
-    emcc.addArg("-sUSE_FREETYPE=1");
-
     // NOTE(jae): 2024-02-24
     // Needed or Zig 0.13.0 crashes with "Aborted(Cannot use convertFrameToPC (needed by __builtin_return_address) without -sUSE_OFFSET_CONVERTER)"
     // for os_tag == .emscripten.
@@ -185,56 +208,83 @@ pub fn addEmccCommand(tools: *Tools, artifact: *Step.Compile) *Emcc {
     //     emcc.addArg(arg);
     // }
 
-    // Get sysroot includes for C/C++ libraries
-    const sysroot_include_path = emsdk_upstream_path.path(b, "emscripten/cache/sysroot/include");
+    // Setup sysroot includes for C/C++ libraries
+    var has_freetype = false;
+    const compile_dep_list = getCompileDependencies(b, artifact, true);
+    for (compile_dep_list) |compile_dep| {
+        const graph = getGraph(b, compile_dep.root_module);
+        for (graph.modules) |module| {
+            const link_libc = module.link_libc orelse false;
+            const link_libcpp = module.link_libcpp orelse false;
+            if (link_libc or link_libcpp) {
+                // log.info("{s}", .{module.root_source_file.?.getDisplayName()});
+                module.addSystemIncludePath(tools.sysroot_include_path);
+            }
+        }
+        // Update translate-c module
+        for (graph.modules) |module| {
+            const root_source_file = module.root_source_file orelse continue;
+            switch (root_source_file) {
+                .generated => |gen| {
+                    const step: *std.Build.Step = if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 16)
+                        // Deprecated: Zig 0.16.X, used to get Step directly
+                        gen.file.step
+                    else
+                        b.graph.generated_files.items[@backingInt(gen.index)];
+                    const tag = if (builtin.zig_version.major == 0 and builtin.zig_version.minor <= 16)
+                        // Deprecated: Zig 0.16.X, renamed to tag in later versions
+                        step.id
+                    else
+                        step.tag;
+                    switch (tag) {
+                        .translate_c => {
+                            // Detect if using Translate-C vendored version
+                            //
+                            // NOTE(jae): 2026-04-29
+                            // Longterm this will deprecated from Zig
 
-    // If library is built using C or C++ then add system includes
-    {
-        const link_libc = artifact.root_module.link_libc orelse false;
-        const link_libcpp = artifact.root_module.link_libcpp orelse false;
-        if (link_libc or link_libcpp) {
-            artifact.root_module.addSystemIncludePath(sysroot_include_path);
+                            const translate_c: *std.Build.Step.TranslateC = @fieldParentPtr("step", step);
+                            translate_c.addSystemIncludePath(tools.sysroot_include_path);
+                        },
+                        .run => {
+                            // Detect if using Translate-C external dependency and make assumptions about the flags
+                            // we can pass into it such as "isystem" and "-I"
+                            //
+                            // Name: https://codeberg.org/ziglang/translate-c/src/commit/71642ad0084d433f14b091a7b2b109f0be915dbb/build/Translator.zig#L89
+                            // Imports: https://codeberg.org/ziglang/translate-c/src/commit/71642ad0084d433f14b091a7b2b109f0be915dbb/build/Translator.zig#L103-L104
+                            if (std.mem.startsWith(u8, step.name, "translate-c ") and
+                                (module.import_table.contains("c_builtins") and module.import_table.contains("helpers")))
+                            {
+                                const run: *std.Build.Step.Run = @fieldParentPtr("step", step);
+
+                                // Exposes the system include path `path` to both translate-c and to `t.mod`.
+                                // https://codeberg.org/ziglang/translate-c/src/commit/71642ad0084d433f14b091a7b2b109f0be915dbb/build/Translator.zig#L207-L211
+                                module.addSystemIncludePath(tools.sysroot_include_path);
+                                run.addPrefixedDirectoryArg("-isystem", tools.sysroot_include_path);
+                            }
+                        },
+                        else => continue,
+                    }
+                },
+                else => continue,
+            }
+        }
+        if (std.mem.eql(u8, compile_dep.name, "freetype")) {
+            // NOTE(jae): 2026-10-27
+            // Exclude freetype from linker
+            has_freetype = true;
+        } else {
+            emcc.addArtifactArg2(compile_dep, .{});
         }
     }
 
-    // add the main lib, and then scan for library dependencies and add those too
-    emcc.addArtifactArg(artifact);
-
-    // iterate over dependencies
-    for (artifact.root_module.link_objects.items) |item| {
-        switch (item) {
-            .other_step => |sub_artifact| {
-                // If library is built using C or C++ then add system includes
-                const link_libc = sub_artifact.root_module.link_libc orelse false;
-                const link_libcpp = sub_artifact.root_module.link_libcpp orelse false;
-                if (link_libc or link_libcpp) {
-                    sub_artifact.root_module.addSystemIncludePath(sysroot_include_path);
-                }
-
-                // Add artifact to linker
-                emcc.addArtifactArg(sub_artifact);
-            },
-            else => continue,
-        }
-    }
-
-    // Find TranslateC dependencies and add system path
-    var iter = artifact.root_module.import_table.iterator();
-    while (iter.next()) |it| {
-        const module = it.value_ptr.*;
-        const root_source_file = module.root_source_file orelse continue;
-        switch (root_source_file) {
-            .generated => |gen| {
-                const step = gen.file.step;
-                if (step.id != .translate_c) {
-                    continue;
-                }
-                const translate_c: *std.Build.Step.TranslateC = @fieldParentPtr("step", step);
-                // NOTE: This calls "sysroot_include_path.addStepDependencies()" within as expected
-                translate_c.addSystemIncludePath(sysroot_include_path);
-            },
-            else => continue,
-        }
+    if (has_freetype) {
+        // NOTE(jae): 2025-02-02
+        // Trying to enable correct things so we can just build our own version of freetype
+        // emcc.append("-fwasm-exceptions");
+        // emcc.append("-sSUPPORT_LONGJMP=wasm");
+        // emcc.append("-sSUPPORT_LONGJMP='wasm'");
+        emcc.addArg("-sUSE_FREETYPE=1");
     }
 
     const emcc_res = b.allocator.create(Emcc) catch @panic("OOM");
@@ -298,7 +348,6 @@ const EmRunRunOptions = struct {
 /// Add run artifact
 pub fn addRunArtifact(tools: *Tools, artifact: *Step.Compile, options: EmRunRunOptions) *std.Build.Step.Run {
     const b = tools.b;
-    const emsdk_path = tools.emsdk_path;
     const emcc = tools.addEmccCommand(artifact);
 
     // This flag injects code into the generated Module object to enable capture of
@@ -319,11 +368,11 @@ pub fn addRunArtifact(tools: *Tools, artifact: *Step.Compile, options: EmRunRunO
             // Use Python directly on Windows to avoid "Terminate batch job y/n" dialog which is the worst
             //
             // Mimic behaviour of emrun.bat where it tries to use EMSDK_PYTHON and then just falls back to global "python"
-            const emrun_path = b.pathJoin(&.{ emsdk_path.getPath(b), "upstream", "emscripten", "emrun.py" });
-            break :blk b.addSystemCommand(&.{ tools.python_path, "-E", emrun_path });
+            const cmd = b.addSystemCommand(&.{ tools.python_path, "-E" });
+            cmd.addFileArg(tools.no_activation_step_emsdk_path.path(b, "emscripten/emrun.py"));
+            break :blk cmd;
         } else {
-            const emrun_path = b.pathJoin(&.{ emsdk_path.getPath(b), "upstream", "emscripten", "emrun" });
-            break :blk b.addSystemCommand(&.{emrun_path});
+            break :blk b.addRunFile(tools.no_activation_step_emsdk_path.path(b, "emscripten/emrun"));
         }
     };
     emrun.step.dependOn(&emcc.run.step);
@@ -351,84 +400,9 @@ pub fn addRunArtifact(tools: *Tools, artifact: *Step.Compile, options: EmRunRunO
     return emrun;
 }
 
-/// emSdkUpstreamPath will setup the "emsdk install + emsdk activate" and return the generated
-/// upstream path
-fn emSdkUpstreamPath(tools: *Tools, emsdk_lazy_path: LazyPath) LazyPath {
-    const b = tools.b;
-    const emsdk_path = emsdk_lazy_path.getPath(b);
-    const has_existing_emscripten_setup = blk: {
-        if (builtin.zig_version.major == 0 and builtin.zig_version.minor >= 16) {
-            std.Io.Dir.accessAbsolute(b.graph.io, b.pathJoin(&.{ emsdk_path, "upstream", ".emsdk_version" }), .{}) catch |err| switch (err) {
-                error.FileNotFound => break :blk false,
-                else => {
-                    @panic(b.fmt("unexpected error detecting .emscripten file: {s}", .{@errorName(err)}));
-                },
-            };
-        } else {
-            // Deprecated path: Zig 0.15.x support
-            std.fs.accessAbsolute(b.pathJoin(&.{ emsdk_path, "upstream", ".emsdk_version" }), .{}) catch |err| switch (err) {
-                error.FileNotFound => break :blk false,
-                else => {
-                    @panic(b.fmt("unexpected error detecting .emscripten file: {s}", .{@errorName(err)}));
-                },
-            };
-        }
-        break :blk true;
-    };
-
-    const emsdk_bin = b.pathJoin(&.{ emsdk_path, "emsdk.py" });
-
-    // NOTE(jae): 2025-04-05
-    // We run emsdk.py directly as it will actually return error codes on Windows whereas "emsdk.bat" will not,
-    // at least under Zig 0.14.0.
-    const emsdk_version = tools.version;
-    const emsdk_install = b.addSystemCommand(&.{ tools.python_path, "-E", emsdk_bin, "install", emsdk_version });
-    emsdk_install.setName("emsdk install");
-    if (has_existing_emscripten_setup) {
-        // Bust the cache if this version changes outside of Zig
-        emsdk_install.addFileInput(emsdk_lazy_path.path(b, "upstream/.emsdk_version"));
-        emsdk_install.addFileInput(emsdk_lazy_path.path(b, "upstream/emscripten/emscripten-version.txt"));
-        if (builtin.zig_version.major == 0 and builtin.zig_version.minor >= 16) {
-            // HACK: Force to cache run
-            _ = emsdk_install.captureStdOut(.{});
-        } else {
-            // Deprecated path for Zig 0.15.x, HACK: Force to cache run
-            _ = emsdk_install.captureStdOut();
-        }
-    }
-    // HACK: Mix has_side_effects to cache
-    // emsdk_install.has_side_effects = !has_existing_emscripten_setup;
-
-    // Activate version
-    const emsdk_activate = b.addSystemCommand(&.{ tools.python_path, "-E", emsdk_bin, "activate", emsdk_version });
-    emsdk_activate.setName("emsdk activate");
-    emsdk_activate.step.dependOn(&emsdk_install.step);
-    if (has_existing_emscripten_setup) {
-        // Bust the cache if this version changes outside of Zig
-        emsdk_activate.addFileInput(emsdk_lazy_path.path(b, "upstream/.emsdk_version"));
-        emsdk_activate.addFileInput(emsdk_lazy_path.path(b, "upstream/emscripten/emscripten-version.txt"));
-        if (builtin.zig_version.major == 0 and builtin.zig_version.minor >= 16) {
-            // HACK: Force to cache run
-            _ = emsdk_activate.captureStdOut(.{});
-        } else {
-            // Deprecated path for Zig 0.15.x, HACK: Force to cache run
-            _ = emsdk_activate.captureStdOut();
-        }
-    }
-    // HACK: Mix has_side_effects to cache
-    // emsdk_activate.has_side_effects = !has_existing_emscripten_setup;
-
-    // After "emsdk activate" is complete then the downloaded Emscripten version will have an "upstream" folder
-    // with the relevant Emscripten version
-    const gen = b.allocator.create(GeneratedFile) catch @panic("OOM");
-    gen.* = .{
-        .path = b.pathJoin(&.{ emsdk_path, "upstream" }),
-        .step = &emsdk_activate.step,
-    };
-    const path: LazyPath = .{
-        .generated = .{ .file = gen },
-    };
-    return path;
+/// Ensure emsdk is installed and activated for before given step
+fn addStepDependencies(tools: *const Tools, step: *Step) void {
+    return tools.sysroot_include_path.addStepDependencies(step);
 }
 
 fn emSdkPath(b: *Build) ?LazyPath {
@@ -446,6 +420,76 @@ fn hasFeaturesRequiringThreading(target: std.Build.ResolvedTarget) bool {
     // NOTE(jae): 2025-04-06
     // I think threading also requires the .bulk_memory feature as well?
     return std.Target.wasm.featureSetHas(target.result.cpu.features, .atomics);
+}
+
+/// Copy-paste of "lib/std/Build/Module.zig" but it doesn't cache via GetGraph and won't potentially break the
+/// Zig build system.
+///
+/// Return the full set of `Step.Compile` which `start` depends on, recursively. `start` itself is
+/// always returned as the first element. If `chase_dynamic` is `false`, then dynamic libraries are
+/// not included, and their dependencies are not considered; if `chase_dynamic` is `true`, dynamic
+/// libraries are treated the same as other linked `Compile`s.
+fn getCompileDependencies(b: *Build, start: *Step.Compile, chase_dynamic: bool) []const *Step.Compile {
+    const arena = start.step.owner.graph.arena;
+
+    var compiles: std.AutoArrayHashMapUnmanaged(*Step.Compile, void) = .empty;
+    var next_idx: usize = 0;
+
+    compiles.putNoClobber(arena, start, {}) catch @panic("OOM");
+
+    while (next_idx < compiles.count()) {
+        const compile = compiles.keys()[next_idx];
+        next_idx += 1;
+
+        for (getGraph(b, compile.root_module).modules) |mod| {
+            for (mod.link_objects.items) |lo| {
+                switch (lo) {
+                    .other_step => |other_compile| {
+                        if (!chase_dynamic and other_compile.isDynamicLibrary()) continue;
+                        compiles.put(arena, other_compile, {}) catch @panic("OOM");
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    return compiles.keys();
+}
+
+const Graph = struct {
+    modules: []const *std.Build.Module,
+    names: []const []const u8,
+};
+
+/// Copy-paste of "lib/std/Build/Module.zig" but it doesn't cache and won't potentially break the
+/// Zig build system.
+///
+/// Given that `root` is the root `Module` of a compilation, return all `Module`s
+/// in the module graph, including `root` itself. `root` is guaranteed to be the
+/// first module in the returned slice.
+fn getGraph(b: *Build, root: *std.Build.Module) Graph {
+    const arena = b.graph.arena;
+
+    var modules: std.AutoArrayHashMapUnmanaged(*std.Build.Module, []const u8) = .empty;
+    var next_idx: usize = 0;
+
+    modules.putNoClobber(arena, root, "root") catch @panic("OOM");
+
+    while (next_idx < modules.count()) {
+        const mod = modules.keys()[next_idx];
+        next_idx += 1;
+        modules.ensureUnusedCapacity(arena, mod.import_table.count()) catch @panic("OOM");
+        for (mod.import_table.keys(), mod.import_table.values()) |import_name, other_mod| {
+            modules.putAssumeCapacity(other_mod, import_name);
+        }
+    }
+
+    const result: Graph = .{
+        .modules = modules.keys(),
+        .names = modules.values(),
+    };
+    return result;
 }
 
 const Tools = @This();

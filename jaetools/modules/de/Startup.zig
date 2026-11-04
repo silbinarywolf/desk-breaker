@@ -33,7 +33,15 @@ const use_debug_allocator = !builtin.cpu.arch.isWasm() and switch (builtin.mode)
 
 var debug_allocator: heap.DebugAllocator(.{}) = .init;
 
-var threaded: Io.Threaded = undefined;
+const use_custom_io = if (builtin.abi.isAndroid())
+    false
+else switch (builtin.os.tag) {
+    .psp, .freestanding => true,
+    .emscripten => false,
+    else => false,
+};
+
+var threaded: if (use_custom_io) void else Io.Threaded = if (use_custom_io) {} else undefined;
 
 pub inline fn initNoArg(s: *Startup) void {
     return s.init(.{
@@ -65,24 +73,24 @@ pub fn init(s: *Startup, minimal: process.Init.Minimal) void {
     // var arena_allocator = std.heap.ArenaAllocator.init(arena_backing_allocator);
     // errdefer arena_allocator.deinit();
 
-    threaded = .init(gpa, .{
+    if (!use_custom_io) threaded = .init(gpa, .{
         .argv0 = .init(minimal.args),
         .environ = minimal.environ,
     });
-    errdefer threaded.deinit();
+    errdefer if (!use_custom_io) threaded.deinit();
 
     s.* = .{
         .args = minimal.args,
         .environ = minimal.environ,
         .gpa = gpa,
-        .io = threaded.io(),
+        .io = if (use_custom_io) Io.failing else threaded.io(),
         // Initialize later in lifecycle
         .platform = undefined,
     };
 }
 
 pub fn deinit(_: *Startup) void {
-    threaded.deinit();
+    if (!use_custom_io) threaded.deinit();
     if (use_debug_allocator) {
         _ = debug_allocator.deinit(); // Leaks do not affect return code.
     }

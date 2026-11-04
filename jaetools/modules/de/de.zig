@@ -23,9 +23,9 @@ pub const imgui = if (build_options.has_imgui) @import("imgui") else @compileErr
 
 // Reusable libraries
 const vector = @import("vector.zig");
-pub const Vector2 = vector.Vector2;
 pub const Vector2f = vector.Vector2f;
 pub const Vector2i = vector.Vector2i;
+pub const Vector2us = vector.Vector2us;
 pub const StaticRingBuffer = @import("StaticRingBuffer.zig").StaticRingBuffer;
 pub const FrameTimer = @import("FrameTimer.zig");
 
@@ -37,18 +37,25 @@ pub const Options = @import("RootOptions.zig"); // MUST export for end-user app
 const App = Options.current.application_type;
 
 pub const main = if (build_options.has_sdl and sdl.ZIG_SDL_MAIN_USE_CALLBACKS == 1)
-    void
+    unused_main
 else switch (Options.current.platform_type) {
     .sdl_callback => sdl_callback_entry.main,
     .sdl_zig => sdl_zig_entry.main,
 };
 
+/// Hack: Workaround issue where Zig 0.17.0 will try to use 'main' if its not using callconv(.c) and defined
+fn unused_main() callconv(.c) void {
+    return;
+}
+
 /// Provide logFn for use `std_options: std.Options = .{ .logFn =  }`
 pub const logFn: fn (comptime message_level: LogLevel, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void =
-    if (builtin.abi.isAndroid() or builtin.os.tag == .emscripten or builtin.os.tag == .freestanding)
+    if (builtin.abi.isAndroid())
         SDL_logFn
-    else
-        @import("std").log.defaultLog;
+    else switch (builtin.os.tag) {
+        .emscripten, .psp, .freestanding => SDL_logFn,
+        else => @import("std").log.defaultLog,
+    };
 
 /// Initial main() startup information
 var default_init: Startup = undefined;
